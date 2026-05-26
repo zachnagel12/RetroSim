@@ -99,6 +99,8 @@ tbody tr:last-child td { border-bottom: none; }
 .headline.champ .headline-title { color: var(--warning); }
 .headline.hof .headline-title { color: var(--info); }
 .headline.contract .headline-title { color: var(--info); }
+.headline.injury .headline-title { color: var(--danger); }
+.headline.injury { border-left: 2px solid var(--danger); padding-left: 8px; }
 .welcome { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100%; text-align: center; padding: 40px; max-width: 720px; margin: 0 auto; }
 .welcome-title { font-size: 36px; font-weight: 700; letter-spacing: -1px; margin-bottom: 12px; }
 .welcome-subtitle { font-size: 16px; color: var(--text-muted); margin-bottom: 32px; max-width: 500px; }
@@ -2090,7 +2092,12 @@ let game = {
     const fit = this.schemeFitScore(player, team);
     const fitFactor = 0.6 + fit * 0.8; // 0.78 to 1.4 range
     
-    return needFactor * capFactor * qualityFactor * fitFactor;
+    // 5. Durability — fragile players get less interest. Iron-man players a small bump.
+    // Proneness 25 → 1.10x, 50 (avg) → 1.00x, 75 → 0.90x, 90 → 0.84x
+    const proneness = player.injuryProneness !== undefined ? player.injuryProneness : 55;
+    const durabilityFactor = 1.10 - (proneness - 25) * 0.004;
+    
+    return needFactor * capFactor * qualityFactor * fitFactor * durabilityFactor;
   },
   
   // Generate FA offers for the user's player. Returns array of offer objects:
@@ -2130,7 +2137,12 @@ let game = {
       else if (lastSeasonWins >= 11) motivationMod = 0.92 + Math.random() * 0.06;
       else motivationMod = 0.98 + Math.random() * 0.08;
       
-      const aav = Math.round(baseAAV * motivationMod / 50_000) * 50_000;
+      // Durability discount — injury-prone players get less guaranteed money.
+      // Proneness 25 → 1.05x, 50 → 1.00x, 75 → 0.94x, 90 → 0.90x.
+      const proneness = player.injuryProneness !== undefined ? player.injuryProneness : 55;
+      const durabilityMod = 1.05 - (proneness - 25) * 0.0023;
+      
+      const aav = Math.round(baseAAV * motivationMod * durabilityMod / 50_000) * 50_000;
       
       // Years: longer for younger players, shorter for older. Vary by team too.
       const years = player.age <= 26 ? (3 + Math.floor(Math.random() * 3)) // 3-5
@@ -2489,16 +2501,29 @@ let game = {
   generateProspect(yearInCollege, position, targetGrade) {
     // Prospect grade 50-99 with one decimal place
     const grade = targetGrade !== undefined ? targetGrade : (50 + Math.random() * 49.99);
+    // Roll injuryProneness first so it can adjust grade. Bell-shaped, centered at 55.
+    const injuryProneness = this.rollInjuryProneness();
+    // Injury-prone reduces grade slightly: from 50 baseline, every +10 proneness costs ~0.4 grade.
+    // Iron-man players (low proneness) get a small bump.
+    const adjustedGrade = grade - (injuryProneness - 50) * 0.04;
     return {
       id: 'prospect_' + Math.random().toString(36).slice(2, 11) + '_' + Date.now() + '_' + Math.floor(Math.random() * 100000),
       name: this.generateName(this.state.year),
       school: this.pickSchoolWeightedByPrestige(grade),
       position,
       year: yearInCollege,
-      prospectGrade: Math.round(grade * 10) / 10,
+      prospectGrade: Math.max(40, Math.min(99, Math.round(adjustedGrade * 10) / 10)),
+      injuryProneness,
       faceSeed: Math.floor(Math.random() * 1000000),
       classYear: this.state.year
     };
+  },
+  
+  // Bell-shaped injuryProneness roll. Average of 4 uniform rolls → normal-ish distribution
+  // centered around 55 with most mass in 40-70. Tails reach 25 (iron-man) and 85+ (fragile).
+  rollInjuryProneness() {
+    const roll = (Math.random() + Math.random() + Math.random() + Math.random()) / 4; // 0-1, bell-shaped
+    return Math.round(25 + roll * 65); // 25-90 range
   },
 
   // Seed initial college prospect pool: ~120 prospects across all 4 class years
@@ -2820,6 +2845,9 @@ let game = {
       position, age, rating, team: teamId,
       abilities, archetype, potential,
       peakOvr: rating,
+      // Bell-shaped injuryProneness: most players cluster 45-70, with thin tails toward
+      // glass-cannon (80+) and iron-man (<35). Higher = more fragile.
+      injuryProneness: this.rollInjuryProneness(),
       jerseyNumber: this.assignJerseyNumber(position),
       yearsInLeague: Math.max(0, age - 22),
       careerStats: EMPTY_CAREER_STATS(),
@@ -3152,6 +3180,8 @@ let game = {
         position: prospect.position, age, rating, team: null,
         abilities, archetype, potential,
         peakOvr: rating,
+        // Carry injuryProneness from prospect (already factored into their grade)
+        injuryProneness: prospect.injuryProneness !== undefined ? prospect.injuryProneness : this.rollInjuryProneness(),
         jerseyNumber: this.assignJerseyNumber(prospect.position),
         yearsInLeague: 0,
         careerStats: EMPTY_CAREER_STATS(),
@@ -3731,6 +3761,8 @@ let game = {
     this.applyPlayerTrainingBoost();
     // Clear weekly training picks now that the games are played. User must re-pick next week.
     this.clearWeeklyTraining();
+    // Tick down injury timers and post a return-from-injury headline for the user player.
+    this.tickInjuries();
     document.getElementById('newsFeed').style.display = '';
     document.getElementById('mainGrid').style.gridTemplateColumns = '200px 1fr 320px';
     this.saveGame();
@@ -3849,7 +3881,10 @@ let game = {
   },
 
   getTeamStrength(team) {
-    const roster = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
+    // Injured players don't contribute to current team strength (they can't play)
+    const roster = team.roster.map(id => this.state.players[id]).filter(p =>
+      p && !p.retired && !(p.injury && p.injury.weeksRemaining > 0)
+    );
     if (!roster.length) return 50;
     const sorted = [...roster].sort((a, b) => b.rating - a.rating).slice(0, 22);
     const playerAvg = sorted.reduce((s, p) => s + p.rating, 0) / sorted.length;
@@ -3903,7 +3938,11 @@ let game = {
 
   generateGameStats(gameObj, home, away) {
     [{ team: home, score: gameObj.homeScore }, { team: away, score: gameObj.awayScore }].forEach(({ team, score }) => {
-      const roster = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
+      // Filter out retired AND currently-injured players. Injured players can't accumulate stats.
+      // Depth backups will fill in via the existing position-sort logic.
+      const roster = team.roster.map(id => this.state.players[id]).filter(p =>
+        p && !p.retired && !(p.injury && p.injury.weeksRemaining > 0)
+      );
       const passEmph = this.getTeamPassEmph(team);
       const defStyle = this.getTeamDefStyle(team);
       const blitzMod = (defStyle === 'Blitz Heavy' || defStyle === 'Aggressive Front') ? 1.25 : (defStyle === 'Coverage First' ? 0.85 : 1.0);
@@ -4204,6 +4243,111 @@ let game = {
         pu.seasonStats.puntsInside20 += inside20;
         markPlayed(pu);
       }
+      
+      // ============================================================
+      // INJURY ROLLS — after the game ends, roll for injury on each player who participated.
+      // Real NFL: ~30-40% of starters miss at least one game per season to injury.
+      // Per-game base rate ~0.9% for starters, ~0.3% for backups. Scaled by injuryProneness/50
+      // and position multiplier (RB/CB highest, QB/K/P lowest).
+      // ============================================================
+      playedThisGame.forEach(pid => {
+        const p = this.state.players[pid];
+        if (!p || p.retired) return;
+        if (p.injury && p.injury.weeksRemaining > 0) return; // already hurt, don't pile on
+        this.rollInjuryForPlayer(p, gameObj);
+      });
+    });
+  },
+
+  // Position-based injury risk multiplier. NFL data: RBs and CBs lead, QB/K/P trail.
+  INJURY_POS_MULT: {
+    RB: 1.4, CB: 1.3, S: 1.1, WR: 1.0, TE: 1.0,
+    LB: 1.15, EDGE: 1.05, DT: 1.0,
+    OT: 0.95, OG: 0.95, C: 0.9,
+    QB: 0.55, K: 0.15, P: 0.15
+  },
+
+  // Roll for an injury on a single player after a game. If injured, mutate p.injury and
+  // push a headline (severity-gated so the news feed doesn't drown in ankle tweaks).
+  rollInjuryForPlayer(p, gameObj) {
+    // Determine if this player is a likely starter for their position (top of depth chart at that pos on their team).
+    // Starters take more snaps so they're more exposed.
+    const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
+    if (!team) return;
+    const samePosOnTeam = team.roster.map(id => this.state.players[id]).filter(x => x && !x.retired && x.position === p.position);
+    samePosOnTeam.sort((a, b) => b.rating - a.rating);
+    const depthIdx = samePosOnTeam.findIndex(x => x.id === p.id);
+    const isStarter = depthIdx === 0 || (p.position === 'WR' && depthIdx <= 1) || (p.position === 'CB' && depthIdx <= 1) || (p.position === 'LB' && depthIdx <= 2);
+    
+    // Base per-game rate. Calibrated against NFL real-world: roughly 10-15 starters per team affected
+    // across a 17-game season. That's ~110-160 starter-injuries per team in starter-game terms.
+    const baseRate = isStarter ? 0.030 : 0.010;
+    
+    // Position multiplier
+    const posMult = this.INJURY_POS_MULT[p.position] || 1.0;
+    
+    // Proneness multiplier — 50 = neutral, 90 = 1.8x, 25 = 0.5x
+    const pronenessMult = (p.injuryProneness || 55) / 50;
+    
+    // Age multiplier — older players more brittle. 25-29 neutral, 30+ rises, 22-24 slightly lower.
+    const ageMult = p.age >= 33 ? 1.4 : p.age >= 30 ? 1.2 : p.age >= 25 ? 1.0 : 0.85;
+    
+    const finalRate = baseRate * posMult * pronenessMult * ageMult;
+    
+    if (Math.random() > finalRate) return; // no injury
+    
+    // Roll severity. NFL distribution: 60-68% minor (1-3 wks), 22% moderate (4-8 wks),
+    // 8% major (9-14 wks return same season), 5% season-ending. Calibrated against observed smoke.
+    const r = Math.random();
+    let severity, weeks, type;
+    if (r < 0.68) {
+      severity = 'minor';
+      weeks = 1 + Math.floor(Math.random() * 3); // 1-3
+      type = ['hamstring', 'ankle sprain', 'contusion', 'low back strain', 'shoulder bruise', 'foot sprain'][Math.floor(Math.random() * 6)];
+    } else if (r < 0.88) {
+      severity = 'moderate';
+      weeks = 4 + Math.floor(Math.random() * 5); // 4-8
+      type = ['high ankle sprain', 'MCL sprain', 'broken hand', 'concussion', 'oblique tear', 'hip flexor'][Math.floor(Math.random() * 6)];
+    } else if (r < 0.95) {
+      severity = 'major';
+      weeks = 9 + Math.floor(Math.random() * 6); // 9-14
+      type = ['Lisfranc injury', 'broken fibula', 'torn meniscus', 'partial ACL tear', 'severe ankle fracture'][Math.floor(Math.random() * 5)];
+    } else {
+      severity = 'season-ending';
+      weeks = 99; // OUT for season
+      type = ['torn ACL', 'torn Achilles', 'broken tibia', 'cervical spine injury'][Math.floor(Math.random() * 4)];
+    }
+    
+    p.injury = {
+      type,
+      severity,
+      weeksOut: weeks,
+      weeksRemaining: weeks,
+      injuredYear: this.state.year,
+      injuredWeek: this.state.week
+    };
+    
+    // Headline gating: news-worthy only for moderate+ or for the user player.
+    const isUserPlayer = !!p.isUserControlled;
+    if (severity === 'minor' && !isUserPlayer) return;
+    
+    let title;
+    if (severity === 'season-ending') {
+      title = p.name + ' (' + p.position + ', ' + team.abbr + ') OUT FOR SEASON';
+    } else if (severity === 'major') {
+      title = p.name + ' (' + p.position + ', ' + team.abbr + ') expected to miss ' + weeks + ' weeks';
+    } else if (severity === 'moderate') {
+      title = p.name + ' (' + p.position + ', ' + team.abbr + ') out ' + weeks + ' week' + (weeks > 1 ? 's' : '');
+    } else {
+      title = p.name + ' (' + p.position + ', ' + team.abbr + ') day-to-day with ' + type;
+    }
+    
+    this.addHeadline({
+      type: 'injury',
+      title,
+      body: 'Diagnosed with ' + type + '. ' + (severity === 'season-ending'
+        ? 'Season is over. Recovery and rehab through the offseason.'
+        : 'Expected back in approximately ' + weeks + ' week' + (weeks > 1 ? 's' : '') + '.')
     });
   },
 
@@ -5148,6 +5292,9 @@ let game = {
 
   // END SEASON
   endSeason(championId, runnerUpId) {
+    // Offseason heals all injuries — rest and rehab clears the slate.
+    this.healInjuriesForOffseason();
+    
     const champion = this.state.teams[championId];
     const runnerUp = this.state.teams[runnerUpId];
     champion.championships++;
@@ -5767,6 +5914,7 @@ let game = {
           position: prospect.position, age, rating, team: null,
           abilities, archetype, potential,
           peakOvr: rating,
+          injuryProneness: prospect.injuryProneness !== undefined ? prospect.injuryProneness : this.rollInjuryProneness(),
           jerseyNumber: this.assignJerseyNumber(prospect.position),
           yearsInLeague: 0,
           careerStats: EMPTY_CAREER_STATS(),
@@ -5997,6 +6145,30 @@ let game = {
       });
       html += '</div></div>';
     }
+    
+    // Injury report — list currently injured players on user team, sorted by severity
+    const injured = team.roster.map(id => this.state.players[id]).filter(p =>
+      p && !p.retired && p.injury && p.injury.weeksRemaining > 0
+    );
+    if (injured.length > 0) {
+      injured.sort((a, b) => b.injury.weeksRemaining - a.injury.weeksRemaining);
+      html += '<div class="card" style="border-left:3px solid var(--danger)"><div class="card-header"><div class="card-title">Injury report</div>' +
+        '<div class="card-meta">' + injured.length + ' player' + (injured.length > 1 ? 's' : '') + ' out</div></div>' +
+        '<table><thead><tr><th>Player</th><th class="text-center">POS</th><th class="text-center">OVR</th><th>Injury</th><th class="text-right">Weeks out</th></tr></thead><tbody>';
+      injured.forEach(p => {
+        const sevColor = p.injury.severity === 'season-ending' ? 'var(--danger)' : p.injury.severity === 'major' ? 'var(--danger)' : p.injury.severity === 'moderate' ? 'var(--warning)' : 'var(--text-muted)';
+        const weekStr = p.injury.severity === 'season-ending' ? 'SEASON' : p.injury.weeksRemaining;
+        html += '<tr style="cursor:pointer" onclick="game.showPlayer(' + p.id + ')">' +
+          '<td><strong>' + p.name + '</strong></td>' +
+          '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
+          '<td class="text-center"><span class="rating ' + this.ratingClass(p.rating) + '">' + p.rating + '</span></td>' +
+          '<td><span style="color:' + sevColor + ';font-weight:600;font-size:12px">' + p.injury.type.toUpperCase() + '</span></td>' +
+          '<td class="text-right mono-num" style="color:' + sevColor + '">' + weekStr + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
     html += this.renderRosterCard(team, 'fullPage');
     document.getElementById('content').innerHTML = html;
   },
@@ -6023,11 +6195,15 @@ let game = {
       const rc = this.ratingClass(p.rating);
       const hit = p.contract ? currentCapHit(p.contract) : 0;
       const sc = this.salaryClass(hit, cap);
+      // Injury marker — appended to player name if currently injured
+      const injuredTag = (p.injury && p.injury.weeksRemaining > 0)
+        ? ' <span style="font-size:9px;background:var(--danger);color:#fff;padding:1px 4px;font-weight:600;letter-spacing:0.5px">OUT</span>'
+        : '';
       html += '<div class="' + rowCls + '" onclick="game.showPlayer(' + p.id + ')">' +
         '<div class="jersey-num">' + p.jerseyNumber + '</div>' +
         '<div><span class="position-tag">' + p.position + '</span></div>' +
         '<div class="player-face-small">' + pixelFaceSVG(p.faceSeed) + '</div>' +
-        '<div>' + p.name + '</div>' +
+        '<div>' + p.name + injuredTag + '</div>' +
         '<div class="mono-num">' + p.age + '</div>' +
         '<div><span class="rating ' + rc + '">' + p.rating + '</span></div>' +
         '<div class="salary-tag ' + sc + '">' + formatMoney(hit) + '</div>' +
@@ -6386,6 +6562,35 @@ let game = {
     }
   },
 
+  // Tick down injury timers after each week's games. Players whose timer hits 0 return to play.
+  // Also surface a return-from-injury headline if it's a meaningful player (starter or user).
+  tickInjuries() {
+    this.state.players.forEach(p => {
+      if (!p.injury || p.retired) return;
+      if (p.injury.weeksRemaining <= 0) return;
+      p.injury.weeksRemaining--;
+      if (p.injury.weeksRemaining <= 0) {
+        // Player returns. Headline only for user player or notable starters (OVR 80+).
+        const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
+        if (p.isUserControlled || p.rating >= 80) {
+          this.addHeadline({
+            type: 'injury',
+            title: p.name + ' (' + p.position + (team ? ', ' + team.abbr : '') + ') returns from ' + p.injury.type,
+            body: 'Cleared to play after ' + p.injury.weeksOut + ' week' + (p.injury.weeksOut > 1 ? 's' : '') + '. Back in the rotation this week.'
+          });
+        }
+        p.injury = null;
+      }
+    });
+  },
+
+  // At season's end, fully heal everyone (offseason rest + rehab). Called from endSeason.
+  healInjuriesForOffseason() {
+    this.state.players.forEach(p => {
+      if (p.injury) p.injury = null;
+    });
+  },
+
   // Player training regimens — keys are the focus skills, values describe effects.
   // Each weekly pick gives a small ability gain (+0.4 to a primary, +0.1 to a secondary).
   // Effects vary by player position so QB sees QB-relevant focuses, RBs see different ones, etc.
@@ -6737,8 +6942,21 @@ let game = {
       '<div class="my-team-stats">' +
       '<div class="my-team-stat"><div class="my-team-stat-label">Seasons</div><div class="my-team-stat-value">' + (p.yearsInLeague || 0) + '</div></div>' +
       '<div class="my-team-stat"><div class="my-team-stat-label">Awards</div><div class="my-team-stat-value">' + (p.awards ? p.awards.length : 0) + '</div></div>' +
-      '<div class="my-team-stat"><div class="my-team-stat-label">Status</div><div class="my-team-stat-value" style="font-size:13px">' + (p.retired ? (p.hofInducted ? 'HOF' : 'Retired') : 'Active') + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Status</div><div class="my-team-stat-value" style="font-size:13px">' + (p.retired ? (p.hofInducted ? 'HOF' : 'Retired') : (p.injury && p.injury.weeksRemaining > 0 ? 'Injured' : 'Active')) + '</div></div>' +
       '</div></div>';
+    
+    // Injury banner — prominent if user player is currently hurt
+    if (p.injury && p.injury.weeksRemaining > 0 && !p.retired) {
+      const sevColor = p.injury.severity === 'season-ending' || p.injury.severity === 'major' ? 'var(--danger)' : p.injury.severity === 'moderate' ? 'var(--warning)' : 'var(--text-muted)';
+      const weekStr = p.injury.severity === 'season-ending' ? 'Out for the season' : p.injury.weeksRemaining + ' week' + (p.injury.weeksRemaining > 1 ? 's' : '') + ' remaining (' + p.injury.weeksOut + '-week injury)';
+      html += '<div class="user-game-banner" style="display:block;border-left:4px solid ' + sevColor + '">' +
+        '<div class="user-game-banner-bar" style="background:' + sevColor + '"></div>' +
+        '<div style="padding:14px 18px">' +
+        '<div class="user-game-banner-label" style="margin-bottom:4px;color:' + sevColor + '">INJURED · ' + p.injury.severity.toUpperCase() + '</div>' +
+        '<div class="user-game-banner-title" style="font-size:18px">' + p.injury.type.charAt(0).toUpperCase() + p.injury.type.slice(1) + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">' + weekStr + ' · You won\'t accumulate stats while injured.</div>' +
+        '</div></div>';
+    }
     
     // STAGE 3: FA offers — shown when user is a FA and pending offers exist.
     if (this.state.offseasonPhase === 'playerFAChoice' && this.state.career.pendingOffers && this.state.career.pendingOffers.length > 0) {
@@ -6746,8 +6964,9 @@ let game = {
     }
     
     // Player training regimen — weekly pick that gradually boosts a specific skill.
-    // Only shown for active players during regular season.
-    if (stage === 'nfl' && !p.retired && team && !this.state.playoffActive && this.state.week < 18 && this.state.offseasonPhase === null) {
+    // Only shown for active players during regular season AND not currently injured.
+    if (stage === 'nfl' && !p.retired && team && !this.state.playoffActive && this.state.week < 18 && this.state.offseasonPhase === null
+        && !(p.injury && p.injury.weeksRemaining > 0)) {
       html += this.renderPlayerTrainingCard(p);
     }
     
@@ -8463,6 +8682,23 @@ let game = {
       '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Draft projection</div><div style="font-size:14px;font-weight:600;padding-top:6px">' + projectedRound + '</div></div>' +
       '</div>';
     
+    // Durability assessment
+    if (p.injuryProneness !== undefined) {
+      const durability = 100 - p.injuryProneness;
+      const durLabel = durability >= 70 ? 'Iron man' : durability >= 55 ? 'Durable' : durability >= 40 ? 'Average durability' : durability >= 25 ? 'Injury-prone' : 'Major injury concern';
+      const durColor = durability >= 70 ? 'var(--success)' : durability >= 40 ? 'var(--text)' : durability >= 25 ? 'var(--warning)' : 'var(--danger)';
+      const scoutNote = durability >= 70 ? 'Strong frame, clean medical history. Scouts love the durability.'
+                      : durability >= 55 ? 'No injury red flags. Holds up well.'
+                      : durability >= 40 ? 'Typical wear-and-tear profile.'
+                      : durability >= 25 ? 'Some scouts worried about the injury history.'
+                      : 'Significant durability concerns. Likely to miss games.';
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">Durability profile</div>' +
+        '<div style="margin-top:8px;font-size:13px"><span style="color:' + durColor + ';font-weight:600">' + durLabel + '</span> · <span class="muted" style="font-size:11px">Durability ' + durability + '/100</span></div>' +
+        '<div style="margin-top:6px;font-size:12px;color:var(--text-muted)">' + scoutNote + '</div>' +
+        '</div>';
+    }
+    
     // What year will they enter the draft?
     const yearsUntilDraft = { 'Freshman': 3, 'Sophomore': 2, 'Junior': 1, 'Senior': 0 };
     const earliestDraft = this.state.year + (yearsUntilDraft[p.year] || 0);
@@ -8617,6 +8853,21 @@ let game = {
     }
     
     // Profile
+    // Durability rating: derived from injuryProneness. Lower proneness = higher durability shown to user.
+    let durabilityRow = '';
+    if (p.injuryProneness !== undefined) {
+      const durability = 100 - p.injuryProneness;
+      const durLabel = durability >= 70 ? 'Iron man' : durability >= 55 ? 'Durable' : durability >= 40 ? 'Average' : durability >= 25 ? 'Fragile' : 'Glass cannon';
+      const durColor = durability >= 70 ? 'var(--success)' : durability >= 40 ? 'var(--text)' : durability >= 25 ? 'var(--warning)' : 'var(--danger)';
+      durabilityRow = '<tr><td>Durability</td><td><span style="color:' + durColor + ';font-weight:600">' + durability + '</span> <span class="muted" style="font-size:11px">' + durLabel + '</span></td></tr>';
+    }
+    // Current injury status row
+    let injuryRow = '';
+    if (p.injury && p.injury.weeksRemaining > 0) {
+      const sevColor = p.injury.severity === 'season-ending' ? 'var(--danger)' : p.injury.severity === 'major' ? 'var(--danger)' : p.injury.severity === 'moderate' ? 'var(--warning)' : 'var(--text-muted)';
+      const weeksLabel = p.injury.severity === 'season-ending' ? 'Out for season' : p.injury.weeksRemaining + ' week' + (p.injury.weeksRemaining > 1 ? 's' : '') + ' remaining';
+      injuryRow = '<tr><td>Injury</td><td><span style="color:' + sevColor + ';font-weight:600">' + p.injury.type.toUpperCase() + '</span> <span class="muted" style="font-size:11px">· ' + weeksLabel + '</span></td></tr>';
+    }
     html += '<div class="section-label">Profile</div><table class="stat-table">' +
       '<tr><td>Position</td><td>' + p.position + '</td></tr>' +
       '<tr><td>Archetype</td><td>' + (p.archetype || '—') + '</td></tr>' +
@@ -8624,6 +8875,8 @@ let game = {
       '<tr><td>Years in league</td><td>' + p.yearsInLeague + '</td></tr>' +
       '<tr><td>Draft year</td><td>' + p.draftYear + '</td></tr>' +
       collegeRow +
+      durabilityRow +
+      injuryRow +
       (p.potential ? '<tr><td>Potential</td><td>' + p.potential + (p.potential > p.rating ? ' <span style="color:var(--success);font-size:11px">(+' + (p.potential - p.rating) + ')</span>' : '') + '</td></tr>' : '') +
       '<tr><td>Status</td><td>' + (p.retired ? 'Retired' + (p.hofInducted ? ' · HOF' : '') : (team ? 'Active' : 'Free Agent')) + '</td></tr>' +
       '</table>';
