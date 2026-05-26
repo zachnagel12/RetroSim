@@ -3409,18 +3409,22 @@ let game = {
     this.render();
   },
 
-  // AGM logic
+  // AGM logic — realistic NFL-style cap management.
+  // Real NFL teams handle cap pressure in this priority order:
+  //   1. Cut overpaid bad-value contracts first ("cap casualties" — bench players making star money)
+  //   2. Restructure elite/star contracts (convert base to signing bonus, push cap into future years)
+  //   3. Trade veterans with positive savings to teams that have cap space
+  //   4. Last resort: cut mid-tier vets
+  // Stars at fair-market value are kept; the AGM only cuts a star if the contract is truly toxic.
   runAssistantGM(team) {
-    const players = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
     const cap = getSalaryCap(this.state.year);
-    const byValue = [...players].sort((a, b) => (b.rating * (POSITION_VALUE[b.position] || 1)) - (a.rating * (POSITION_VALUE[a.position] || 1)));
+    const getPlayers = () => team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
     
-    // Extend stars with 1 year left — ONLY if team isn't already over cap.
-    // Extending adds future cap and current AAV, so doing it while over cap makes things worse.
+    // STEP 0: Extend stars with 1 year left (only when cap-compliant)
+    const byValue = [...getPlayers()].sort((a, b) => (b.rating * (POSITION_VALUE[b.position] || 1)) - (a.rating * (POSITION_VALUE[a.position] || 1)));
     if (teamCapUsed(team, this.state.players) <= cap) {
       byValue.slice(0, 5).forEach(p => {
         if (p.contract && p.contract.yearsRemaining === 1 && p.rating >= 75 && p.age <= 30) {
-          // Only extend if the new contract still keeps the team under cap.
           const newContract = generateContract(p.position, p.rating, p.age, this.state.year, false);
           const projDelta = newContract.aav - currentCapHit(p.contract);
           if (teamCapUsed(team, this.state.players) + projDelta <= cap) {
@@ -3429,35 +3433,127 @@ let game = {
         }
       });
     }
-    // Restructure top contracts if over cap
+    
+    // Helper: compute how overpaid each player is (cap hit minus fair-market AAV).
+    // High positive = cap casualty candidate. Negative = bargain (keep).
+    const overpaidness = (p) => {
+      if (!p.contract) return 0;
+      const fairAAV = calculateContractAAV(p.position, p.rating, p.age, this.state.year);
+      return currentCapHit(p.contract) - fairAAV;
+    };
+    
+    // STEP 1: CUT BAD-VALUE CONTRACTS (cap casualties)
+    // These are players whose cap hit far exceeds their on-field market value.
+    // Real NFL: this is where Russell Wilson, Aaron Rodgers, etc. type cuts happen — high salary, declining play.
+    // We require positive savings (savings = capHit - deadCap > 0) so the cut actually helps cap.
     if (teamCapUsed(team, this.state.players) > cap) {
-      const restructureCandidates = byValue.filter(p => p.contract && p.contract.yearsRemaining >= 2 && currentCapHit(p.contract) > cap * 0.05);
-      for (const p of restructureCandidates) {
+      const casualties = getPlayers()
+        .filter(p => p.contract && currentCapHit(p.contract) - deadCapIfReleased(p.contract) > 0)
+        .map(p => ({ p, over: overpaidness(p), savings: currentCapHit(p.contract) - deadCapIfReleased(p.contract) }))
+        .filter(x => x.over > 1_000_000) // truly overpaid (>$1M over market)
+        .sort((a, b) => b.over - a.over); // most overpaid cut first
+      for (const { p } of casualties) {
         if (teamCapUsed(team, this.state.players) <= cap) break;
-        const convertible = p.contract.baseSalaries[0] - 800_000;
-        if (convertible > 500_000) {
-          const converting = Math.round(convertible * 0.75 / 50_000) * 50_000;
-          p.contract.baseSalaries[0] -= converting;
-          p.contract.signingBonus += converting;
-          p.contract.bonusProrationYears = Math.min(5, p.contract.yearsRemaining);
-        }
+        const savedAmt = currentCapHit(p.contract) - deadCapIfReleased(p.contract);
+        const deadAmt = deadCapIfReleased(p.contract);
+        team.deadCap = (team.deadCap || 0) + deadAmt;
+        team.roster = team.roster.filter(id => id !== p.id);
+        const cutName = p.name;
+        const cutPos = p.position;
+        const cutOvr = p.rating;
+        p.team = null;
+        p.contract = null;
+        // Headline: cap casualty cut. Real NFL: "Cap casualty: Team releases Player X to clear $Y million."
+        this.addHeadline({
+          type: 'contract',
+          title: team.city + ' ' + team.name + ' release ' + cutName + ' (cap casualty)',
+          body: cutPos + ' ' + cutName + ' (OVR ' + cutOvr + ') cut to save ' + formatMoney(savedAmt) + ' in cap. Dead cap: ' + formatMoney(deadAmt) + '.'
+        });
       }
     }
-    // Release players to come under cap.
-    // Sort all roster players by largest positive savings (capHit - deadCap) and cut until under cap.
-    // This may cut decent mid-tier vets when cap pressure is real, mirroring NFL "cap casualty" cuts.
+    
+    // STEP 2: RESTRUCTURE STAR CONTRACTS
+    // Convert base salary into signing bonus, pushing cap hit into future years.
+    // Targets: high-rated (≥80) long-term contracts with significant base salary to convert.
+    // Real NFL: stars opt into restructures because they get the money up front as bonus.
     if (teamCapUsed(team, this.state.players) > cap) {
-      const releaseCandidates = players
-        .filter(p => p.contract && currentCapHit(p.contract) - deadCapIfReleased(p.contract) > 0)
-        .sort((a, b) => {
-          // Primary: largest savings first
-          const sa = currentCapHit(a.contract) - deadCapIfReleased(a.contract);
-          const sb = currentCapHit(b.contract) - deadCapIfReleased(b.contract);
-          if (sb !== sa) return sb - sa;
-          // Tiebreaker: lower OVR cut first (prefer keeping stars even if savings equal)
-          return a.rating - b.rating;
+      const restructureCandidates = getPlayers()
+        .filter(p =>
+          p.contract &&
+          p.contract.yearsRemaining >= 2 &&
+          p.rating >= 78 &&
+          p.contract.baseSalaries[0] > 3_000_000 // need meaningful base to convert
+        )
+        .sort((a, b) => b.rating - a.rating); // restructure best players first (they want the cash)
+      for (const p of restructureCandidates) {
+        if (teamCapUsed(team, this.state.players) <= cap) break;
+        // Leave $1.5M base minimum (NFL minimum-ish); convert up to 80% of the excess.
+        const convertible = p.contract.baseSalaries[0] - 1_500_000;
+        if (convertible < 1_000_000) continue;
+        const converting = Math.round(convertible * 0.80 / 50_000) * 50_000;
+        // The conversion math: reducing base by $X and adding $X as new signing bonus,
+        // prorated across remaining years, saves $X * (1 - 1/years) in current cap hit.
+        p.contract.baseSalaries[0] -= converting;
+        p.contract.signingBonus += converting;
+        p.contract.bonusProrationYears = Math.min(5, p.contract.yearsRemaining);
+        this.addHeadline({
+          type: 'contract',
+          title: team.city + ' ' + team.name + ' restructure ' + p.name + '\'s contract',
+          body: 'Converted ' + formatMoney(converting) + ' of base salary into signing bonus, freeing immediate cap space (pushed into future years).'
         });
-      for (const p of releaseCandidates) {
+      }
+    }
+    
+    // STEP 3: TRADE OVERPAID VETS (simulated — for CPU we just "trade" by releasing without dead cap penalty)
+    // Real NFL: a team in cap trouble trades a vet to a team with cap room.
+    // We model this simply: find moderately-overpaid vets and "trade" them (release as if absorbed by another team).
+    // This is preferable to a cap-casualty cut because dead cap stays minimal.
+    if (teamCapUsed(team, this.state.players) > cap) {
+      const tradeCandidates = getPlayers()
+        .filter(p =>
+          p.contract &&
+          p.rating >= 70 && p.rating < 85 && // mid-tier vets, not stars
+          p.age >= 28 && // older vets
+          currentCapHit(p.contract) > 5_000_000 && // meaningful contract
+          currentCapHit(p.contract) - deadCapIfReleased(p.contract) > 2_000_000 // real savings
+        )
+        .sort((a, b) => overpaidness(b) - overpaidness(a));
+      for (const p of tradeCandidates) {
+        if (teamCapUsed(team, this.state.players) <= cap) break;
+        // "Trade away" — release with reduced dead cap (simulate absorbing team taking salary)
+        // This is a fiction since we don't model a receiving team, but it produces realistic-looking cap relief.
+        const reducedDead = Math.round(deadCapIfReleased(p.contract) * 0.5);
+        team.deadCap = (team.deadCap || 0) + reducedDead;
+        team.roster = team.roster.filter(id => id !== p.id);
+        p.team = null;
+        p.contract = null;
+        this.addHeadline({
+          type: 'contract',
+          title: team.city + ' ' + team.name + ' trade ' + p.name,
+          body: 'Veteran ' + p.position + ' sent to another team to clear cap. Dead cap impact: ' + formatMoney(reducedDead) + '.'
+        });
+      }
+    }
+    
+    // STEP 4: LAST RESORT — cut remaining positive-savings players, lowest-OVR first
+    // Real NFL: when cap pressure is severe, even decent backups get cut.
+    // We protect the top 25 players on the roster (rough starter count) to avoid gutting the team.
+    if (teamCapUsed(team, this.state.players) > cap) {
+      const allPlayers = getPlayers();
+      const sortedByRating = [...allPlayers].sort((a, b) => b.rating - a.rating);
+      const protectedIds = new Set(sortedByRating.slice(0, 25).map(p => p.id)); // top 25 stars/starters
+      const lastResortCuts = allPlayers
+        .filter(p =>
+          !protectedIds.has(p.id) &&
+          p.contract &&
+          currentCapHit(p.contract) - deadCapIfReleased(p.contract) > 0
+        )
+        .sort((a, b) => {
+          // Cut lowest OVR first within the unprotected group, biggest savings as tiebreaker
+          if (a.rating !== b.rating) return a.rating - b.rating;
+          return (currentCapHit(b.contract) - deadCapIfReleased(b.contract)) - (currentCapHit(a.contract) - deadCapIfReleased(a.contract));
+        });
+      for (const p of lastResortCuts) {
         if (teamCapUsed(team, this.state.players) <= cap) break;
         team.deadCap = (team.deadCap || 0) + deadCapIfReleased(p.contract);
         team.roster = team.roster.filter(id => id !== p.id);
@@ -3466,22 +3562,19 @@ let game = {
       }
     }
     
-    // Coaching cap enforcement: if team's staff total exceeds COACHING_CAP, fire weakest non-HC coach until under.
-    // We protect the HC (continuity matters) and prefer firing low-OVR DC/OC/Scout.
+    // STEP 5: Coaching cap enforcement (unchanged from before)
     let coachTotal = this.teamCoachingSalary(team);
     if (coachTotal > COACHING_CAP) {
-      const firingOrder = ['Scout', 'DC', 'OC']; // protect HC last
+      const firingOrder = ['Scout', 'DC', 'OC'];
       for (const role of firingOrder) {
         if (coachTotal <= COACHING_CAP) break;
         const c = this.getCoach(team.staff[role]);
         if (!c) continue;
-        // Vacate slot — CPU teams will get a backfill next offseason at appropriate salary
         team.staff[role] = null;
         c.teamId = null;
         c.salary = 0;
         coachTotal = this.teamCoachingSalary(team);
       }
-      // If still over (somehow even HC alone exceeds cap), demote HC to a cheaper coach
       if (coachTotal > COACHING_CAP) {
         const hc = this.getCoach(team.staff.HC);
         if (hc) {
@@ -4150,9 +4243,8 @@ let game = {
     this.runEliteFAPursuit();
     
     // Pass 2: GAP FILL — fill any remaining minimum-roster gaps with best available FA.
-    // Hard cap check: skip signings that would push the team over cap.
-    // Gaps left after this pass get filled by fillRostersToMinimum at the vet minimum.
-    const cap = getSalaryCap(this.state.year);
+    // No cap skip here: the AGM will clean up any over-cap teams later via cuts/restructures/trades.
+    // Real NFL teams sign players first, then figure out cap. They don't leave roster holes.
     this.state.teams.forEach(team => {
       const byPos = {};
       team.roster.forEach(id => {
@@ -4170,13 +4262,6 @@ let game = {
           if (fas.length > 0) {
             fas.sort((a, b) => b.rating - a.rating);
             const fa = fas[0];
-            // Project the contract cost. If it would blow the cap, skip — fillRostersToMinimum
-            // will sign someone cheaper at the vet minimum later.
-            const projAAV = calculateContractAAV(fa.position, fa.rating, fa.age, this.state.year);
-            const capUsed = teamCapUsed(team, this.state.players);
-            if (capUsed + projAAV > cap) {
-              continue; // leave gap for the minimum-contract pass
-            }
             fa.team = team.id;
             fa.contract = generateContract(fa.position, fa.rating, fa.age, this.state.year, false);
             team.roster.push(fa.id);
