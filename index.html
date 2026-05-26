@@ -334,7 +334,8 @@ select { font-family: inherit; }
       <div class="user-team-tag" id="userTeamTag" style="display:none">—</div>
     </div>
     <div class="header-actions">
-      <button class="btn" onclick="game.saveGame()">Save</button>
+      <button class="btn" onclick="game.saveGame();alert('Saved to slot ' + (game.activeSlot || 1) + '.');">Save</button>
+      <button class="btn" onclick="if(confirm('Return to slot picker? Unsaved changes will be lost — click Save first if you want to keep progress.')){game.showSlotPicker();}">Slots</button>
       <button class="btn btn-primary" onclick="game.simWeek()" id="simBtn" style="display:none">Simulate Week →</button>
     </div>
   </header>
@@ -820,8 +821,8 @@ const COLLEGE_STORYLINE_TEMPLATES = [
 
 // Position split: OL → OT/OG/C, DL → EDGE/DT
 // 53-man roster: 3QB, 4RB, 7WR, 3TE, 3OT, 4OG, 2C, 4EDGE, 3DT, 8LB, 6CB, 4S, 1K, 1P = 53
-const MODERN_PASS_EMPH = 0.72;
-const MODERN_GAME_RATE = 1.5;
+const MODERN_PASS_EMPH = 0.65;
+const MODERN_GAME_RATE = 1.0;
 
 function getSalaryCap(year) {
   // 2026 base ~$300M (real NFL 2025 was $279.2M, 2026 projected ~$300M+), +6.5%/yr
@@ -1083,14 +1084,10 @@ let game = {
   statsTab: 'season',
 
   init() {
-    this.loadGame();
-    if (!this.state) this.showWelcome();
-    else {
-      document.getElementById('simBtn').style.display = '';
-      this.updateUserTag();
-      if (this.state.draftActive) this.renderDraft();
-      else this.render();
-    }
+    // Show the slot picker — user can resume an existing slot or start a new game in any slot.
+    // Previously this auto-loaded a single save; now we present 5 slots so the user can have
+    // multiple parallel leagues (dynasty + coach career + player career, etc.).
+    this.showSlotPicker();
     this.bindEvents();
   },
 
@@ -1200,18 +1197,18 @@ let game = {
   },
 
   showModeChoice() {
-    if (this.state && !confirm('This will erase your current league. Continue?')) return;
     // Step 1: career mode (what role do you play?)
+    // Note: confirmation about overwriting is handled by newGameInSlot before we get here.
     document.getElementById('content').innerHTML = '<div class="welcome">' +
       '<h1 class="welcome-title">Choose your career</h1>' +
-      '<p class="welcome-subtitle">How do you want to experience the league?</p>' +
+      '<p class="welcome-subtitle">Save slot ' + (this.activeSlot || '?') + ' · how do you want to experience the league?</p>' +
       '<div class="mode-choice">' +
       '<div class="mode-card" onclick="game.chooseCareerMode(\'dynasty\')"><h3>🏟️ Dynasty</h3><p>Take over an NFL franchise. Build the roster, manage the cap, win Super Bowls. Full GM control of one team.</p></div>' +
       '<div class="mode-card" onclick="game.chooseCareerMode(\'coach\')"><h3>🎯 Coach Career</h3><p>Create a coach and build your career. Start as an OC/DC, work up to head coach, move between teams. Win COY hardware.</p></div>' +
       '<div class="mode-card" onclick="game.chooseCareerMode(\'player\')"><h3>🏈 Player Career</h3><p>Create a college prospect, play 3-4 years of college football, declare for the NFL Draft, then play out your career.</p></div>' +
       '<div class="mode-card" style="opacity:0.45;cursor:not-allowed" onclick="alert(\'Agent Career coming in Stage 4. Pick another mode for now.\')"><h3>💼 Agent Career <span style="font-size:11px;color:var(--text-muted)">(coming soon)</span></h3><p>Run a sports agency. Sign clients, negotiate their contracts, build a stable of 20-30 stars.</p></div>' +
       '</div>' +
-      '<button class="btn" onclick="game.showWelcome()">← Back</button></div>';
+      '<button class="btn" onclick="game.showSlotPicker()">← Back to slots</button></div>';
   },
 
   chooseCareerMode(careerMode) {
@@ -1318,8 +1315,10 @@ let game = {
 
   chooseMode(mode) {
     this.pendingMode = mode;
-    if (mode === 'default') this.startLeague(null);
-    else this.showTeamPicker();
+    // Both 'default' (auto-rosters) and 'draft' (startup-draft) modes require the user to pick a franchise.
+    // Previously 'default' jumped straight into the league with no team selection, which was wrong —
+    // dynasty mode is always about controlling a specific franchise.
+    this.showTeamPicker();
   },
 
   showTeamPicker() {
@@ -1504,10 +1503,9 @@ let game = {
   },
 
   // Coach career progression — called each offseason. Decides if the user's coach gets:
-  //   - PROMOTED to HC (if currently OC/DC with strong results and an HC vacancy fits)
+  //   - PROMOTED to HC (if currently OC/DC with strong results — Stage 3 presents offers)
   //   - FIRED as HC (if losing records pile up)
-  //   - HIRED again (if currently FA between jobs)
-  // Stage 1 = simple deterministic rules; Stage 3 will replace with offer-selection UI.
+  //   - HIRED again (if currently FA between jobs — Stage 3 presents offers)
   runCoachCareerProgression() {
     const userCoach = this.getUserCoach();
     if (!userCoach || userCoach.retired) return;
@@ -1519,7 +1517,6 @@ let game = {
     // CASE A: User is currently a HC. Check for firing.
     if (userCoach.role === 'HC' && userCoach.teamId !== null) {
       if (lastSeason && lastSeason.wins < 5) {
-        // 2 straight bad seasons triggers a firing
         const seasonBefore = userCoach.seasonHistory[userCoach.seasonHistory.length - 2];
         if (seasonBefore && seasonBefore.role === 'HC' && seasonBefore.wins < 5) {
           const oldTeam = this.state.teams[userCoach.teamId];
@@ -1536,86 +1533,148 @@ let game = {
     }
     
     // CASE B: User is OC/DC and may be eligible for HC promotion.
+    // Stage 3: instead of auto-placing, generate HC offers from interested teams with vacancies.
     if ((userCoach.role === 'OC' || userCoach.role === 'DC') && userCoach.teamId !== null) {
-      // Eligible if their team just had a strong season AND they have ≥3 years tenure as coordinator AND OVR ≥ 75
       const tenureAsCoordinator = (userCoach.seasonHistory || []).filter(h => h.role === 'OC' || h.role === 'DC').length;
       const eligible = userCoach.ovr >= 72 && tenureAsCoordinator >= 2;
       if (eligible) {
-        // Find HC vacancies (teams with no HC) — start with own team if vacant
-        let vacancyTeam = null;
-        const ownTeam = this.state.teams[userCoach.teamId];
-        if (ownTeam.staff.HC === null) vacancyTeam = ownTeam;
-        else {
-          // Look at random other teams
-          const vacancies = this.state.teams.filter(t => t.staff && t.staff.HC === null);
-          if (vacancies.length > 0) {
-            vacancyTeam = vacancies[Math.floor(Math.random() * vacancies.length)];
-          }
-        }
-        if (vacancyTeam) {
-          // Promote!
-          const oldRole = userCoach.role;
-          const oldTeam = this.state.teams[userCoach.teamId];
-          oldTeam.staff[oldRole] = null; // vacate the OC/DC slot
-          
-          userCoach.role = 'HC';
-          userCoach.teamId = vacancyTeam.id;
-          userCoach.hiredYear = this.state.year + 1;
-          userCoach.salary = calculateCoachSalary('HC', userCoach.ovr);
-          // Convert playstyle from single-string (OC/DC) to HC's offense/defense object
-          if (typeof userCoach.playstyle === 'string') {
-            userCoach.playstyle = {
-              offense: oldRole === 'OC' ? userCoach.playstyle : 'Balanced',
-              defense: oldRole === 'DC' ? userCoach.playstyle : 'Balanced'
-            };
-          }
-          vacancyTeam.staff.HC = userCoach.id;
-          
-          this.addHeadline({
-            type: 'champ',
-            title: vacancyTeam.city + ' ' + vacancyTeam.name + ' name ' + userCoach.name + ' head coach',
-            body: 'Your strong work as ' + COACH_ROLE_NAMES[oldRole] + ' on ' + (oldTeam ? oldTeam.abbr : 'previous team') + ' earned the promotion. Welcome to HC.'
-          });
+        const offers = this.generateCoachOffers(userCoach, 'HC');
+        if (offers.length > 0) {
+          this.state.career.pendingCoachOffers = offers;
+          this.state.offseasonPhase = 'coachJobChoice';
         }
       }
       return;
     }
     
-    // CASE C: User is Free Agent. Try to find them a job.
+    // CASE C: User is Free Agent. Generate offers.
     if (userCoach.teamId === null) {
-      // Prefer: HC vacancy if user was HC before, otherwise OC/DC vacancy
       const wasHC = userCoach.role === 'HC';
-      const targetRole = wasHC ? 'HC' : userCoach.role;
-      const vacancies = this.state.teams.filter(t => t.staff && t.staff[targetRole] === null);
-      
-      let pickTeam = null;
-      if (vacancies.length > 0) {
-        pickTeam = vacancies[Math.floor(Math.random() * vacancies.length)];
-      } else if (wasHC) {
-        // No HC opening — accept a coordinator gig
+      const preferredRole = wasHC ? 'HC' : userCoach.role;
+      let offers = this.generateCoachOffers(userCoach, preferredRole);
+      // If no HC openings and user was HC, also include coordinator offers as a fallback
+      if (offers.length === 0 && wasHC) {
         const fallbackRole = userCoach.playstyle && userCoach.playstyle.offense ? 'OC' : 'DC';
-        const fallback = this.state.teams.filter(t => t.staff && t.staff[fallbackRole] === null);
-        if (fallback.length > 0) {
-          pickTeam = fallback[Math.floor(Math.random() * fallback.length)];
-          userCoach.role = fallbackRole;
-          // Convert HC playstyle to single-string OC/DC playstyle
-          if (typeof userCoach.playstyle === 'object') {
-            userCoach.playstyle = fallbackRole === 'OC' ? userCoach.playstyle.offense : userCoach.playstyle.defense;
-          }
-        }
+        offers = this.generateCoachOffers(userCoach, fallbackRole);
       }
-      
-      if (pickTeam) {
-        userCoach.teamId = pickTeam.id;
-        userCoach.hiredYear = this.state.year + 1;
-        userCoach.salary = calculateCoachSalary(userCoach.role, userCoach.ovr);
-        pickTeam.staff[userCoach.role] = userCoach.id;
-        this.addHeadline({
-          title: pickTeam.city + ' ' + pickTeam.name + ' hire ' + userCoach.name + ' as ' + COACH_ROLE_NAMES[userCoach.role],
-          body: 'Welcome to your new team.'
-        });
+      if (offers.length > 0) {
+        this.state.career.pendingCoachOffers = offers;
+        this.state.offseasonPhase = 'coachJobChoice';
       }
     }
+  },
+
+  // Generate job offers for the user's coach at a given role.
+  // Returns offers from teams with that role vacant, ranked by team interest.
+  generateCoachOffers(userCoach, targetRole) {
+    const candidates = this.state.teams.filter(t => t.staff && t.staff[targetRole] === null);
+    if (candidates.length === 0) return [];
+    
+    // Score teams by interest (how badly they want this coach)
+    const scored = candidates.map(team => {
+      // Team's competitive tier (helps coach decide where to go)
+      const wins = team.priorYearWins !== undefined ? team.priorYearWins : 8;
+      // Coaching cap room
+      const coachCapUsed = this.teamCoachingSalary(team);
+      const coachCapRoom = COACHING_CAP - coachCapUsed;
+      const askingSalary = calculateCoachSalary(targetRole, userCoach.ovr);
+      const capFactor = coachCapRoom >= askingSalary ? 1.0 : 0.3;
+      // Interest = inverse of wins (bad teams want coaches more) × cap factor × coach OVR factor
+      const interest = (15 - wins) * capFactor * (userCoach.ovr / 70);
+      return { team, interest, wins };
+    });
+    scored.sort((a, b) => b.interest - a.interest);
+    
+    // Top 2-4 offers
+    const offerCount = Math.min(scored.length, userCoach.ovr >= 80 ? 4 : userCoach.ovr >= 70 ? 3 : 2);
+    
+    return scored.slice(0, offerCount).map(({ team, wins }) => {
+      // Salary offer: based on coach OVR, with rebuild teams paying 5-15% more
+      const baseSalary = calculateCoachSalary(targetRole, userCoach.ovr);
+      const salaryMod = wins < 6 ? 1.10 + Math.random() * 0.05 : wins >= 11 ? 0.95 + Math.random() * 0.05 : 0.98 + Math.random() * 0.06;
+      const salary = Math.round(baseSalary * salaryMod / 50_000) * 50_000;
+      // Contract length (years guaranteed)
+      const years = targetRole === 'HC' ? (3 + Math.floor(Math.random() * 3)) : (2 + Math.floor(Math.random() * 2));
+      
+      const projection = wins >= 11 ? 'Contender' : wins >= 8 ? 'Playoff hopeful' : wins >= 6 ? 'Rebuilding' : 'Long rebuild';
+      
+      // Team context
+      const hc = this.getTeamHC(team);
+      const gmStability = wins >= 8 ? 'Stable' : wins >= 5 ? 'On notice' : 'Hot seat (high pressure)';
+      
+      return {
+        teamId: team.id,
+        role: targetRole,
+        salary,
+        years,
+        projection,
+        record: wins + '–' + (17 - wins),
+        gmStability,
+        currentHC: targetRole !== 'HC' && hc ? hc.name : null
+      };
+    });
+  },
+  
+  // User accepts a coach job offer
+  acceptCoachOffer(teamId) {
+    const userCoach = this.getUserCoach();
+    if (!userCoach || !this.state.career.pendingCoachOffers) return;
+    const offer = this.state.career.pendingCoachOffers.find(o => o.teamId === teamId);
+    if (!offer) return;
+    const team = this.state.teams[teamId];
+    
+    // If promotion from OC/DC, vacate old slot first
+    if (userCoach.teamId !== null && userCoach.role !== offer.role) {
+      const oldTeam = this.state.teams[userCoach.teamId];
+      const oldRole = userCoach.role;
+      oldTeam.staff[oldRole] = null;
+    }
+    
+    const newRole = offer.role;
+    const oldRole = userCoach.role;
+    
+    // Promotion/move
+    userCoach.role = newRole;
+    userCoach.teamId = teamId;
+    userCoach.hiredYear = this.state.year + 1;
+    userCoach.salary = offer.salary;
+    
+    // Convert playstyle structure if role changed between HC and coordinator
+    if (newRole === 'HC' && typeof userCoach.playstyle === 'string') {
+      userCoach.playstyle = {
+        offense: oldRole === 'OC' ? userCoach.playstyle : 'Balanced',
+        defense: oldRole === 'DC' ? userCoach.playstyle : 'Balanced'
+      };
+    } else if ((newRole === 'OC' || newRole === 'DC') && typeof userCoach.playstyle === 'object') {
+      userCoach.playstyle = newRole === 'OC' ? userCoach.playstyle.offense : userCoach.playstyle.defense;
+    }
+    
+    team.staff[newRole] = userCoach.id;
+    this.state.career.pendingCoachOffers = null;
+    this.state.offseasonPhase = 'fa';
+    
+    this.addHeadline({
+      type: 'champ',
+      title: team.city + ' ' + team.name + ' hire ' + userCoach.name + ' as ' + COACH_ROLE_NAMES[newRole],
+      body: formatMoney(offer.salary) + '/yr · ' + offer.years + '-year deal. Welcome to the ' + offer.projection.toLowerCase() + '.'
+    });
+    this.render();
+    this.saveGame();
+  },
+  
+  // Decline all coach offers — stay in current role (or sit out as FA)
+  declineAllCoachOffers() {
+    const userCoach = this.getUserCoach();
+    if (!userCoach) return;
+    if (!confirm('Decline all offers? You\'ll stay in your current position (or remain FA). Continue?')) return;
+    this.state.career.pendingCoachOffers = null;
+    this.state.offseasonPhase = 'fa';
+    this.addHeadline({
+      title: userCoach.name + ' rejects all coaching offers',
+      body: 'Will stay in current role / remain FA.'
+    });
+    this.render();
+    this.saveGame();
   },
 
 
@@ -1811,6 +1870,212 @@ let game = {
         });
       }
     }
+  },
+
+  // ============================================================
+  // STAGE 3: FREE AGENCY OFFER SELECTION (Player Career)
+  // ============================================================
+  // When the user's player becomes a free agent, generate 3-5 offers from interested teams.
+  // The user picks one before the season can advance.
+  // Coach mode equivalent lives below in generateCoachOffers().
+  
+  // Scheme fit table: how well an archetype suits an offensive/defensive playstyle.
+  // Values: 1.0 (perfect fit), 0.8 (good), 0.6 (neutral), 0.4 (mediocre), 0.2 (poor).
+  // Missing entries default to 0.6 (neutral).
+  schemeFitScore(player, team) {
+    const hc = this.getTeamHC(team);
+    if (!hc || !hc.playstyle) return 0.6;
+    const arch = player.archetype || 'Generalist';
+    
+    // Determine which playstyle applies based on position side of ball
+    const offensivePositions = ['QB','RB','WR','TE','OT','OG','C'];
+    const isOffense = offensivePositions.includes(player.position);
+    const playstyle = isOffense ? hc.playstyle.offense : hc.playstyle.defense;
+    if (!playstyle) return 0.6;
+    
+    // Curated fit table
+    const fitTable = {
+      // Offensive
+      'Air Raid': { 'Gunslinger': 1.0, 'Field General': 0.8, 'Scrambler': 0.7, 'Deep Threat': 1.0, 'Route Technician': 0.9, 'Possession': 0.7, 'Receiving TE': 0.9, 'H-Back': 0.7, 'Blocking TE': 0.3, 'Speedster': 0.8, 'Receiving Back': 0.9, 'Power Back': 0.4, 'Pass Protector': 0.9, 'Mauler': 0.4, 'Road Grader': 0.4, 'Pass Specialist': 0.9 },
+      'West Coast': { 'Field General': 1.0, 'Gunslinger': 0.7, 'Scrambler': 0.7, 'Possession': 1.0, 'Route Technician': 0.9, 'Deep Threat': 0.6, 'Receiving TE': 1.0, 'H-Back': 0.9, 'Blocking TE': 0.6, 'Receiving Back': 1.0, 'Speedster': 0.8, 'Power Back': 0.6, 'Pass Protector': 0.9, 'Athletic Tackle': 0.9, 'Pulling Guard': 0.8 },
+      'Smashmouth': { 'Field General': 0.8, 'Gunslinger': 0.5, 'Scrambler': 0.6, 'Power Back': 1.0, 'Speedster': 0.6, 'Receiving Back': 0.5, 'Blocking TE': 1.0, 'H-Back': 0.9, 'Receiving TE': 0.6, 'Mauler': 1.0, 'Athletic Tackle': 0.7, 'Pass Protector': 0.6, 'Road Grader': 1.0, 'Pulling Guard': 0.9, 'Pass Specialist': 0.5, 'Possession': 0.8, 'Route Technician': 0.6, 'Deep Threat': 0.5 },
+      'Balanced': {}, // all neutral (0.6)
+      'Run-First': { 'Power Back': 1.0, 'Speedster': 0.8, 'Receiving Back': 0.6, 'Blocking TE': 0.9, 'H-Back': 0.9, 'Receiving TE': 0.6, 'Mauler': 0.9, 'Road Grader': 1.0, 'Pulling Guard': 1.0, 'Pass Specialist': 0.5, 'Athletic Tackle': 0.7, 'Pass Protector': 0.6, 'Gunslinger': 0.5, 'Field General': 0.7, 'Scrambler': 0.8, 'Deep Threat': 0.5, 'Possession': 0.7 },
+      'Vertical': { 'Gunslinger': 1.0, 'Deep Threat': 1.0, 'Speedster': 1.0, 'Receiving Back': 0.7, 'Power Back': 0.5, 'Receiving TE': 0.8, 'Blocking TE': 0.4, 'Pass Protector': 1.0, 'Athletic Tackle': 0.8, 'Mauler': 0.4, 'Field General': 0.7, 'Possession': 0.7, 'Route Technician': 0.8 },
+      // Defensive
+      'Blitz Heavy': { 'Speed Rusher': 1.0, 'Power Rusher': 0.8, 'Pass Rusher': 1.0, 'Run Stuffer': 0.6, 'Nose Tackle': 0.5, 'Run Stopper': 0.6, 'Coverage LB': 0.6, 'Coverage CB': 0.7, 'Coverage Safety': 0.6 },
+      'Coverage First': { 'Coverage CB': 1.0, 'Press CB': 0.9, 'Coverage Safety': 1.0, 'Ball Hawk Safety': 0.9, 'Coverage LB': 1.0, 'Speed Rusher': 0.6, 'Power Rusher': 0.5, 'Pass Rusher': 0.7, 'Run Stuffer': 0.5 },
+      'Bend Don\'t Break': { }, // neutral
+      'Aggressive Front': { 'Power Rusher': 1.0, 'Run Stopper': 1.0, 'Run Stuffer': 1.0, 'Nose Tackle': 0.9, 'Pass Rusher': 0.8, 'Speed Rusher': 0.7, 'Coverage CB': 0.6, 'Coverage Safety': 0.6 }
+    };
+    
+    const styleMap = fitTable[playstyle] || {};
+    return styleMap[arch] !== undefined ? styleMap[arch] : 0.6;
+  },
+  
+  // Compute a team's interest score in signing a particular FA player.
+  // Higher = more interested. Used to rank teams when generating offers.
+  teamInterestInPlayer(team, player) {
+    // 1. Positional need — count current players at this position with this team
+    const sameRoleCount = team.roster.map(id => this.state.players[id]).filter(p =>
+      p && !p.retired && p.position === player.position
+    ).length;
+    const targetCount = POSITION_COUNTS[player.position] || 2;
+    const needFactor = sameRoleCount >= targetCount + 1 ? 0.3 : sameRoleCount >= targetCount ? 0.7 : sameRoleCount >= targetCount - 1 ? 1.0 : 1.3;
+    
+    // 2. Cap room — teams under cap are more aggressive
+    const cap = getSalaryCap(this.state.year);
+    const used = teamCapUsed(team, this.state.players);
+    const capRoom = cap - used;
+    const askingAAV = calculateContractAAV(player.position, player.rating, player.age, this.state.year);
+    const capFactor = capRoom >= askingAAV * 2 ? 1.2 : capRoom >= askingAAV ? 1.0 : capRoom >= askingAAV * 0.5 ? 0.5 : 0.2;
+    
+    // 3. Player quality — better player = more interest
+    const qualityFactor = player.rating / 70;
+    
+    // 4. Scheme fit
+    const fit = this.schemeFitScore(player, team);
+    const fitFactor = 0.6 + fit * 0.8; // 0.78 to 1.4 range
+    
+    return needFactor * capFactor * qualityFactor * fitFactor;
+  },
+  
+  // Generate FA offers for the user's player. Returns array of offer objects:
+  //   { teamId, contract: {years, aav, signingBonus, totalValue}, fitScore, teamContext: {record, projection, depthRole} }
+  generatePlayerFAOffers(player) {
+    // Score all teams' interest, pick top 3-5
+    const scored = this.state.teams.map(team => ({
+      team,
+      interest: this.teamInterestInPlayer(team, player)
+    })).filter(x => x.interest > 0.3); // teams must have at least minimal interest
+    
+    scored.sort((a, b) => b.interest - a.interest);
+    
+    // Pick offer count based on player tier
+    let offerCount;
+    if (player.rating >= 85) offerCount = 5;
+    else if (player.rating >= 75) offerCount = 4;
+    else if (player.rating >= 65) offerCount = 3;
+    else offerCount = 2;
+    
+    const topTeams = scored.slice(0, offerCount);
+    
+    return topTeams.map(({ team, interest }) => {
+      // Generate a team-specific contract.
+      // Baseline AAV
+      const baseAAV = calculateContractAAV(player.position, player.rating, player.age, this.state.year);
+      
+      // Modifier based on team motivation: rebuilding teams offer more, contenders less.
+      // Use prior-season wins as proxy.
+      const lastSeasonWins = (player.seasonHistory && player.seasonHistory.length > 0)
+        ? (team.priorYearWins !== undefined ? team.priorYearWins : 8)
+        : 8;
+      // Rebuilding team (< 7 wins last year) pays 10-20% more to attract talent
+      // Contender (>= 11 wins) pays 5-10% less because players want to play there for them
+      let motivationMod;
+      if (lastSeasonWins < 7) motivationMod = 1.10 + Math.random() * 0.10;
+      else if (lastSeasonWins >= 11) motivationMod = 0.92 + Math.random() * 0.06;
+      else motivationMod = 0.98 + Math.random() * 0.08;
+      
+      const aav = Math.round(baseAAV * motivationMod / 50_000) * 50_000;
+      
+      // Years: longer for younger players, shorter for older. Vary by team too.
+      const years = player.age <= 26 ? (3 + Math.floor(Math.random() * 3)) // 3-5
+                  : player.age <= 30 ? (2 + Math.floor(Math.random() * 3)) // 2-4
+                  : (1 + Math.floor(Math.random() * 2)); // 1-2
+      
+      // Signing bonus: 30-50% of total value for top-tier offers
+      const totalValue = aav * years;
+      const bonusPct = 0.30 + Math.random() * 0.20;
+      const signingBonus = Math.round(totalValue * bonusPct / 100_000) * 100_000;
+      const baseTotal = totalValue - signingBonus;
+      const baseSalaries = [];
+      for (let y = 0; y < years; y++) baseSalaries.push(Math.round(baseTotal / years / 50_000) * 50_000);
+      
+      const contract = {
+        years, yearsRemaining: years, aav, totalValue,
+        signingBonus, bonusProrationYears: Math.min(5, years),
+        baseSalaries
+      };
+      
+      // Team context
+      const projection = lastSeasonWins >= 11 ? 'Contender' : lastSeasonWins >= 8 ? 'Playoff hopeful' : lastSeasonWins >= 6 ? 'Rebuilding' : 'Long rebuild';
+      
+      // Where in depth chart? Compare player's rating to team's current best at position
+      const teamPlayers = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired && p.position === player.position);
+      teamPlayers.sort((a, b) => b.rating - a.rating);
+      let depthRole;
+      if (teamPlayers.length === 0 || player.rating > (teamPlayers[0]?.rating || 0)) depthRole = 'Day-one starter';
+      else if (teamPlayers.length === 0 || player.rating >= (teamPlayers[0]?.rating || 0) - 5) depthRole = 'Competing for starter';
+      else if (player.rating >= (teamPlayers[Math.min(1, teamPlayers.length - 1)]?.rating || 0) - 3) depthRole = 'Top backup / rotation';
+      else depthRole = 'Depth piece';
+      
+      const fitScore = this.schemeFitScore(player, team);
+      
+      return {
+        teamId: team.id,
+        contract,
+        fitScore,
+        teamContext: {
+          record: lastSeasonWins + '–' + (17 - lastSeasonWins),
+          projection,
+          depthRole
+        }
+      };
+    });
+  },
+
+  // Called from the offseason flow when the user player is a FA. Stores offers and pauses.
+  promptPlayerFAChoice() {
+    const p = this.getUserPlayer();
+    if (!p || p.team !== null || p.retired) return false;
+    const offers = this.generatePlayerFAOffers(p);
+    if (offers.length === 0) {
+      // No team wants them — they sit one year as FA
+      this.addHeadline({
+        title: 'No FA offers for ' + p.name,
+        body: 'No teams pursued ' + p.name + ' this offseason. They\'ll remain a free agent for the year.'
+      });
+      return false;
+    }
+    this.state.career.pendingOffers = offers;
+    this.state.offseasonPhase = 'playerFAChoice';
+    return true;
+  },
+  
+  // User accepts an offer — sign the contract and clear the pending offers.
+  acceptPlayerFAOffer(teamId) {
+    const p = this.getUserPlayer();
+    if (!p || !this.state.career.pendingOffers) return;
+    const offer = this.state.career.pendingOffers.find(o => o.teamId === teamId);
+    if (!offer) return;
+    const team = this.state.teams[teamId];
+    p.team = teamId;
+    p.contract = offer.contract;
+    team.roster.push(p.id);
+    this.state.career.pendingOffers = null;
+    this.state.offseasonPhase = 'fa'; // restore so the rest of FA can proceed
+    this.addHeadline({
+      title: p.name + ' signs with ' + team.city + ' ' + team.name,
+      body: formatMoney(offer.contract.aav) + '/yr for ' + offer.contract.years + ' years. Scheme fit: ' + (offer.fitScore * 100).toFixed(0) + '%. Projected role: ' + offer.teamContext.depthRole + '.'
+    });
+    this.render();
+    this.saveGame();
+  },
+  
+  // User declines all offers (retires the player, or sits a year)
+  declineAllPlayerFAOffers() {
+    const p = this.getUserPlayer();
+    if (!p) return;
+    if (!confirm('Decline all offers? Your player will sit out as a free agent for the year. You can also retire by accepting "Retire" instead. Continue?')) return;
+    this.state.career.pendingOffers = null;
+    this.state.offseasonPhase = 'fa';
+    this.addHeadline({
+      title: p.name + ' rejects all FA offers',
+      body: 'Will sit out as a free agent and reconsider next offseason.'
+    });
+    this.render();
+    this.saveGame();
   },
 
   // The previous occupant of that slot is released to the FA pool.
@@ -2624,10 +2889,12 @@ let game = {
       this.enforceRosterMax();
       
       // Final cap pass — fill may have added players that pushed teams back over cap.
-      // Re-run AGM for CPU teams ONLY (user team is policed by simWeek's cap-compliance check).
+      // Re-run AGM for all teams (including user team if AGM is enabled).
+      // The simWeek cap-compliance check ensures the user can't advance with an over-cap roster,
+      // but with AGM enabled they shouldn't see that error in the first place.
       this.state.teams.forEach(team => {
-        if (team.id === this.state.userTeamId) return;
-        this.runAssistantGM(team);
+        const isUser = team.id === this.state.userTeamId;
+        if (!isUser || this.state.useAssistantGM) this.runAssistantGM(team);
       });
       
       this.generateSchedule();
@@ -3259,6 +3526,19 @@ let game = {
     }
     
     // Offseason phases: FA → Draft → next season
+    // Stage 3: If user is in player career and has pending FA offers, block until they choose.
+    if (this.state.offseasonPhase === 'playerFAChoice') {
+      alert('You have ' + (this.state.career.pendingOffers ? this.state.career.pendingOffers.length : 0) + ' free agent offers to consider. Pick one (or decline all) before continuing.');
+      this.currentView = 'mycareer';
+      this.render();
+      return;
+    }
+    if (this.state.offseasonPhase === 'coachJobChoice') {
+      alert('You have ' + (this.state.career.pendingCoachOffers ? this.state.career.pendingCoachOffers.length : 0) + ' coaching job offer' + ((this.state.career.pendingCoachOffers || []).length > 1 ? 's' : '') + ' to consider. Pick one (or decline all) before continuing.');
+      this.currentView = 'mycareer';
+      this.render();
+      return;
+    }
     if (this.state.offseasonPhase === 'fa') {
       this.state.offseasonPhase = 'draft';
       this.startAnnualDraft();
@@ -3301,20 +3581,37 @@ let game = {
   },
 
   // Decompose a valid score into a [tdCount, fgCount] pair.
-  // Preference: more TDs than FGs (NFL realism — most scoring is TDs).
-  // Returns the combo with the most TDs that satisfies tdCount*7 + fgCount*3 === score.
+  // Real NFL scoring is ~60% TDs / 40% FGs by point share. Don't always max TDs —
+  // pick from valid combos with a weighted preference that favors realistic mixes.
   decomposeScore(score) {
     if (score <= 0) return { tds: 0, fgs: 0 };
-    let best = { tds: 0, fgs: Math.floor(score / 3) };
+    // Find all valid combos
+    const combos = [];
     for (let tds = 0; tds * 7 <= score; tds++) {
       const rem = score - tds * 7;
-      if (rem % 3 === 0) {
-        const fgs = rem / 3;
-        // Prefer combos with more TDs (NFL realism)
-        if (tds > best.tds) best = { tds, fgs };
-      }
+      if (rem % 3 === 0) combos.push({ tds, fgs: rem / 3 });
     }
-    return best;
+    if (combos.length === 0) return { tds: 0, fgs: Math.floor(score / 3) };
+    if (combos.length === 1) return combos[0];
+    // Weight each combo: prefer mixes where TD points are 75-85% of total.
+    // Real NFL: scoring is ~75-80% from TDs in modern era.
+    const weighted = combos.map(c => {
+      const tdPts = c.tds * 7;
+      const tdShare = tdPts / score;
+      // Bell curve centered around 0.80 TD share, sharper falloff
+      let weight = Math.max(0.05, 1 - Math.abs(tdShare - 0.80) * 1.8);
+      // Stronger preference for more TDs (NFL tendency)
+      weight *= (1 + c.tds * 0.15);
+      return { ...c, weight };
+    });
+    // Weighted random pick
+    const totalWeight = weighted.reduce((s, c) => s + c.weight, 0);
+    let r = Math.random() * totalWeight;
+    for (const c of weighted) {
+      r -= c.weight;
+      if (r <= 0) return { tds: c.tds, fgs: c.fgs };
+    }
+    return weighted[weighted.length - 1];
   },
 
   simGame(g) {
@@ -3324,9 +3621,10 @@ let game = {
     const as = this.getTeamStrength(away);
     const homeWinProb = (hs / (hs + as)) + 0.05;
     const homeWins = Math.random() < homeWinProb;
-    const base = 14 + Math.floor(MODERN_GAME_RATE * 8);
-    let hScore = Math.max(3, base + Math.floor(Math.random() * 20) + (homeWins ? 7 : -7));
-    let aScore = Math.max(3, base + Math.floor(Math.random() * 20) + (homeWins ? -7 : 7));
+    // Real NFL avg team score: ~22-23. So baseline ~15, range ~10-38 with winner skew.
+    const base = 15;
+    let hScore = Math.max(3, base + Math.floor(Math.random() * 14) + (homeWins ? 7 : -3));
+    let aScore = Math.max(3, base + Math.floor(Math.random() * 14) + (homeWins ? -3 : 7));
     // Round each score to a valid TD+FG combination (7a + 3b for a,b≥0).
     // This guarantees box-score TDs + FGs will sum exactly to the final score.
     hScore = this.roundToValidScore(hScore);
@@ -3422,11 +3720,13 @@ let game = {
       
       // Decompose the team's final score into target TDs and FGs.
       // Split TDs between passing and rushing based on pass-emphasis.
-      // passEmph ~0.5 average → 60% pass / 40% rush TDs. passEmph 0.75 → 75/25. passEmph 0.25 → 35/65.
+      // Real NFL split is ~65% pass / 35% rush. We let passEmph nudge this in either direction.
       const decomp = this.decomposeScore(score);
       const targetTotalTDs = decomp.tds;
       const targetFGs = decomp.fgs;
-      const passShare = Math.max(0.2, Math.min(0.85, 0.4 + passEmph * 0.5));
+      // passEmph 0.5 (balanced) → 65% pass share. passEmph 0.65 (modern avg) → 72%.
+      // passEmph 0.8 (Air Raid) → 80%. passEmph 0.3 (Smashmouth) → 55%.
+      const passShare = Math.max(0.35, Math.min(0.82, 0.40 + passEmph * 0.50));
       let targetPassTDs = Math.round(targetTotalTDs * passShare);
       let targetRushTDs = targetTotalTDs - targetPassTDs;
       // Clamp to [0, targetTotalTDs]
@@ -3454,11 +3754,16 @@ let game = {
       let teamPassYards = 0, teamCompletions = 0, teamPassTDs = 0;
       if (qbs[0]) {
         const qb = qbs[0];
-        // Passing volume calibrated to NFL realism: avg QB (OVR ~75) → ~210 yards/game, ~3500 season
-        // Elite QB (OVR 92) → ~270/game, ~4500 season
-        teamPassYards = Math.floor((95 + Math.random() * 120) * MODERN_GAME_RATE * (qb.rating / 80) * (0.7 + passEmph * 0.6));
-        const att = Math.floor((18 + Math.random() * 16) * (0.7 + passEmph * 0.6));
-        teamCompletions = Math.floor(att * (0.55 + Math.random() * 0.2));
+        // Passing volume calibrated to NFL realism (last 10 years):
+        // - Avg starter (OVR 75): ~225 yds/game → ~3,825/season
+        // - Top starter (OVR 85): ~265 yds/game → ~4,500/season
+        // - Elite (OVR 92): ~295 yds/game → ~5,000/season
+        // Formula: base + variance × rating multiplier × passEmph scaling
+        const ratingMult = 0.90 + Math.max(0, (qb.rating - 75)) / 38; // 0.90 at OVR 75, 1.16 at 85, 1.35 at 92
+        const passEmphMult = 0.85 + passEmph * 0.32; // 0.85 to 1.17 range
+        teamPassYards = Math.floor((175 + Math.random() * 80) * ratingMult * passEmphMult);
+        const att = Math.floor((24 + Math.random() * 12) * passEmphMult);
+        teamCompletions = Math.floor(att * (0.58 + Math.random() * 0.12 + (qb.rating - 75) / 200));
         teamCompletions = Math.min(teamCompletions, att);
         // Force passing TDs to match the decomposed target (instead of random)
         teamPassTDs = targetPassTDs;
@@ -4991,6 +5296,7 @@ let game = {
 
     this.state.teams.forEach(team => {
       if (team.wins >= 10) team.playoffAppearances++;
+      team.priorYearWins = team.wins; // for next year's interest calcs
       team.wins = 0; team.losses = 0; team.pointsFor = 0; team.pointsAgainst = 0;
       team.deadCap = Math.floor((team.deadCap || 0) * 0.3);
     });
@@ -5014,8 +5320,29 @@ let game = {
     // Refill coach FA pool
     this.refillCoachFAPool();
     
+    // Post-FA AGM cleanup — runVeteranFreeAgency may have pushed teams over cap (especially user team
+    // after CPU teams signed all the cheap FAs first, leaving expensive ones for user). Run AGM on all
+    // teams so simWeek's cap-compliance check doesn't block the user's offseason advancement.
+    this.state.teams.forEach(team => {
+      const isUser = team.id === this.state.userTeamId;
+      if (!isUser || this.state.useAssistantGM) this.runAssistantGM(team);
+    });
+    
     this.state.offseasonPhase = 'fa'; // 'fa' → 'draft' → null
     this.addHeadline({ type: 'contract', title: 'Free agency opens', body: 'Player and coach FAs available. Click Continue to advance to the draft.' });
+    
+    // STAGE 3: If user player is now a FA (rookie deal expired, released, etc), present offers
+    // and pause until they pick. This switches offseasonPhase to 'playerFAChoice'.
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'nfl') {
+      this.promptPlayerFAChoice();
+    }
+    
+    // STAGE 3: If user coach generated job offers during runCoachCareerProgression earlier in endSeason,
+    // the phase was set to 'coachJobChoice' but got overwritten by 'fa' above. Restore it now so
+    // the simWeek block fires and the user gets to choose.
+    if (this.state.career && this.state.career.mode === 'coach' && this.state.career.pendingCoachOffers && this.state.career.pendingCoachOffers.length > 0) {
+      this.state.offseasonPhase = 'coachJobChoice';
+    }
     
     this.currentView = this.state.userTeamId !== null ? 'freeagents' : 'standings';
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -5048,7 +5375,7 @@ let game = {
         for (let i = 0; i < gaps; i++) {
           const fas = this.state.players.filter(p =>
             p.team === null && !p.retired && p.position === pos &&
-            p.collegeGrade === undefined
+            p.collegeGrade === undefined && !p.isUserControlled
           );
           if (fas.length > 0) {
             fas.sort((a, b) => b.rating - a.rating);
@@ -5086,10 +5413,11 @@ let game = {
     });
     
     for (let wave = 0; wave < MAX_WAVES; wave++) {
-      // Get all elite FAs still available, sorted by OVR (descending)
+      // Get all elite FAs still available, sorted by OVR (descending).
+      // EXCLUDE user-controlled players — they get to choose offers in promptPlayerFAChoice().
       const eliteFAs = this.state.players.filter(p =>
         p.team === null && !p.retired && p.rating >= ELITE_THRESHOLD &&
-        p.collegeGrade === undefined
+        p.collegeGrade === undefined && !p.isUserControlled
       );
       if (eliteFAs.length === 0) break;
       eliteFAs.sort((a, b) => b.rating - a.rating);
@@ -5183,7 +5511,7 @@ let game = {
         const gaps = needed - cur;
         for (let i = 0; i < gaps; i++) {
           const fas = this.state.players.filter(p =>
-            p.team === null && !p.retired && p.position === pos
+            p.team === null && !p.retired && p.position === pos && !p.isUserControlled
           );
           // Prefer cheap FAs (lower rating) for depth signings — fills the gap without blowing cap.
           // Real NFL fills 4th-string spots with veteran minimums and practice-squad call-ups.
@@ -5639,6 +5967,11 @@ let game = {
       '<div class="my-team-stat"><div class="my-team-stat-label">COY</div><div class="my-team-stat-value">' + (userCoach.coachOfYears || 0) + '</div></div>' +
       '</div></div>';
     
+    // STAGE 3: Pending job offers — shown when promotion eligible or FA
+    if (this.state.offseasonPhase === 'coachJobChoice' && this.state.career.pendingCoachOffers && this.state.career.pendingCoachOffers.length > 0) {
+      html += this.renderCoachOffersCard(userCoach, this.state.career.pendingCoachOffers);
+    }
+    
     // Current job card
     if (team) {
       html += '<div class="card"><div class="card-header"><div class="card-title">Current job</div></div>' +
@@ -5662,8 +5995,8 @@ let game = {
     } else {
       html += '<div class="card"><div class="card-header"><div class="card-title">Free agent</div></div>' +
         '<div style="padding:16px">' +
-        '<div style="font-size:14px;margin-bottom:8px">You\'re between jobs. The next offseason will bring potential offers.</div>' +
-        '<div class="muted" style="font-size:12px">Tip: Stage 3 will add a job-offer selection screen. For now, the league auto-places you when a fitting role opens.</div>' +
+        '<div style="font-size:14px;margin-bottom:8px">You\'re between jobs. The next offseason will bring potential offers from interested teams.</div>' +
+        '<div class="muted" style="font-size:12px">Continue simming to see who comes calling.</div>' +
         '</div></div>';
     }
     
@@ -5791,6 +6124,105 @@ let game = {
     document.getElementById('content').innerHTML = html;
   },
 
+  // Stage 3: render the FA offers card with side-by-side team offers and pick buttons.
+  renderPlayerFAOffersCard(player, offers) {
+    let html = '<div class="card" style="border-left:3px solid var(--accent)">' +
+      '<div class="card-header"><div class="card-title">Free agent offers · pick one to sign</div>' +
+      '<div class="card-meta">' + offers.length + ' team' + (offers.length > 1 ? 's' : '') + ' want you</div></div>' +
+      '<div style="padding:12px;display:grid;grid-template-columns:repeat(' + Math.min(offers.length, 3) + ', 1fr);gap:12px">';
+    
+    offers.forEach(offer => {
+      const team = this.state.teams[offer.teamId];
+      const hc = this.getTeamHC(team);
+      const fitPct = Math.round(offer.fitScore * 100);
+      const fitClass = fitPct >= 85 ? 'elite' : fitPct >= 70 ? 'great' : fitPct >= 55 ? 'good' : 'avg';
+      const projColor = offer.teamContext.projection === 'Contender' ? 'var(--success)' :
+                        offer.teamContext.projection === 'Playoff hopeful' ? 'var(--warning)' :
+                        'var(--text-muted)';
+      
+      html += '<div style="border:1px solid var(--border);padding:14px;background:var(--surface)">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
+        '<div style="width:6px;height:48px;background:' + team.primary + '"></div>' +
+        '<div>' +
+        '<div style="font-weight:600;font-size:14px;cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</div>' +
+        '<div style="font-size:11px;color:' + projColor + ';font-weight:600">' + offer.teamContext.projection.toUpperCase() + ' · ' + offer.teamContext.record + '</div>' +
+        '</div></div>' +
+        // Contract
+        '<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span class="muted">AAV</span><strong>' + formatMoney(offer.contract.aav) + '</strong></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span class="muted">Years</span><strong>' + offer.contract.years + '</strong></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span class="muted">Total</span><strong>' + formatMoney(offer.contract.totalValue) + '</strong></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px"><span class="muted">Signing bonus</span><strong>' + formatMoney(offer.contract.signingBonus) + '</strong></div>' +
+        '</div>' +
+        // Fit + role
+        '<div style="margin-bottom:8px;font-size:12px">' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="muted">Scheme fit</span><span class="rating ' + fitClass + '" style="font-size:10px;padding:1px 5px">' + fitPct + '%</span></div>' +
+        '<div style="display:flex;justify-content:space-between"><span class="muted">Role</span><strong style="font-size:11px">' + offer.teamContext.depthRole + '</strong></div>' +
+        '</div>' +
+        (hc ? '<div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">HC ' + hc.name + ' · ' + (hc.playstyle ? (hc.playstyle.offense + ' / ' + hc.playstyle.defense) : '—') + '</div>' : '') +
+        '<button class="btn btn-sm btn-success" style="width:100%" onclick="game.acceptPlayerFAOffer(' + offer.teamId + ')">Sign with ' + team.abbr + '</button>' +
+        '</div>';
+    });
+    
+    html += '</div>' +
+      '<div style="padding:8px 12px;border-top:1px solid var(--border);text-align:right">' +
+      '<button class="btn btn-sm" onclick="game.declineAllPlayerFAOffers()">Decline all (sit out the year)</button>' +
+      '</div></div>';
+    
+    return html;
+  },
+
+  // Stage 3: render coach job offers — side-by-side cards for HC or coordinator vacancies.
+  renderCoachOffersCard(userCoach, offers) {
+    const isPromotion = offers.length > 0 && offers[0].role === 'HC' && userCoach.role !== 'HC';
+    const headerText = isPromotion ? 'HC promotion offers — pick one' :
+                       userCoach.teamId === null ? 'Coaching job offers — pick one' :
+                       'Lateral move offers — pick one';
+    
+    let html = '<div class="card" style="border-left:3px solid var(--accent)">' +
+      '<div class="card-header"><div class="card-title">' + headerText + '</div>' +
+      '<div class="card-meta">' + offers.length + ' team' + (offers.length > 1 ? 's' : '') + ' interested</div></div>' +
+      '<div style="padding:12px;display:grid;grid-template-columns:repeat(' + Math.min(offers.length, 3) + ', 1fr);gap:12px">';
+    
+    offers.forEach(offer => {
+      const team = this.state.teams[offer.teamId];
+      const projColor = offer.projection === 'Contender' ? 'var(--success)' :
+                        offer.projection === 'Playoff hopeful' ? 'var(--warning)' :
+                        'var(--text-muted)';
+      const stabilityColor = offer.gmStability === 'Stable' ? 'var(--success)' :
+                             offer.gmStability === 'On notice' ? 'var(--warning)' :
+                             'var(--danger)';
+      
+      html += '<div style="border:1px solid var(--border);padding:14px;background:var(--surface)">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
+        '<div style="width:6px;height:48px;background:' + team.primary + '"></div>' +
+        '<div>' +
+        '<div style="font-weight:600;font-size:14px;cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</div>' +
+        '<div style="font-size:11px;color:' + projColor + ';font-weight:600">' + offer.projection.toUpperCase() + ' · ' + offer.record + '</div>' +
+        '</div></div>' +
+        // Role + contract
+        '<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span class="muted">Role</span><strong>' + COACH_ROLE_NAMES[offer.role] + '</strong></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span class="muted">Salary</span><strong>' + formatMoney(offer.salary) + '/yr</strong></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px"><span class="muted">Contract</span><strong>' + offer.years + ' year' + (offer.years > 1 ? 's' : '') + '</strong></div>' +
+        '</div>' +
+        // Stability + current HC
+        '<div style="margin-bottom:10px;font-size:12px">' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="muted">Front office</span><span style="color:' + stabilityColor + ';font-weight:600">' + offer.gmStability + '</span></div>' +
+        (offer.currentHC ? '<div style="display:flex;justify-content:space-between"><span class="muted">Reports to</span><strong style="font-size:11px">HC ' + offer.currentHC + '</strong></div>' : '') +
+        '</div>' +
+        '<button class="btn btn-sm btn-success" style="width:100%" onclick="game.acceptCoachOffer(' + offer.teamId + ')">Accept · ' + team.abbr + '</button>' +
+        '</div>';
+    });
+    
+    html += '</div>' +
+      '<div style="padding:8px 12px;border-top:1px solid var(--border);text-align:right">' +
+      '<button class="btn btn-sm" onclick="game.declineAllCoachOffers()">Decline all</button>' +
+      '</div></div>';
+    
+    return html;
+  },
+
   renderPlayerCareerNFL(p, stage) {
     const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
     const rc = this.ratingClass(p.rating);
@@ -5814,6 +6246,11 @@ let game = {
       '<div class="my-team-stat"><div class="my-team-stat-label">Awards</div><div class="my-team-stat-value">' + (p.awards ? p.awards.length : 0) + '</div></div>' +
       '<div class="my-team-stat"><div class="my-team-stat-label">Status</div><div class="my-team-stat-value" style="font-size:13px">' + (p.retired ? (p.hofInducted ? 'HOF' : 'Retired') : 'Active') + '</div></div>' +
       '</div></div>';
+    
+    // STAGE 3: FA offers — shown when user is a FA and pending offers exist.
+    if (this.state.offseasonPhase === 'playerFAChoice' && this.state.career.pendingOffers && this.state.career.pendingOffers.length > 0) {
+      html += this.renderPlayerFAOffersCard(p, this.state.career.pendingOffers);
+    }
     
     // Contract
     if (p.contract && !p.retired) {
@@ -6569,7 +7006,8 @@ let game = {
   renderRecap() {
     const recap = this.state.lastWeekRecap;
     if (!recap) { this.renderStandings(); return; }
-    const userTeamId = this.state.userTeamId;
+    // Use the career-mode-aware team accessor so coach and player careers also get the highlight.
+    const userTeamId = this.getUserTeamId();
     
     // Sort: user game first, then everything else
     const sortedGames = [...recap.games].sort((a, b) => {
@@ -6590,14 +7028,15 @@ let game = {
       '<div class="page-subtitle">' + this.state.year + ' season · ' + recap.games.length + ' games</div>' +
       '</div>';
     
-    // User team banner
+    // ============ USER GAME SPOTLIGHT ============
+    // Expanded user-game card with top performer, opponent record, division standing context.
     if (userTeam) {
       if (userOnBye) {
         html += '<div class="user-game-banner bye">' +
           '<div class="user-game-banner-bar" style="background:' + userTeam.primary + '"></div>' +
-          '<div><div class="user-game-banner-label">YOUR TEAM</div>' +
-          '<div class="user-game-banner-title">' + userTeam.city + ' ' + userTeam.name + ' on bye</div>' +
-          '<div class="user-game-banner-meta">Week ' + recap.week + ' off. Currently ' + userTeam.wins + '–' + userTeam.losses + '.</div></div></div>';
+          '<div><div class="user-game-banner-label">YOUR TEAM · BYE WEEK</div>' +
+          '<div class="user-game-banner-title">' + userTeam.city + ' ' + userTeam.name + ' off this week</div>' +
+          '<div class="user-game-banner-meta">Currently ' + userTeam.wins + '–' + userTeam.losses + '. Rest up — back next week.</div></div></div>';
       } else if (userGame) {
         const home = this.state.teams[userGame.homeTeam];
         const away = this.state.teams[userGame.awayTeam];
@@ -6606,14 +7045,75 @@ let game = {
         const oppScore = userIsHome ? userGame.awayScore : userGame.homeScore;
         const opp = userIsHome ? away : home;
         const won = userScore > oppScore;
-        html += '<div class="user-game-banner ' + (won ? 'won' : 'lost') + '" onclick="game.showBoxScore(' + userGame.week + ', ' + userGame.homeTeam + ', ' + userGame.awayTeam + ')">' +
+        
+        // Find user team's top performer this game (offense or defense)
+        let topPerformer = null;
+        let topLine = '';
+        if (userGame.playerStats) {
+          let bestScore = -1;
+          Object.entries(userGame.playerStats).forEach(([pid, s]) => {
+            const p = this.state.players[pid];
+            if (!p || p.team !== userTeamId) return;
+            // Score this performance — find the player who had the biggest impact
+            let perfScore = 0;
+            if (s.passingYards) perfScore += s.passingYards * 0.04 + (s.passingTDs || 0) * 6;
+            if (s.rushingYards) perfScore += s.rushingYards * 0.1 + (s.rushingTDs || 0) * 7;
+            if (s.receivingYards) perfScore += s.receivingYards * 0.1 + (s.receivingTDs || 0) * 7;
+            if (s.sacks) perfScore += s.sacks * 5;
+            if (s.interceptionsMade) perfScore += s.interceptionsMade * 8;
+            if (s.tackles) perfScore += s.tackles * 0.6;
+            if (s.fieldGoalsMade) perfScore += s.fieldGoalsMade * 4;
+            if (perfScore > bestScore) {
+              bestScore = perfScore;
+              topPerformer = p;
+              // Build a stat line summary
+              const parts = [];
+              if (s.passingYards > 0) parts.push(s.completions + '/' + s.attempts + ', ' + s.passingYards + ' yds' + (s.passingTDs ? ', ' + s.passingTDs + ' TD' : ''));
+              if (s.rushingYards > 0) parts.push(s.carries + ' rush, ' + s.rushingYards + ' yds' + (s.rushingTDs ? ', ' + s.rushingTDs + ' TD' : ''));
+              if (s.receivingYards > 0) parts.push(s.receptions + ' rec, ' + s.receivingYards + ' yds' + (s.receivingTDs ? ', ' + s.receivingTDs + ' TD' : ''));
+              if (s.sacks > 0 || s.tackles > 0 || s.interceptionsMade > 0) {
+                const dparts = [];
+                if (s.tackles > 0) dparts.push(s.tackles + ' tackles');
+                if (s.sacks > 0) dparts.push(s.sacks + ' sacks');
+                if (s.interceptionsMade > 0) dparts.push(s.interceptionsMade + ' INT');
+                if (dparts.length > 0) parts.push(dparts.join(', '));
+              }
+              if (s.fieldGoalsMade > 0) parts.push(s.fieldGoalsMade + '/' + s.fieldGoalsAttempted + ' FG');
+              topLine = parts.join(' · ');
+            }
+          });
+        }
+        
+        // Division standing context
+        const divTeams = this.state.teams.filter(t => t.conference === userTeam.conference && t.division === userTeam.division);
+        divTeams.sort((a, b) => (b.wins - a.wins) || (b.pointsFor - b.pointsAgainst - (a.pointsFor - a.pointsAgainst)));
+        const userDivRank = divTeams.findIndex(t => t.id === userTeamId) + 1;
+        const divRankStr = ['1st', '2nd', '3rd', '4th'][userDivRank - 1] || userDivRank + 'th';
+        
+        html += '<div class="user-game-banner ' + (won ? 'won' : 'lost') + '" style="cursor:pointer;display:block" onclick="game.showBoxScore(' + userGame.week + ', ' + userGame.homeTeam + ', ' + userGame.awayTeam + ')">' +
           '<div class="user-game-banner-bar" style="background:' + userTeam.primary + '"></div>' +
-          '<div class="user-game-banner-main">' +
-          '<div class="user-game-banner-label">YOUR TEAM · ' + (won ? 'WIN' : 'LOSS') + '</div>' +
-          '<div class="user-game-banner-title">' + userTeam.city + ' ' + userTeam.name + ' ' + userScore + ', ' + opp.city + ' ' + opp.name + ' ' + oppScore + '</div>' +
-          '<div class="user-game-banner-meta">' + (userIsHome ? 'Home' : 'Away') + ' · click for box score</div></div>' +
-          '<div class="user-game-banner-score ' + (won ? 'won' : 'lost') + '">' + userScore + '–' + oppScore + '</div>' +
+          '<div style="padding:18px">' +
+          '<div style="display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center">' +
+          '<div>' +
+          '<div class="user-game-banner-label" style="margin-bottom:6px">YOUR TEAM · ' + (won ? '🏆 WIN' : '❌ LOSS') + ' · ' + (userIsHome ? 'HOME' : 'AWAY') + '</div>' +
+          '<div class="user-game-banner-title" style="font-size:22px;margin-bottom:8px">' + userTeam.city + ' ' + userTeam.name + ' ' + userScore + ', ' + opp.city + ' ' + opp.name + ' ' + oppScore + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted)">Now ' + userTeam.wins + '–' + userTeam.losses + ' · ' + divRankStr + ' in the ' + userTeam.conference + ' ' + userTeam.division + ' · click for box score</div>' +
+          '</div>' +
+          '<div class="user-game-banner-score ' + (won ? 'won' : 'lost') + '" style="font-size:42px">' + userScore + '–' + oppScore + '</div>' +
           '</div>';
+        
+        // Top performer card embedded in banner
+        if (topPerformer && topLine) {
+          html += '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center">' +
+            '<div class="player-face-small" style="width:40px;height:40px">' + pixelFaceSVG(topPerformer.faceSeed) + '</div>' +
+            '<div>' +
+            '<div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px">Game ball</div>' +
+            '<div style="font-size:14px;font-weight:600">' + topPerformer.name + ' <span class="muted" style="font-size:11px">' + topPerformer.position + '</span></div>' +
+            '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">' + topLine + '</div>' +
+            '</div></div>';
+        }
+        
+        html += '</div></div>';
       }
     }
     
@@ -7992,30 +8492,213 @@ let game = {
     document.getElementById('modal').classList.add('show');
   },
 
-  // SAVE/LOAD
+  // SAVE/LOAD — 5 slots
+  // Each slot is keyed 'gridironDynastySave_1' .. 'gridironDynastySave_5' and stores { savedAt, state }.
+  // The legacy 'gridironDynastySave' key (single save) is migrated to slot 1 on first read.
   saveGame() {
     if (!this.state) return;
+    const slot = this.activeSlot || 1;
     try {
-      localStorage.setItem('gridironDynastySave', JSON.stringify(this.state));
+      const payload = { savedAt: Date.now(), state: this.state };
+      localStorage.setItem('gridironDynastySave_' + slot, JSON.stringify(payload));
     } catch (e) {
       console.error('Save failed', e);
     }
   },
 
-  loadGame() {
+  // Load a specific slot. If no slot given, falls back to last-used slot or slot 1.
+  loadGame(slot) {
+    if (!slot) slot = this.activeSlot || 1;
     try {
-      const data = localStorage.getItem('gridironDynastySave');
-      if (data) this.state = JSON.parse(data);
+      let raw = localStorage.getItem('gridironDynastySave_' + slot);
+      // Migrate legacy single-save key into slot 1 on first read of slot 1
+      if (!raw && slot === 1) {
+        const legacy = localStorage.getItem('gridironDynastySave');
+        if (legacy) {
+          const payload = { savedAt: Date.now(), state: JSON.parse(legacy) };
+          localStorage.setItem('gridironDynastySave_1', JSON.stringify(payload));
+          localStorage.removeItem('gridironDynastySave');
+          raw = JSON.stringify(payload);
+        }
+      }
+      if (!raw) { this.state = null; return; }
+      const payload = JSON.parse(raw);
+      // Support both old format (raw state) and new format ({savedAt, state})
+      this.state = payload.state !== undefined ? payload.state : payload;
+      this.activeSlot = slot;
     } catch (e) {
       console.error('Load failed', e);
       this.state = null;
     }
   },
 
+  // Return metadata for each of the 5 slots (without loading the full state).
+  // Used by the welcome screen save-slot picker.
+  getSlotsMetadata() {
+    const slots = [];
+    for (let i = 1; i <= 5; i++) {
+      const raw = localStorage.getItem('gridironDynastySave_' + i);
+      if (!raw) {
+        // Check legacy key for slot 1
+        if (i === 1) {
+          const legacy = localStorage.getItem('gridironDynastySave');
+          if (legacy) {
+            try {
+              const st = JSON.parse(legacy);
+              slots.push(this.buildSlotMeta(i, { savedAt: null, state: st }));
+              continue;
+            } catch (e) { /* fall through */ }
+          }
+        }
+        slots.push({ slot: i, empty: true });
+        continue;
+      }
+      try {
+        const payload = JSON.parse(raw);
+        const state = payload.state !== undefined ? payload.state : payload;
+        slots.push(this.buildSlotMeta(i, { savedAt: payload.savedAt, state }));
+      } catch (e) {
+        slots.push({ slot: i, empty: true, error: true });
+      }
+    }
+    return slots;
+  },
+
+  // Build a metadata snapshot for the welcome picker. Light-touch — doesn't fully parse the state.
+  buildSlotMeta(slot, payload) {
+    const s = payload.state;
+    const mode = (s.career && s.career.mode) || 'dynasty';
+    let label = 'League ' + slot;
+    if (mode === 'dynasty' && s.userTeamId !== null && s.userTeamId !== undefined && s.teams) {
+      const t = s.teams[s.userTeamId];
+      label = t ? (t.city + ' ' + t.name) : 'Dynasty';
+    } else if (mode === 'coach' && s.career && s.career.entityId && s.coaches) {
+      const c = s.coaches[s.career.entityId];
+      if (c) label = c.name + ' (Coach)';
+    } else if (mode === 'player' && s.career && s.career.entityId) {
+      // Player career — entity may live in prospects or players
+      let p = null;
+      if (s.collegeProspects) p = s.collegeProspects.find(x => x.id === s.career.entityId);
+      if (!p && s.players) p = s.players[s.career.entityId];
+      if (p) label = p.name + ' (' + p.position + ')';
+    }
+    return {
+      slot,
+      empty: false,
+      mode,
+      year: s.year || 2026,
+      label,
+      savedAt: payload.savedAt
+    };
+  },
+
+  // Delete a specific slot
+  deleteSlot(slot) {
+    if (!confirm('Delete save slot ' + slot + '? This cannot be undone.')) return;
+    localStorage.removeItem('gridironDynastySave_' + slot);
+    if (slot === 1) localStorage.removeItem('gridironDynastySave'); // also clear legacy
+    if (this.activeSlot === slot) {
+      this.state = null;
+      this.activeSlot = null;
+    }
+    // Re-render the picker
+    this.showSlotPicker();
+  },
+
+  // Load slot N and continue the saved league
+  resumeSlot(slot) {
+    this.loadGame(slot);
+    if (!this.state) {
+      alert('Slot ' + slot + ' is empty or corrupted.');
+      this.showSlotPicker();
+      return;
+    }
+    this.activeSlot = slot;
+    document.getElementById('simBtn').style.display = '';
+    this.updateUserTag();
+    if (this.state.draftActive) this.renderDraft();
+    else this.render();
+  },
+
+  // Start a new game in slot N (overwrites if occupied — confirmed before)
+  newGameInSlot(slot) {
+    const meta = this.getSlotsMetadata()[slot - 1];
+    if (meta && !meta.empty) {
+      if (!confirm('Slot ' + slot + ' has an existing league (' + meta.label + ', ' + meta.year + '). Overwrite?')) return;
+    }
+    this.activeSlot = slot;
+    this.state = null;
+    this.showModeChoice();
+  },
+
+  // The welcome / slot-picker screen — shown on first load or when user clicks "Main Menu"
+  showSlotPicker() {
+    document.getElementById('simBtn').style.display = 'none';
+    document.getElementById('newsFeed').style.display = 'none';
+    document.getElementById('mainGrid').style.gridTemplateColumns = '200px 1fr';
+    
+    const slots = this.getSlotsMetadata();
+    let html = '<div class="welcome" style="max-width:760px">' +
+      '<h1 class="welcome-title">Gridiron Dynasty</h1>' +
+      '<p class="welcome-subtitle">Choose a save slot to begin</p>' +
+      '<div style="display:grid;grid-template-columns:1fr;gap:10px;margin-top:24px;text-align:left">';
+    
+    slots.forEach(meta => {
+      const isEmpty = meta.empty;
+      const modeLabel = isEmpty ? '' :
+        meta.mode === 'coach' ? '🎯 Coach Career' :
+        meta.mode === 'player' ? '🏈 Player Career' :
+        meta.mode === 'agent' ? '💼 Agent Career' :
+        '🏟️ Dynasty';
+      const savedAgo = meta.savedAt ? this.formatSavedAgo(meta.savedAt) : 'unknown';
+      
+      html += '<div style="display:grid;grid-template-columns:60px 1fr auto;gap:16px;align-items:center;background:var(--surface);border:1px solid var(--border);padding:16px">' +
+        '<div style="font-size:22px;font-weight:600;color:var(--text-muted);text-align:center">' + meta.slot + '</div>';
+      
+      if (isEmpty) {
+        html += '<div><div style="font-size:14px;color:var(--text-dim);font-style:italic">Empty slot</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">Click "Start new league" to begin a save here.</div></div>' +
+          '<button class="btn btn-primary" onclick="game.newGameInSlot(' + meta.slot + ')">Start new league</button>';
+      } else {
+        html += '<div>' +
+          '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px">' + modeLabel + '</div>' +
+          '<div style="font-size:15px;font-weight:600;margin-top:2px">' + meta.label + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">Year ' + meta.year + ' · saved ' + savedAgo + '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:6px">' +
+          '<button class="btn btn-success btn-sm" onclick="game.resumeSlot(' + meta.slot + ')">Resume</button>' +
+          '<button class="btn btn-sm" onclick="game.newGameInSlot(' + meta.slot + ')">New</button>' +
+          '<button class="btn btn-danger btn-sm" onclick="game.deleteSlot(' + meta.slot + ')">Delete</button>' +
+          '</div>';
+      }
+      html += '</div>';
+    });
+    
+    html += '</div></div>';
+    document.getElementById('content').innerHTML = html;
+  },
+
+  formatSavedAgo(ts) {
+    if (!ts) return 'unknown';
+    const diffMs = Date.now() - ts;
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    const days = Math.floor(hrs / 24);
+    if (days < 30) return days + 'd ago';
+    return new Date(ts).toLocaleDateString();
+  },
+
   deleteSave() {
-    if (!confirm('Delete your saved league? This cannot be undone.')) return;
+    if (!confirm('Delete the currently active save slot? This cannot be undone.')) return;
+    if (this.activeSlot) {
+      localStorage.removeItem('gridironDynastySave_' + this.activeSlot);
+    }
     localStorage.removeItem('gridironDynastySave');
     this.state = null;
+    this.activeSlot = null;
     location.reload();
   }
 };
