@@ -616,12 +616,17 @@ const DEFENSIVE_PLAYSTYLES = ['Blitz Heavy', 'Coverage First', 'Bend Don\'t Brea
 const SCOUT_SPECIALTIES = ['College Scout', 'Pro Scout', 'Analytics', 'Generalist'];
 
 function calculateCoachSalary(role, ovr) {
-  const base = { HC: 6_000_000, OC: 2_000_000, DC: 2_000_000, Scout: 400_000 };
-  const ovrMultiplier = 0.4 + ((ovr - 50) / 50) * 1.8;
+  // Steeper OVR curve so elite coaches really command top dollar.
+  // 90+ OVR HC: ~$13-15M. 85 OVR OC: ~$4M. The cap forces tradeoffs.
+  const base = { HC: 6_500_000, OC: 2_400_000, DC: 2_400_000, Scout: 500_000 };
+  // ovr 50 → 0.3x, ovr 75 → 1.1x, ovr 90 → 2.0x, ovr 95 → 2.4x
+  const ovrMultiplier = 0.3 + Math.pow((ovr - 50) / 50, 1.3) * 2.2;
   return Math.round((base[role] || 1_000_000) * ovrMultiplier / 100_000) * 100_000;
 }
 
-const COACHING_CAP = 50_000_000;
+// Coaching cap is intentionally tight (~60% of what a fully-elite staff would cost).
+// Forces the user to choose: marquee HC + average coordinators, OR balanced quality across all 4 slots.
+const COACHING_CAP = 22_000_000;
 
 // ============================================================
 // AGING CURVES — position-aware peak windows and forced retirement
@@ -1212,6 +1217,20 @@ let game = {
         c.teamId = i;
         c.salary = calculateCoachSalary(c.role, c.ovr);
       });
+      // Ensure total staff cost fits the coaching cap. If over, downgrade in order Scout→DC→OC→HC
+      // until under cap. This guarantees the league starts cap-compliant for every team.
+      let totalSal = hc.salary + oc.salary + dc.salary + scout.salary;
+      const downgradeOrder = [scout, dc, oc, hc];
+      let dgIdx = 0;
+      while (totalSal > COACHING_CAP && dgIdx < downgradeOrder.length) {
+        const c = downgradeOrder[dgIdx];
+        // Drop OVR by 5 each tick, recompute
+        c.ovr = Math.max(50, c.ovr - 5);
+        c.salary = calculateCoachSalary(c.role, c.ovr);
+        totalSal = hc.salary + oc.salary + dc.salary + scout.salary;
+        // Once this coach is at 50 and we're still over, move to next
+        if (c.ovr <= 50) dgIdx++;
+      }
       return {
         id: i, city: d.city, name: d.name, abbr: d.abbr,
         conference: d.conf, division: d.div, primary: d.primary,
@@ -1298,6 +1317,100 @@ let game = {
         p.contract = null;
         this.state.players.push(p);
       }
+    });
+  },
+
+  // Allocate contracts retroactively after the startup draft so each team's total cap usage
+  // equals (but doesn't exceed) the league cap. Stars/vets get larger shares of the $300M.
+  // Approach: compute a value-weighted share per player, scale so each team's roster sums to cap.
+  allocateStartupContracts() {
+    const cap = getSalaryCap(this.state.year);
+    const MIN_AAV = 750000; // $750K floor — league minimum-tier salary
+    const MAX_AAV = 50000000; // $50M ceiling — top-of-market QB territory
+    
+    this.state.teams.forEach(team => {
+      const roster = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
+      if (roster.length === 0) return;
+      
+      // Compute a "value share" for each player. Higher rating + vet bonus + position premium = bigger share.
+      // The curve is power-style so stars take large chunks and depth players take pennies.
+      const shares = roster.map(p => {
+        const posValue = POSITION_VALUE[p.position] || 1.0;
+        // OVR curve: 99 → very large, 75 → modest, 50 → tiny. Cubic emphasises stars.
+        const ovrPower = Math.pow(Math.max(40, p.rating) / 80, 3.2);
+        // Vet bonus: experienced players in their prime get more.
+        // yearsInLeague 4-10 = 1.15x, less for rookies/very old
+        let vetMult = 1.0;
+        if (p.yearsInLeague >= 4 && p.yearsInLeague <= 10) vetMult = 1.15;
+        else if (p.yearsInLeague <= 1) vetMult = 0.75; // rookie scale
+        else if (p.age >= 33) vetMult = 0.85; // age-tax for end-of-career
+        return ovrPower * posValue * vetMult;
+      });
+      
+      const totalShare = shares.reduce((s, x) => s + x, 0) || 1;
+      
+      // First pass: assign raw AAVs proportional to share, clamp to [MIN, MAX], leave some headroom (90% of cap)
+      // We leave 10% headroom so AGM has cap space for in-season moves; users can spend the rest.
+      const targetSpend = cap * 0.90;
+      let rawAAVs = shares.map(s => (s / totalShare) * targetSpend);
+      
+      // Clamp to floor/ceiling, redistribute excess
+      let clamped = rawAAVs.map(a => Math.max(MIN_AAV, Math.min(MAX_AAV, a)));
+      let clampedTotal = clamped.reduce((s, x) => s + x, 0);
+      
+      // If clamping pushed total above targetSpend, scale down (preserving ratios for non-floored players)
+      if (clampedTotal > targetSpend) {
+        const overflow = clampedTotal - targetSpend;
+        // Find non-floor players (above MIN_AAV) and scale them down
+        const adjustable = clamped.map((a, i) => a > MIN_AAV ? i : null).filter(i => i !== null);
+        const adjustableTotal = adjustable.reduce((s, i) => s + (clamped[i] - MIN_AAV), 0);
+        if (adjustableTotal > overflow) {
+          const factor = (adjustableTotal - overflow) / adjustableTotal;
+          adjustable.forEach(i => {
+            clamped[i] = MIN_AAV + (clamped[i] - MIN_AAV) * factor;
+          });
+        }
+      }
+      
+      // Round to nearest $50K for cleanliness, then re-verify total
+      clamped = clamped.map(a => Math.round(a / 50000) * 50000);
+      let finalTotal = clamped.reduce((s, x) => s + x, 0);
+      
+      // If final total still exceeds cap, trim the highest contract
+      while (finalTotal > cap) {
+        const maxIdx = clamped.indexOf(Math.max(...clamped));
+        const trimAmount = Math.min(clamped[maxIdx] - MIN_AAV, finalTotal - cap);
+        clamped[maxIdx] -= trimAmount;
+        finalTotal -= trimAmount;
+        if (trimAmount === 0) break;
+      }
+      
+      // Assign contracts to players
+      roster.forEach((p, i) => {
+        const aav = clamped[i];
+        // Build a contract object matching generateContract's shape
+        // Most startup-draft contracts are 2-4 years to keep market churn realistic
+        const years = aav > 15000000 ? 4 : aav > 6000000 ? 3 : 2;
+        const totalValue = aav * years;
+        const signingBonus = Math.round(totalValue * 0.30); // 30% bonus typical
+        const bonusProrationYears = years;
+        const proration = signingBonus / years;
+        const baseSalaries = [];
+        for (let y = 0; y < years; y++) {
+          baseSalaries.push(Math.round(aav - proration));
+        }
+        p.contract = {
+          years,
+          yearsRemaining: years,
+          aav,
+          totalValue,
+          signingBonus,
+          bonusProrationYears,
+          baseSalaries,
+          signedYear: this.state.year,
+          signedAtRating: p.rating
+        };
+      });
     });
   },
 
@@ -1631,22 +1744,38 @@ let game = {
       Object.entries(POSITION_COUNTS).forEach(([pos, count]) => {
         for (let i = 0; i < count; i++) {
           const p = this.generatePlayer(pos, team.id);
-          p.contract = generateContract(pos, p.rating, p.age, this.state.year, p.yearsInLeague === 0);
+          // Contracts assigned retroactively below to fit the $300M cap (same as startup-draft mode).
+          p.contract = null;
           this.state.players.push(p);
           team.roster.push(p.id);
         }
       });
     });
+    // Retroactively assign cap-compliant contracts to every team, identical to startup-draft flow.
+    this.allocateStartupContracts();
   },
 
   generatePlayer(position, teamId, overrideAge) {
     const age = overrideAge !== undefined ? overrideAge : realisticNFLAgeForPosition(position);
-    // Boost rating in this player's actual peak window (varies by position)
     const aging = POSITION_AGING[position] || POSITION_AGING.WR;
-    let baseRating = 50 + Math.floor(Math.random() * 40);
-    if (age >= aging.peakStart && age <= aging.peakEnd) baseRating = Math.min(99, baseRating + 7);
-    else if (age >= aging.declineStart + 2) baseRating = Math.max(45, baseRating - 5);
-    else if (age < aging.peakStart - 1) baseRating = Math.max(50, baseRating - 2);
+    
+    // Bell-shaped OVR distribution centered around 72 (NFL median).
+    // Roll 3 dice and average them — Central Limit Theorem gives us a bell curve.
+    // Result: most players 68-78, with thin tails above 85 and below 60.
+    const roll = (Math.random() + Math.random() + Math.random() + Math.random()) / 4; // 0-1, bell-shaped
+    // Map to 50-92 (true elite players are rare)
+    let baseRating = Math.round(50 + roll * 42);
+    
+    // Position-curve adjustments based on age vs peak
+    if (age >= aging.peakStart && age <= aging.peakEnd) baseRating = Math.min(94, baseRating + 4);
+    else if (age >= aging.declineStart + 3) baseRating = Math.max(45, baseRating - 7);
+    else if (age >= aging.declineStart) baseRating = Math.max(50, baseRating - 3);
+    else if (age < aging.peakStart - 1) baseRating = Math.max(50, baseRating - 4);
+    
+    // Tiny chance for a truly elite player: ~1% break into 95-98 territory
+    if (Math.random() < 0.012 && baseRating >= 80 && age >= aging.peakStart && age <= aging.peakEnd) {
+      baseRating = 93 + Math.floor(Math.random() * 5); // 93-97
+    }
     
     const abilities = generateAbilities(position, baseRating);
     const rating = calculateOvrFromAbilities(position, abilities);
@@ -1738,7 +1867,12 @@ let game = {
       this.state.draftPool.push(p);
       this.state.players.push(p);
     });
-    this.state.draftPool.sort((a, b) => this.startupDraftValue(b) - this.startupDraftValue(a));
+    // Sort startup pool primarily by raw rating (so true top-OVR players go first),
+    // with startupDraftValue as a secondary tiebreaker for equal-rating players.
+    this.state.draftPool.sort((a, b) => {
+      if (b.rating !== a.rating) return b.rating - a.rating;
+      return this.startupDraftValue(b) - this.startupDraftValue(a);
+    });
     const initialOrder = [...Array(32).keys()].sort(() => Math.random() - 0.5);
     this.state.draftOrder = [];
     for (let round = 1; round <= ROSTER_SIZE; round++) {
@@ -1758,13 +1892,25 @@ let game = {
     const team = this.state.teams[teamId];
     if (!team) return;
     const need = this.calculateTeamNeeds(team);
-    const candidates = this.state.draftPool.slice(0, 25);
-    // Annual draft favors potential/youth; startup draft is OVR-dominant
-    const valueFn = this.state.draftIsAnnual ? this.draftValue.bind(this) : this.startupDraftValue.bind(this);
-    // Need bonus differs by draft mode:
-    //   Annual draft: need*4, no cap — teams strongly prioritize gaps
-    //   Startup draft: need*0.4, cap at +2 — small tilt, OVR dominates so best player available wins
     const isAnnual = this.state.draftIsAnnual;
+    
+    // STARTUP DRAFT EARLY ROUNDS: pure rating order.
+    // No noise, no need bonus while elite players (rating >= 85) remain.
+    // This guarantees the league's true top 15-20 rated players go off the board first.
+    if (!isAnnual) {
+      const top = this.state.draftPool[0];
+      if (top && top.rating >= 85) {
+        // Pure best-available: just take the top of the pool (already sorted by startupDraftValue).
+        // For elite tier, value function and rating sort line up tightly enough that this is equivalent
+        // to "highest rated player available" with the tiniest positional/age tiebreaker.
+        this.applyPick(teamId, top);
+        return;
+      }
+    }
+    
+    // Otherwise: weighted pick from top 25 candidates with need/noise.
+    const candidates = this.state.draftPool.slice(0, 25);
+    const valueFn = isAnnual ? this.draftValue.bind(this) : this.startupDraftValue.bind(this);
     const noiseScale = isAnnual ? 3 : 1;
     let best = null;
     let bestScore = -Infinity;
@@ -1817,9 +1963,13 @@ let game = {
 
   applyPick(teamId, player) {
     player.team = teamId;
-    // Rookie-scale only if truly a rookie (yearsInLeague 0). Startup-draft vets get vet contracts.
-    const isRookieContract = player.yearsInLeague === 0;
-    player.contract = generateContract(player.position, player.rating, player.age, this.state.year, isRookieContract);
+    // Inaugural startup draft: don't sign contracts here — they're allocated retroactively after the
+    // full draft to fit exactly into the $300M cap. Annual draft picks get rookie deals as normal.
+    if (this.state.draftIsAnnual) {
+      player.contract = generateContract(player.position, player.rating, player.age, this.state.year, player.yearsInLeague === 0);
+    } else {
+      player.contract = null;
+    }
     this.state.teams[teamId].roster.push(player.id);
     const idx = this.state.draftPool.indexOf(player);
     if (idx !== -1) this.state.draftPool.splice(idx, 1);
@@ -1885,13 +2035,22 @@ let game = {
       // Enforce hard 53-man roster ceiling (cuts after draft, real-NFL style)
       this.enforceRosterMax();
       
+      // Final cap pass — fill may have added players that pushed teams back over cap.
+      // Re-run AGM for CPU teams ONLY (user team is policed by simWeek's cap-compliance check).
+      this.state.teams.forEach(team => {
+        if (team.id === this.state.userTeamId) return;
+        this.runAssistantGM(team);
+      });
+      
       this.generateSchedule();
       this.addHeadline({
         title: this.state.year + ' draft concludes',
         body: '7 rounds, 224 picks. ' + this.state.year + ' season begins.'
       });
     } else {
-      // Inaugural draft: also seed FA pool and schedule
+      // Inaugural draft: allocate contracts retroactively to fit exactly into the $300M cap.
+      // Each team's total AAV = the league cap, with vets/stars getting bigger shares.
+      this.allocateStartupContracts();
       this.generatePlayerFAPool();
       this.generateSchedule();
       this.addHeadline({
@@ -2079,14 +2238,18 @@ let game = {
       ).join('') +
       '</div>' +
       '<div class="card"><div class="card-header">' +
-      '<div class="card-title">Available prospects · ranked by OVR (with small age/positional tiebreaker)</div>' +
+      '<div class="card-title">Available prospects · ranked by OVR</div>' +
       '<div class="card-meta">' + this.state.draftPool.length + ' remaining</div></div>' +
       '<div class="draft-pick-row" style="background:var(--surface-2);font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">' +
       '<div>RK</div><div>POS</div><div>NAME</div><div>AGE</div><div>OVR</div></div>';
 
     filtered.forEach((p, idx) => {
       const rc = this.ratingClass(p.rating);
-      html += '<div class="draft-pick-row ' + (isUserTurn ? 'clickable' : '') + '" ' + (isUserTurn ? 'onclick="game.userPick(' + p.id + ')"' : '') + '>' +
+      // When it's the user's turn, clicking a row drafts the player. Otherwise it opens the player card for inspection.
+      const rowClick = isUserTurn
+        ? 'onclick="game.userPick(' + p.id + ')"'
+        : 'onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer"';
+      html += '<div class="draft-pick-row ' + (isUserTurn ? 'clickable' : '') + '" ' + rowClick + '>' +
         '<div class="pick-num">' + (idx + 1) + '</div>' +
         '<div><span class="position-tag">' + p.position + '</span></div>' +
         '<div>' + p.name + '</div>' +
@@ -2103,10 +2266,10 @@ let game = {
       const team = this.state.teams[pick.teamId];
       if (!player || !team) return;
       const isUser = pick.teamId === this.state.userTeamId;
-      sidebarHtml += '<div class="draft-recent-pick ' + (isUser ? 'user-pick' : '') + '">' +
+      sidebarHtml += '<div class="draft-recent-pick ' + (isUser ? 'user-pick' : '') + '" onclick="game.showPlayer(' + player.id + ')" style="cursor:pointer">' +
         '<div class="pick-num">' + pick.overall + '</div>' +
         '<div><div style="font-weight:500">' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
-        '<div style="color:var(--text-muted);font-size:10px">' + team.abbr + ' · R' + pick.round + '</div></div></div>';
+        '<div style="color:var(--text-muted);font-size:10px"><span style="text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + team.id + ')">' + team.abbr + '</span> · R' + pick.round + '</div></div></div>';
     });
     sidebarHtml += '</div>';
 
@@ -2375,16 +2538,48 @@ let game = {
     this.state.byeWeeks = byeWeeks;
   },
 
+  // Returns null if the user team is cap-compliant on both player and coaching caps,
+  // or a human-readable error message describing the violation(s).
+  // Returns null in modes where there's no user team (sim-only league).
+  checkUserCapCompliance() {
+    if (this.state.userTeamId === null || this.state.userTeamId === undefined) return null;
+    const team = this.state.teams[this.state.userTeamId];
+    if (!team) return null;
+    const playerCap = getSalaryCap(this.state.year);
+    const playerUsed = teamCapUsed(team, this.state.players);
+    const coachingUsed = this.teamCoachingSalary(team);
+    const violations = [];
+    if (playerUsed > playerCap) {
+      violations.push('Player payroll: ' + formatMoney(playerUsed) + ' / ' + formatMoney(playerCap) +
+        ' (' + formatMoney(playerUsed - playerCap) + ' over)');
+    }
+    if (coachingUsed > COACHING_CAP) {
+      violations.push('Coaching staff: ' + formatMoney(coachingUsed) + ' / ' + formatMoney(COACHING_CAP) +
+        ' (' + formatMoney(coachingUsed - COACHING_CAP) + ' over)');
+    }
+    if (violations.length === 0) return null;
+    return 'Your team is over the salary cap. You must get under both caps before continuing.\n\n' +
+      violations.join('\n') +
+      '\n\nCut players from My Team, restructure contracts on Cap & Contracts, or fire coaches from Coaching Staff.';
+  },
+
   simWeek() {
     if (!this.state || this.state.draftActive) return;
+    
+    // Block sim/offseason advancement if user is over either cap.
+    // User must cut players or fire coaches to come into compliance first.
+    const capError = this.checkUserCapCompliance();
+    if (capError) {
+      alert(capError);
+      return;
+    }
+    
     // Offseason phases: FA → Draft → next season
     if (this.state.offseasonPhase === 'fa') {
-      // FA period concludes; trigger draft
       this.state.offseasonPhase = 'draft';
       this.startAnnualDraft();
       return;
     }
-    // (If offseasonPhase === 'draft', draft is in progress; user is in renderDraft view)
     if (this.state.playoffActive) { this.simPlayoffRound(); return; }
     if (this.state.week >= 18) { this.startPlayoffs(); return; }
     this.state.week++;
@@ -2494,7 +2689,14 @@ let game = {
         if (!gameObj.playerStats[pid]) gameObj.playerStats[pid] = EMPTY_GAME_STATS();
         return gameObj.playerStats[pid];
       };
-      const markPlayed = (p) => { p.seasonStats.gamesPlayed = (p.seasonStats.gamesPlayed || 0) + 1; };
+      // Track which players got marked this game so we don't double-count gamesPlayed
+      // (e.g. an RB appearing in receiving AND rushing, or a scrambling QB in passing AND rushing).
+      const playedThisGame = new Set();
+      const markPlayed = (p) => {
+        if (playedThisGame.has(p.id)) return;
+        playedThisGame.add(p.id);
+        p.seasonStats.gamesPlayed = (p.seasonStats.gamesPlayed || 0) + 1;
+      };
 
       // =========================================================
       // PASSING GAME — QB stats become the team passing totals.
@@ -2504,11 +2706,13 @@ let game = {
       let teamPassYards = 0, teamCompletions = 0, teamPassTDs = 0;
       if (qbs[0]) {
         const qb = qbs[0];
-        teamPassYards = Math.floor((130 + Math.random() * 170) * MODERN_GAME_RATE * (qb.rating / 78) * (0.7 + passEmph * 0.6));
-        const att = Math.floor((20 + Math.random() * 18) * (0.7 + passEmph * 0.6));
+        // Passing volume calibrated to NFL realism: avg QB (OVR ~75) → ~210 yards/game, ~3500 season
+        // Elite QB (OVR 92) → ~270/game, ~4500 season
+        teamPassYards = Math.floor((95 + Math.random() * 120) * MODERN_GAME_RATE * (qb.rating / 80) * (0.7 + passEmph * 0.6));
+        const att = Math.floor((18 + Math.random() * 16) * (0.7 + passEmph * 0.6));
         teamCompletions = Math.floor(att * (0.55 + Math.random() * 0.2));
         teamCompletions = Math.min(teamCompletions, att);
-        teamPassTDs = Math.floor(Math.random() * 4 * passEmph * 1.5);
+        teamPassTDs = Math.floor(Math.random() * 3.5 * passEmph * 1.3);
         const ints = Math.random() < 0.4 ? Math.floor(Math.random() * 2) : 0;
         const gs = ensureStats(qb.id);
         gs.passingYards += teamPassYards; gs.passingTDs += teamPassTDs;
@@ -2601,9 +2805,9 @@ let game = {
       // RUSHING GAME — team rush totals split between RBs and QB scrambles.
       // Sum of player rush yards/TDs must equal team rush totals.
       // =========================================================
-      const teamRushYards = Math.floor((50 + Math.random() * 150) * (1.6 - passEmph) * 0.9);
-      const teamCarries = Math.floor((18 + Math.random() * 14) * (1.4 - passEmph));
-      const teamRushTDs = Math.random() < 0.7 ? Math.floor(Math.random() * 3) : 0;
+      const teamRushYards = Math.floor((75 + Math.random() * 145) * (1.6 - passEmph));
+      const teamCarries = Math.floor((22 + Math.random() * 14) * (1.4 - passEmph));
+      const teamRushTDs = Math.random() < 0.75 ? Math.floor(Math.random() * 3) : 0;
       
       // Distribute among top 2 RBs + maybe QB (scrambler bonus)
       const rushers = [];
@@ -2749,9 +2953,11 @@ let game = {
       Object.entries(g.playerStats).forEach(([pid, stats]) => {
         const player = this.state.players[pid];
         if (!player) return;
-        const offScore = stats.passingYards * 0.04 + stats.passingTDs * 6 +
-                         stats.rushingYards * 0.1 + stats.rushingTDs * 6 +
-                         stats.receivingYards * 0.1 + stats.receivingTDs * 6;
+        // QBs are devalued in standout calc — a 300/3TD day is great but not better than a 150-rush/2TD RB game.
+        // Real NFL weekly top performers are roughly 40% QB / 60% non-QB.
+        const offScore = stats.passingYards * 0.025 + stats.passingTDs * 4.5 - (stats.interceptionsThrown || 0) * 4 +
+                         stats.rushingYards * 0.13 + stats.rushingTDs * 7 +
+                         stats.receivingYards * 0.13 + stats.receivingTDs * 7;
         const defScore = stats.sacks * 5 + stats.interceptionsMade * 8 + stats.tackles * 0.5;
         const punterAvg = stats.punts > 0 ? stats.puntYards / stats.punts : 0;
         const spcScore = stats.fieldGoalsMade * 4 + stats.extraPoints * 1 +
@@ -2807,12 +3013,17 @@ let game = {
       const s = p.seasonStats;
       let score = 0;
       if (p.position === 'QB') {
-        score = s.passingYards * 0.06 + s.passingTDs * 10 - s.interceptionsThrown * 8 + s.rushingYards * 0.08 + s.rushingTDs * 6;
-        score *= 1.4;
+        // QB scoring tuned so a top QB (4500 yd / 32 TD / 8 INT) scores ~280, edging out top RBs in most seasons
+        // Real NFL: QBs win MVP ~70% of the time
+        score = s.passingYards * 0.040 + s.passingTDs * 7.5 - s.interceptionsThrown * 6 + s.rushingYards * 0.05 + s.rushingTDs * 5;
+        score *= 1.05;
       } else if (p.position === 'RB') {
-        score = s.rushingYards * 0.12 + s.rushingTDs * 8 + s.receivingYards * 0.08 + s.receivingTDs * 6;
+        // A top RB (1700 rush / 17 TD / 500 rec) scores ~250 — competitive but slightly below elite QB
+        score = s.rushingYards * 0.15 + s.rushingTDs * 10 + s.receivingYards * 0.08 + s.receivingTDs * 7;
       } else if (p.position === 'WR' || p.position === 'TE') {
-        score = s.receivingYards * 0.10 + s.receivingTDs * 8;
+        // A top WR (1500 yd / 13 TD) scores ~245
+        score = s.receivingYards * 0.13 + s.receivingTDs * 10;
+        if (p.position === 'TE') score *= 1.05;
       }
       const team = this.state.teams[p.team];
       if (!team) return { player: p, score: 0 };
@@ -2954,12 +3165,29 @@ let game = {
     this.addHeadline({ type: 'contract', title: team.city + ' ' + team.name + ' fire ' + c.name, body: COACH_ROLE_NAMES[role] + ' relieved of duties. Search for replacement begins.' });
     
     // For user team: leave vacancy. User clicks "Fill Position" on Staff page to hire.
-    // For CPU teams: auto-hire a replacement so the slot doesn't stay empty.
+    // For CPU teams: auto-hire a replacement that fits the remaining coaching cap room.
     if (!isUserTeam) {
       const namePool = () => this.generateName(this.state.year);
-      const replacement = this.generateCoach(role, this.state.year, namePool);
+      const currentTotal = this.teamCoachingSalary(team);
+      const capRoom = Math.max(500_000, COACHING_CAP - currentTotal);
+      let replacement = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const candidate = this.generateCoach(role, this.state.year, namePool);
+        const sal = calculateCoachSalary(role, candidate.ovr);
+        if (sal <= capRoom) {
+          candidate.salary = sal;
+          replacement = candidate;
+          break;
+        }
+      }
+      // Fallback: low-OVR coach guaranteed to fit
+      if (!replacement) {
+        const candidate = this.generateCoach(role, this.state.year, namePool);
+        candidate.ovr = Math.max(45, Math.min(95, 50 + Math.floor(Math.random() * 8)));
+        candidate.salary = calculateCoachSalary(role, candidate.ovr);
+        replacement = candidate;
+      }
       replacement.teamId = team.id;
-      replacement.salary = calculateCoachSalary(role, replacement.ovr);
       team.staff[role] = replacement.id;
       this.addHeadline({ title: team.city + ' ' + team.name + ' hire ' + replacement.name + ' as ' + COACH_ROLE_NAMES[role], body: 'Interim hire pending offseason search.' });
     }
@@ -3018,20 +3246,35 @@ let game = {
     if (!c || c.teamId !== null) return;
     if (this.state.userTeamId === null) return;
     const team = this.state.teams[this.state.userTeamId];
+    const newSalary = calculateCoachSalary(role, c.ovr);
+    
+    // Cap check: projected total staff salary must fit under COACHING_CAP.
+    // If replacing an existing coach, exclude their salary from the current total.
+    const currentTotal = this.teamCoachingSalary(team);
+    const existingSlot = this.getCoach(team.staff[role]);
+    const slotCost = existingSlot ? (existingSlot.salary || 0) : 0;
+    const projectedTotal = currentTotal - slotCost + newSalary;
+    if (projectedTotal > COACHING_CAP) {
+      const over = projectedTotal - COACHING_CAP;
+      alert('Coaching cap exceeded.\n\n' +
+        'Hiring ' + c.name + ' would cost ' + formatMoney(newSalary) + '/yr.\n' +
+        'Projected staff total: ' + formatMoney(projectedTotal) + ' (' + formatMoney(over) + ' over cap).\n\n' +
+        'Cap: ' + formatMoney(COACHING_CAP) + '. Fire someone or pick a cheaper coach.');
+      return;
+    }
+    
     if (!team.staff[role]) {
-      // Slot is empty, hire directly
       c.teamId = team.id;
-      c.salary = calculateCoachSalary(role, c.ovr);
+      c.salary = newSalary;
       c.role = role;
       team.staff[role] = c.id;
       this.addHeadline({ title: team.city + ' ' + team.name + ' hire ' + c.name + ' as ' + COACH_ROLE_NAMES[role], body: 'Signed for ' + formatMoney(c.salary) + '/yr.' });
     } else {
-      // Slot occupied — confirm replacement
       const old = this.getCoach(team.staff[role]);
       if (!confirm('Replace ' + (old ? old.name : 'current coach') + ' with ' + c.name + '?')) return;
       if (old) { old.teamId = null; old.salary = 0; }
       c.teamId = team.id;
-      c.salary = calculateCoachSalary(role, c.ovr);
+      c.salary = newSalary;
       c.role = role;
       team.staff[role] = c.id;
       this.addHeadline({ title: team.city + ' ' + team.name + ' hire ' + c.name + ', replace ' + (old ? old.name : 'former coach'), body: 'New ' + COACH_ROLE_NAMES[role] + ' signed for ' + formatMoney(c.salary) + '/yr.' });
@@ -3060,6 +3303,20 @@ let game = {
       alert(c.name + ' has been with their team for ' + tenure + ' years and is locked in. They can\'t be poached.');
       return;
     }
+    
+    // Cap check before poach. HC salary is the highest line item, so this matters most here.
+    const projectedHCSalary = calculateCoachSalary('HC', c.ovr);
+    const currentTotal = this.teamCoachingSalary(userTeam);
+    const projectedTotal = currentTotal + projectedHCSalary;
+    if (projectedTotal > COACHING_CAP) {
+      const over = projectedTotal - COACHING_CAP;
+      alert('Coaching cap exceeded.\n\n' +
+        'Poaching ' + c.name + ' as HC would cost ' + formatMoney(projectedHCSalary) + '/yr.\n' +
+        'Projected staff total: ' + formatMoney(projectedTotal) + ' (' + formatMoney(over) + ' over cap).\n\n' +
+        'Cap: ' + formatMoney(COACHING_CAP) + '. Fire your OC/DC/Scout first or pick a cheaper HC.');
+      return;
+    }
+    
     const formerTeam = this.state.teams[c.teamId];
     if (!confirm('Hire ' + c.name + ' from ' + formerTeam.city + ' ' + formerTeam.name + ' as your new Head Coach?\n\nThis vacates their ' + COACH_ROLE_NAMES[c.role] + ' slot at ' + formerTeam.abbr + '.\n\nTenure with previous team: ' + tenure + ' year' + (tenure === 1 ? '' : 's') + '.')) return;
     
@@ -3157,12 +3414,21 @@ let game = {
     const players = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
     const cap = getSalaryCap(this.state.year);
     const byValue = [...players].sort((a, b) => (b.rating * (POSITION_VALUE[b.position] || 1)) - (a.rating * (POSITION_VALUE[a.position] || 1)));
-    // Extend stars with 1 year left
-    byValue.slice(0, 5).forEach(p => {
-      if (p.contract && p.contract.yearsRemaining === 1 && p.rating >= 75 && p.age <= 30) {
-        p.contract = generateContract(p.position, p.rating, p.age, this.state.year, false);
-      }
-    });
+    
+    // Extend stars with 1 year left — ONLY if team isn't already over cap.
+    // Extending adds future cap and current AAV, so doing it while over cap makes things worse.
+    if (teamCapUsed(team, this.state.players) <= cap) {
+      byValue.slice(0, 5).forEach(p => {
+        if (p.contract && p.contract.yearsRemaining === 1 && p.rating >= 75 && p.age <= 30) {
+          // Only extend if the new contract still keeps the team under cap.
+          const newContract = generateContract(p.position, p.rating, p.age, this.state.year, false);
+          const projDelta = newContract.aav - currentCapHit(p.contract);
+          if (teamCapUsed(team, this.state.players) + projDelta <= cap) {
+            p.contract = newContract;
+          }
+        }
+      });
+    }
     // Restructure top contracts if over cap
     if (teamCapUsed(team, this.state.players) > cap) {
       const restructureCandidates = byValue.filter(p => p.contract && p.contract.yearsRemaining >= 2 && currentCapHit(p.contract) > cap * 0.05);
@@ -3177,18 +3443,51 @@ let game = {
         }
       }
     }
-    // Release worst if still over
+    // Release players to come under cap.
+    // Sort all roster players by largest positive savings (capHit - deadCap) and cut until under cap.
+    // This may cut decent mid-tier vets when cap pressure is real, mirroring NFL "cap casualty" cuts.
     if (teamCapUsed(team, this.state.players) > cap) {
-      const releaseCandidates = [...players].sort((a, b) => a.rating - b.rating);
+      const releaseCandidates = players
+        .filter(p => p.contract && currentCapHit(p.contract) - deadCapIfReleased(p.contract) > 0)
+        .sort((a, b) => {
+          // Primary: largest savings first
+          const sa = currentCapHit(a.contract) - deadCapIfReleased(a.contract);
+          const sb = currentCapHit(b.contract) - deadCapIfReleased(b.contract);
+          if (sb !== sa) return sb - sa;
+          // Tiebreaker: lower OVR cut first (prefer keeping stars even if savings equal)
+          return a.rating - b.rating;
+        });
       for (const p of releaseCandidates) {
         if (teamCapUsed(team, this.state.players) <= cap) break;
-        if (!p.contract) continue;
-        const savings = currentCapHit(p.contract) - deadCapIfReleased(p.contract);
-        if (savings > 0) {
-          team.deadCap = (team.deadCap || 0) + deadCapIfReleased(p.contract);
-          team.roster = team.roster.filter(id => id !== p.id);
-          p.team = null;
-          p.contract = null;
+        team.deadCap = (team.deadCap || 0) + deadCapIfReleased(p.contract);
+        team.roster = team.roster.filter(id => id !== p.id);
+        p.team = null;
+        p.contract = null;
+      }
+    }
+    
+    // Coaching cap enforcement: if team's staff total exceeds COACHING_CAP, fire weakest non-HC coach until under.
+    // We protect the HC (continuity matters) and prefer firing low-OVR DC/OC/Scout.
+    let coachTotal = this.teamCoachingSalary(team);
+    if (coachTotal > COACHING_CAP) {
+      const firingOrder = ['Scout', 'DC', 'OC']; // protect HC last
+      for (const role of firingOrder) {
+        if (coachTotal <= COACHING_CAP) break;
+        const c = this.getCoach(team.staff[role]);
+        if (!c) continue;
+        // Vacate slot — CPU teams will get a backfill next offseason at appropriate salary
+        team.staff[role] = null;
+        c.teamId = null;
+        c.salary = 0;
+        coachTotal = this.teamCoachingSalary(team);
+      }
+      // If still over (somehow even HC alone exceeds cap), demote HC to a cheaper coach
+      if (coachTotal > COACHING_CAP) {
+        const hc = this.getCoach(team.staff.HC);
+        if (hc) {
+          team.staff.HC = null;
+          hc.teamId = null;
+          hc.salary = 0;
         }
       }
     }
@@ -3440,11 +3739,11 @@ let game = {
         const away = this.state.teams[g.awayTeam];
         const confLabel = g.conf === 'SB' ? '★ SUPER BOWL ★' : g.conf;
         html += '<div class="game-row" style="padding:14px 16px">' +
-          '<div class="team-side away">' +
+          '<div class="team-side away" style="cursor:pointer" onclick="game.showTeam(' + away.id + ')">' +
           '<span class="team-name-inline">' + (g.awaySeed ? '(' + g.awaySeed + ') ' : '') + away.city + ' ' + away.name + '</span>' +
           '<span class="team-abbr">' + away.abbr + '</span></div>' +
           '<div class="score"><span class="at">' + confLabel + '</span></div>' +
-          '<div class="team-side"><span class="team-abbr">' + home.abbr + '</span>' +
+          '<div class="team-side" style="cursor:pointer" onclick="game.showTeam(' + home.id + ')"><span class="team-abbr">' + home.abbr + '</span>' +
           '<span class="team-name-inline">' + (g.homeSeed ? '(' + g.homeSeed + ') ' : '') + home.city + ' ' + home.name + '</span></div></div>';
       });
       html += '</div>';
@@ -3756,15 +4055,37 @@ let game = {
     
     // Backfill any vacated coach roles with auto-hires — CPU teams only.
     // User team vacancies persist; user uses the Fill Position button to hire.
+    // Salary must fit within remaining COACHING_CAP room or the new hire's OVR is downgraded.
     this.state.teams.forEach(team => {
       if (!team.staff) return;
       if (team.id === this.state.userTeamId) return; // leave user vacancies alone
       ['HC','OC','DC','Scout'].forEach(role => {
         if (!team.staff[role]) {
           const namePool = () => this.generateName(this.state.year);
-          const replacement = this.generateCoach(role, this.state.year, namePool);
+          const currentTotal = this.teamCoachingSalary(team);
+          const capRoom = Math.max(500_000, COACHING_CAP - currentTotal);
+          // Try up to 6 candidates until we find one whose salary fits
+          let replacement = null;
+          for (let attempt = 0; attempt < 6; attempt++) {
+            const candidate = this.generateCoach(role, this.state.year, namePool);
+            const sal = calculateCoachSalary(role, candidate.ovr);
+            if (sal <= capRoom) {
+              candidate.salary = sal;
+              replacement = candidate;
+              break;
+            }
+            // Mark candidate as unhired (didn't make staff)
+            candidate.teamId = null;
+          }
+          // Fallback: minimum-tier coach (OVR ~55) — should always fit
+          if (!replacement) {
+            const lowOvr = Math.max(45, Math.min(95, 50 + Math.floor(Math.random() * 8)));
+            const candidate = this.generateCoach(role, this.state.year, namePool);
+            candidate.ovr = lowOvr;
+            candidate.salary = calculateCoachSalary(role, lowOvr);
+            replacement = candidate;
+          }
           replacement.teamId = team.id;
-          replacement.salary = calculateCoachSalary(role, replacement.ovr);
           team.staff[role] = replacement.id;
         }
       });
@@ -3829,6 +4150,9 @@ let game = {
     this.runEliteFAPursuit();
     
     // Pass 2: GAP FILL — fill any remaining minimum-roster gaps with best available FA.
+    // Hard cap check: skip signings that would push the team over cap.
+    // Gaps left after this pass get filled by fillRostersToMinimum at the vet minimum.
+    const cap = getSalaryCap(this.state.year);
     this.state.teams.forEach(team => {
       const byPos = {};
       team.roster.forEach(id => {
@@ -3846,6 +4170,13 @@ let game = {
           if (fas.length > 0) {
             fas.sort((a, b) => b.rating - a.rating);
             const fa = fas[0];
+            // Project the contract cost. If it would blow the cap, skip — fillRostersToMinimum
+            // will sign someone cheaper at the vet minimum later.
+            const projAAV = calculateContractAAV(fa.position, fa.rating, fa.age, this.state.year);
+            const capUsed = teamCapUsed(team, this.state.players);
+            if (capUsed + projAAV > cap) {
+              continue; // leave gap for the minimum-contract pass
+            }
             fa.team = team.id;
             fa.contract = generateContract(fa.position, fa.rating, fa.age, this.state.year, false);
             team.roster.push(fa.id);
@@ -3903,10 +4234,10 @@ let game = {
           // Would the FA actually be an upgrade? If their OVR < the team's worst at that position, skip.
           const worstAtPos = atPos.length > 0 ? Math.min(...atPos.map(p => p.rating)) : 0;
           if (fa.rating <= worstAtPos + 2) return null; // not an upgrade
-          // Cap check — would signing them blow the cap?
+          // Cap check — would signing them blow the cap? Hard limit, no grace.
           const projAAV = calculateContractAAV(fa.position, fa.rating, fa.age, this.state.year);
           const capUsed = teamCapUsed(team, this.state.players);
-          if (capUsed + projAAV > cap * 1.05) return null; // 5% grace, AGM can restructure later
+          if (capUsed + projAAV > cap) return null;
           // Score this team's interest: higher when weakness is bigger
           const weakness = leagueAvg[fa.position] - avgAtPos;
           const interest = weakness + (fa.rating - avgAtPos) * 0.5 + Math.random() * 3;
@@ -3964,6 +4295,7 @@ let game = {
   // Post-draft: ensure every team reaches POSITION_COUNTS minimums.
   // Uses any remaining FAs (including undrafted graduates) and generates UDFA rookies as last resort.
   fillRostersToMinimum() {
+    const MIN_CONTRACT_AAV = 1_100_000; // veteran minimum salary
     this.state.teams.forEach(team => {
       const byPos = {};
       team.roster.forEach(id => {
@@ -3977,21 +4309,33 @@ let game = {
           const fas = this.state.players.filter(p =>
             p.team === null && !p.retired && p.position === pos
           );
+          // Prefer cheap FAs (lower rating) for depth signings — fills the gap without blowing cap.
+          // Real NFL fills 4th-string spots with veteran minimums and practice-squad call-ups.
+          let signed = null;
           if (fas.length > 0) {
-            fas.sort((a, b) => b.rating - a.rating);
-            const fa = fas[0];
-            fa.team = team.id;
-            fa.contract = generateContract(fa.position, fa.rating, fa.age, this.state.year, fa.collegeGrade !== undefined);
-            team.roster.push(fa.id);
+            fas.sort((a, b) => a.rating - b.rating); // lowest OVR first
+            signed = fas[0];
+            signed.team = team.id;
+            team.roster.push(signed.id);
           } else {
-            // Generate a UDFA rookie
             const rp = this.generatePlayer(pos, team.id, rookieAge());
             rp.yearsInLeague = 0;
             rp.draftYear = this.state.year;
-            rp.contract = generateContract(pos, rp.rating, rp.age, this.state.year, true);
             this.state.players.push(rp);
             team.roster.push(rp.id);
+            signed = rp;
           }
+          // Always sign at a minimum 1-year deal so this doesn't blow the cap.
+          signed.contract = {
+            years: 1, yearsRemaining: 1,
+            aav: MIN_CONTRACT_AAV,
+            totalValue: MIN_CONTRACT_AAV,
+            signingBonus: 0,
+            bonusProrationYears: 1,
+            baseSalaries: [MIN_CONTRACT_AAV],
+            signedYear: this.state.year,
+            signedAtRating: signed.rating
+          };
         }
       });
     });
@@ -4409,7 +4753,7 @@ let game = {
         ? (c.playstyle.offense + ' offense · ' + c.playstyle.defense + ' defense')
         : (typeof c.playstyle === 'string' ? c.playstyle : '—');
       html += '<div style="background:var(--surface);padding:16px">' +
-        '<div style="display:grid;grid-template-columns:64px 1fr;gap:12px;align-items:center;margin-bottom:12px">' +
+        '<div style="display:grid;grid-template-columns:64px 1fr;gap:12px;align-items:center;margin-bottom:12px;cursor:pointer" onclick="game.showCoachCard(\'' + c.id + '\')">' +
         '<div class="coach-face" style="width:64px;height:64px">' + pixelFaceSVG(c.faceSeed) + '</div>' +
         '<div><div class="coach-label">' + COACH_ROLE_NAMES[role] + '</div>' +
         '<div class="coach-name" style="font-size:15px">' + c.name + '</div>' +
@@ -4641,11 +4985,11 @@ let game = {
       '<table><thead><tr><th>RK</th><th>Prospect</th><th class="text-center">POS</th><th>School</th><th class="text-center">CLASS</th><th class="text-right">GRADE</th></tr></thead><tbody>';
     top100.forEach((p, i) => {
       const gradeClass = p.prospectGrade >= 90 ? 'rating-elite' : p.prospectGrade >= 80 ? 'rating-great' : p.prospectGrade >= 70 ? 'rating-good' : p.prospectGrade >= 60 ? 'rating-avg' : 'rating-poor';
-      html += '<tr>' +
+      html += '<tr onclick="game.showProspectCard(\'' + p.id + '\')" style="cursor:pointer">' +
         '<td class="mono-num">' + (i + 1) + '</td>' +
         '<td><strong>' + p.name + '</strong></td>' +
         '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
-        '<td>' + p.school + '</td>' +
+        '<td><span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showCollegeCard(\'' + p.school + '\')">' + p.school + '</span></td>' +
         '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + p.year + '</td>' +
         '<td class="text-right"><span class="rating ' + gradeClass + '">' + p.prospectGrade.toFixed(1) + '</span></td>' +
         '</tr>';
@@ -4660,24 +5004,38 @@ let game = {
   renderCollegeRecap() {
     const recap = this.state.latestCollegeRecap;
     if (!recap) return '<div class="empty-state">No college season has concluded yet. Recap available after first NFL offseason.</div>';
+    // Helper to wrap a school name in a clickable span pointing to its card
+    const schoolLink = (name) => {
+      const found = COLLEGE_SCHOOLS.find(s => s.name === name);
+      if (!found) return name;
+      return '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + found.abbr + '\')">' + name + '</span>';
+    };
+    const schoolLinkByAbbr = (abbr) => {
+      const found = COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
+      if (!found) return abbr;
+      return '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + abbr + '\')">' + abbr + '</span>';
+    };
     let html = '<div class="card"><div class="card-header"><div class="card-title">' + recap.year + ' College Season</div></div>' +
       '<div style="padding:20px">' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">' +
       '<div><div class="section-label">National Champion</div>' +
-      '<div style="font-size:22px;font-weight:700;letter-spacing:-0.3px">' + recap.champion + '</div>' +
-      '<div class="muted" style="font-size:12px">' + recap.championRecord + ' · defeated ' + recap.runnerUp + '</div></div>' +
+      '<div style="font-size:22px;font-weight:700;letter-spacing:-0.3px">' + schoolLink(recap.champion) + '</div>' +
+      '<div class="muted" style="font-size:12px">' + recap.championRecord + ' · defeated ' + schoolLink(recap.runnerUp) + '</div></div>' +
       '<div><div class="section-label">Heisman Trophy</div>' +
       '<div style="font-size:16px;font-weight:600">' + recap.heismanName + '</div>' +
-      '<div class="muted" style="font-size:12px">' + recap.heismanPosition + ' · ' + recap.heismanSchool + '</div>' +
-      '<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">Maxwell: ' + recap.maxwellName + ' (' + recap.maxwellPosition + ', ' + recap.maxwellSchool + ')</div></div>' +
+      '<div class="muted" style="font-size:12px">' + recap.heismanPosition + ' · ' + schoolLinkByAbbr(recap.heismanSchool) + '</div>' +
+      '<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">Maxwell: ' + recap.maxwellName + ' (' + recap.maxwellPosition + ', ' + schoolLinkByAbbr(recap.maxwellSchool) + ')</div></div>' +
       '</div>' +
       '<div class="section-label">Major Storylines</div><ul style="padding-left:20px;font-size:13px;line-height:1.7;color:var(--text-muted)">';
     recap.storylines.forEach(s => { html += '<li>' + s + '</li>'; });
     html += '</ul>' +
-      '<div class="section-label" style="margin-top:20px">Final Top 10</div>' +
+      '<div class="section-label" style="margin-top:20px">Final Top 25</div>' +
       '<table><thead><tr><th>RK</th><th>School</th><th class="text-right">Record</th></tr></thead><tbody>';
     recap.finalRankings.forEach((r, i) => {
-      html += '<tr><td class="mono-num">' + (i + 1) + '</td><td>' + r.name + '</td><td class="text-right mono-num">' + r.record + '</td></tr>';
+      html += '<tr onclick="game.showCollegeCard(\'' + r.abbr + '\')" style="cursor:pointer">' +
+        '<td class="mono-num">' + (i + 1) + '</td>' +
+        '<td><strong>' + r.name + '</strong></td>' +
+        '<td class="text-right mono-num">' + r.record + '</td></tr>';
     });
     html += '</tbody></table></div></div>';
     return html;
@@ -4686,13 +5044,23 @@ let game = {
   renderCollegeHistory() {
     const history = this.state.collegeHistory || [];
     if (history.length === 0) return '<div class="empty-state">College history will populate as seasons conclude.</div>';
+    const schoolLink = (name) => {
+      const found = COLLEGE_SCHOOLS.find(s => s.name === name);
+      if (!found) return name;
+      return '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + found.abbr + '\')">' + name + '</span>';
+    };
+    const schoolLinkByAbbr = (abbr) => {
+      const found = COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
+      if (!found) return abbr;
+      return '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + abbr + '\')">' + abbr + '</span>';
+    };
     let html = '<div class="card"><div class="card-header"><div class="card-title">Year-by-year history</div><div class="card-meta">' + history.length + ' seasons</div></div>' +
       '<table><thead><tr><th>Year</th><th>National Champion</th><th>Runner-up</th><th>Heisman</th></tr></thead><tbody>';
     history.forEach(h => {
       html += '<tr><td class="mono-num">' + h.year + '</td>' +
-        '<td><strong>' + h.champion + '</strong></td>' +
-        '<td>' + h.runnerUp + '</td>' +
-        '<td>' + h.heismanName + ' <span class="muted" style="font-size:11px">(' + h.heismanPosition + ', ' + h.heismanSchool + ')</span></td></tr>';
+        '<td><strong>' + schoolLink(h.champion) + '</strong></td>' +
+        '<td>' + schoolLink(h.runnerUp) + '</td>' +
+        '<td>' + h.heismanName + ' <span class="muted" style="font-size:11px">(' + h.heismanPosition + ', ' + schoolLinkByAbbr(h.heismanSchool) + ')</span></td></tr>';
     });
     html += '</tbody></table></div>';
     return html;
@@ -4718,7 +5086,7 @@ let game = {
         '<td class="mono-num">' + (i + 1) + '</td>' +
         '<td><strong>' + h.prospectName + '</strong></td>' +
         '<td class="text-center"><span class="position-tag">' + h.position + '</span></td>' +
-        '<td>' + h.school + '</td>' +
+        '<td><span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showCollegeCard(\'' + h.school + '\')">' + h.school + '</span></td>' +
         '<td class="text-center mono-num">' + h.classYear + '</td>' +
         '<td class="text-right"><span class="rating ' + gradeClass + '">' + h.prospectGrade.toFixed(1) + '</span></td>' +
         '<td style="font-size:12px;color:var(--text-muted)">' + careerInfo + '</td></tr>';
@@ -5154,11 +5522,13 @@ let game = {
       if (s.punts > 0) parts.push(s.punts + ' punts, ' + (s.puntYards/s.punts).toFixed(1) + ' avg, ' + s.puntsInside20 + ' I20');
       line = parts.join(' · ');
     }
-    return '<div class="standout-card ' + type + '">' +
+    return '<div class="standout-card ' + type + '" onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer">' +
       '<div class="player-face-large" style="width:48px;height:48px">' + pixelFaceSVG(p.faceSeed) + '</div>' +
       '<div><div class="standout-label">' + label + '</div>' +
       '<div class="standout-name">' + p.name + '</div>' +
-      '<div class="standout-meta">' + p.position + ' · ' + teamLabel + '</div>' +
+      '<div class="standout-meta">' + p.position + ' · ' +
+      (team ? '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + team.id + ')">' + teamLabel + '</span>' : teamLabel) +
+      '</div>' +
       '<div class="standout-stat">' + line + '</div></div></div>';
   },
 
@@ -5184,24 +5554,24 @@ let game = {
     const away = this.state.teams[g.awayTeam];
     const homeWon = g.homeScore > g.awayScore;
     let html = '<div class="boxscore-header">' +
-      '<div class="boxscore-team away"><div class="boxscore-team-name">' + away.city + ' ' + away.name + '</div>' +
+      '<div class="boxscore-team away" style="cursor:pointer" onclick="game.showTeam(' + away.id + ')"><div class="boxscore-team-name">' + away.city + ' ' + away.name + '</div>' +
       '<div class="boxscore-team-record">' + away.wins + '–' + away.losses + '</div></div>' +
       '<div class="boxscore-score-block">' +
       '<div class="boxscore-score ' + (homeWon ? 'loser' : '') + '">' + g.awayScore + '</div>' +
       '<div class="boxscore-dash">·</div>' +
       '<div class="boxscore-score ' + (!homeWon ? 'loser' : '') + '">' + g.homeScore + '</div></div>' +
-      '<div class="boxscore-team"><div class="boxscore-team-name">' + home.city + ' ' + home.name + '</div>' +
+      '<div class="boxscore-team" style="cursor:pointer" onclick="game.showTeam(' + home.id + ')"><div class="boxscore-team-name">' + home.city + ' ' + home.name + '</div>' +
       '<div class="boxscore-team-record">' + home.wins + '–' + home.losses + '</div></div></div>';
     [away, home].forEach(team => {
       const teamStats = Object.entries(g.playerStats)
         .filter(([pid]) => this.state.players[pid].team === team.id)
         .map(([pid, stats]) => ({ player: this.state.players[pid], stats }));
-      html += '<div class="boxscore-team-header"><span class="team-color-bar" style="background:' + team.primary + '"></span>' + team.city + ' ' + team.name + '</div>';
+      html += '<div class="boxscore-team-header" style="cursor:pointer" onclick="game.showTeam(' + team.id + ')"><span class="team-color-bar" style="background:' + team.primary + '"></span>' + team.city + ' ' + team.name + '</div>';
       const passing = teamStats.filter(t => t.stats.attempts > 0).sort((a, b) => b.stats.passingYards - a.stats.passingYards);
       if (passing.length) {
         html += '<div class="boxscore-stat-cat">Passing</div><div class="box-row passing head"><div>PLAYER</div><div class="stat-num">C/A</div><div class="stat-num">YDS</div><div class="stat-num">TD</div></div>';
         passing.forEach(({ player, stats }) => {
-          html += '<div class="box-row passing"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
+          html += '<div class="box-row passing" style="cursor:pointer" onclick="game.showPlayer(' + player.id + ')"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
             '<div class="stat-num">' + stats.completions + '/' + stats.attempts + '</div>' +
             '<div class="stat-num">' + stats.passingYards + '</div>' +
             '<div class="stat-num">' + stats.passingTDs + '</div></div>';
@@ -5211,7 +5581,7 @@ let game = {
       if (rushing.length) {
         html += '<div class="boxscore-stat-cat">Rushing</div><div class="box-row rushing head"><div>PLAYER</div><div class="stat-num">CAR/YDS</div><div class="stat-num">TD</div></div>';
         rushing.forEach(({ player, stats }) => {
-          html += '<div class="box-row rushing"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
+          html += '<div class="box-row rushing" style="cursor:pointer" onclick="game.showPlayer(' + player.id + ')"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
             '<div class="stat-num">' + stats.carries + '/' + stats.rushingYards + '</div>' +
             '<div class="stat-num">' + stats.rushingTDs + '</div></div>';
         });
@@ -5220,7 +5590,7 @@ let game = {
       if (receiving.length) {
         html += '<div class="boxscore-stat-cat">Receiving</div><div class="box-row receiving head"><div>PLAYER</div><div class="stat-num">REC/YDS</div><div class="stat-num">TD</div></div>';
         receiving.forEach(({ player, stats }) => {
-          html += '<div class="box-row receiving"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
+          html += '<div class="box-row receiving" style="cursor:pointer" onclick="game.showPlayer(' + player.id + ')"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
             '<div class="stat-num">' + stats.receptions + '/' + stats.receivingYards + '</div>' +
             '<div class="stat-num">' + stats.receivingTDs + '</div></div>';
         });
@@ -5230,7 +5600,7 @@ let game = {
       if (defense.length) {
         html += '<div class="boxscore-stat-cat">Defense</div><div class="box-row defense head"><div>PLAYER</div><div class="stat-num">TKL/SCK</div><div class="stat-num">INT</div></div>';
         defense.forEach(({ player, stats }) => {
-          html += '<div class="box-row defense"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
+          html += '<div class="box-row defense" style="cursor:pointer" onclick="game.showPlayer(' + player.id + ')"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
             '<div class="stat-num">' + stats.tackles + '/' + stats.sacks + '</div>' +
             '<div class="stat-num">' + stats.interceptionsMade + '</div></div>';
         });
@@ -5239,7 +5609,7 @@ let game = {
       if (kicking.length) {
         html += '<div class="boxscore-stat-cat">Kicking</div><div class="box-row kicking head"><div>PLAYER</div><div class="stat-num">FG</div><div class="stat-num">XP</div></div>';
         kicking.forEach(({ player, stats }) => {
-          html += '<div class="box-row kicking"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
+          html += '<div class="box-row kicking" style="cursor:pointer" onclick="game.showPlayer(' + player.id + ')"><div><span class="box-jersey">#' + player.jerseyNumber + '</span> ' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
             '<div class="stat-num">' + stats.fieldGoalsMade + '/' + stats.fieldGoalsAttempted + '</div>' +
             '<div class="stat-num">' + stats.extraPoints + '</div></div>';
         });
@@ -5357,9 +5727,9 @@ let game = {
         const away = this.state.teams[g.awayTeam];
         const isUserGame = home.id === userTeamId || away.id === userTeamId;
         html += '<div class="game-row"' + (isUserGame ? ' style="background:var(--user-bg)"' : '') + '>' +
-          '<div class="team-side away"><span class="team-name-inline">' + away.city + ' ' + away.name + '</span><span class="team-abbr">' + away.abbr + '</span></div>' +
+          '<div class="team-side away" style="cursor:pointer" onclick="game.showTeam(' + away.id + ')"><span class="team-name-inline">' + away.city + ' ' + away.name + '</span><span class="team-abbr">' + away.abbr + '</span></div>' +
           '<div class="score"><span class="at">@</span></div>' +
-          '<div class="team-side"><span class="team-abbr">' + home.abbr + '</span><span class="team-name-inline">' + home.city + ' ' + home.name + '</span></div></div>';
+          '<div class="team-side" style="cursor:pointer" onclick="game.showTeam(' + home.id + ')"><span class="team-abbr">' + home.abbr + '</span><span class="team-name-inline">' + home.city + ' ' + home.name + '</span></div></div>';
       });
       if (onByeNextWeek) {
         const ut = this.state.teams[userTeamId];
@@ -5429,6 +5799,199 @@ let game = {
     document.getElementById('content').innerHTML = html;
   },
 
+  // Show a college program's card with history, current prestige, championships, top prospects, and NFL alumni.
+  showCollegeCard(abbr) {
+    const school = COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
+    if (!school) return;
+    const prestige = (this.state.collegePrestige && this.state.collegePrestige[abbr] !== undefined)
+      ? Math.round(this.state.collegePrestige[abbr])
+      : school.prestige;
+    
+    // Tier label based on prestige
+    let tier = 'Mid-major';
+    if (prestige >= 92) tier = 'Blue blood';
+    else if (prestige >= 85) tier = 'Elite';
+    else if (prestige >= 78) tier = 'Strong';
+    else if (prestige >= 72) tier = 'Mid-tier';
+    else if (prestige >= 68) tier = 'Solid';
+    
+    // Compute history: championships, top-10 finishes, Heisman winners, runners-up
+    const history = this.state.collegeHistory || [];
+    let championships = 0;
+    let runnerUps = 0;
+    let top10Finishes = 0;
+    let heismans = 0;
+    const championshipYears = [];
+    const heismanYears = [];
+    history.forEach(rec => {
+      if (rec.championAbbr === abbr) { championships++; championshipYears.push(rec.year); }
+      if (rec.runnerUp && this.findSchoolByName(rec.runnerUp) === abbr) runnerUps++;
+      if (rec.heismanSchool === abbr) { heismans++; heismanYears.push({ year: rec.year, name: rec.heismanName, pos: rec.heismanPosition }); }
+      const rank = rec.finalRankings ? rec.finalRankings.findIndex(r => r.abbr === abbr) : -1;
+      if (rank >= 0 && rank < 10) top10Finishes++;
+    });
+    
+    // Current prospects at this school
+    const currentProspects = (this.state.collegeProspects || []).filter(p => p.school === abbr);
+    currentProspects.sort((a, b) => b.prospectGrade - a.prospectGrade);
+    
+    // NFL alumni (players who came from this school)
+    const alumni = this.state.players.filter(p => p.collegeSchool === abbr);
+    const activeAlumni = alumni.filter(p => !p.retired && p.team !== null).sort((a, b) => b.rating - a.rating);
+    const retiredAlumni = alumni.filter(p => p.retired);
+    
+    // Latest recap: what was this school's most recent rank?
+    const recentRank = history.length > 0 && history[0].finalRankings
+      ? history[0].finalRankings.findIndex(r => r.abbr === abbr)
+      : -1;
+    const recentRankLabel = recentRank >= 0 ? '#' + (recentRank + 1) : 'Unranked';
+    const recentRecord = recentRank >= 0 ? history[0].finalRankings[recentRank].record : '—';
+    
+    let html = '<div style="padding:20px;border-bottom:1px solid var(--border)">' +
+      '<div style="display:flex;align-items:center;gap:14px">' +
+      '<div style="width:6px;height:48px;background:' + school.primary + ';border-radius:2px"></div>' +
+      '<div><div style="font-size:20px;font-weight:600">' + school.name + '</div>' +
+      '<div class="muted" style="font-size:12px;margin-top:2px">' + tier + ' · Prestige ' + prestige + ' · Last season: ' + recentRankLabel + ' (' + recentRecord + ')</div></div></div>';
+    
+    // History stats grid
+    html += '<div style="margin-top:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border)">' +
+      '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">National titles</div><div style="font-size:22px;font-weight:600;font-family:var(--font-mono)">' + championships + '</div></div>' +
+      '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Runner-ups</div><div style="font-size:22px;font-weight:600;font-family:var(--font-mono)">' + runnerUps + '</div></div>' +
+      '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Top-10 finishes</div><div style="font-size:22px;font-weight:600;font-family:var(--font-mono)">' + top10Finishes + '</div></div>' +
+      '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Heismans</div><div style="font-size:22px;font-weight:600;font-family:var(--font-mono)">' + heismans + '</div></div>' +
+      '</div>';
+    html += '</div>';
+    
+    // Championship years
+    if (championshipYears.length > 0) {
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">National championship years</div>' +
+        '<div style="margin-top:6px;font-size:13px;font-family:var(--font-mono)">' + championshipYears.reverse().join(' · ') + '</div></div>';
+    }
+    
+    // Heisman winners
+    if (heismanYears.length > 0) {
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">Heisman winners</div>' +
+        '<div style="margin-top:8px">';
+      heismanYears.reverse().forEach(h => {
+        html += '<div style="font-size:13px;padding:4px 0"><span class="mono-num">' + h.year + '</span> · <strong>' + h.name + '</strong> <span class="muted">(' + h.pos + ')</span></div>';
+      });
+      html += '</div></div>';
+    }
+    
+    // Current prospects on roster (top 8)
+    if (currentProspects.length > 0) {
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">Current prospects · ' + currentProspects.length + ' on roster</div>' +
+        '<table style="margin-top:8px"><thead><tr><th>Name</th><th class="text-center">POS</th><th class="text-center">YEAR</th><th class="text-right">GRADE</th></tr></thead><tbody>';
+      currentProspects.slice(0, 8).forEach(p => {
+        const rc = p.prospectGrade >= 90 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 70 ? 'good' : 'avg';
+        html += '<tr onclick="game.showProspectCard(\'' + p.id + '\')" style="cursor:pointer">' +
+          '<td><strong>' + p.name + '</strong></td>' +
+          '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
+          '<td class="text-center" style="font-size:12px;color:var(--text-muted)">' + p.year + '</td>' +
+          '<td class="text-right"><span class="rating ' + rc + '">' + p.prospectGrade.toFixed(1) + '</span></td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
+    // NFL alumni — active first, then notable retired
+    if (activeAlumni.length > 0) {
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">Active NFL alumni · ' + activeAlumni.length + '</div>' +
+        '<table style="margin-top:8px"><thead><tr><th>Name</th><th class="text-center">POS</th><th class="text-center">TEAM</th><th class="text-right">OVR</th></tr></thead><tbody>';
+      activeAlumni.slice(0, 10).forEach(p => {
+        const team = this.state.teams[p.team];
+        const rc = this.ratingClass(p.rating);
+        html += '<tr onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer">' +
+          '<td><strong>' + p.name + '</strong></td>' +
+          '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
+          '<td class="text-center mono-num muted">' + (team ? team.abbr : '—') + '</td>' +
+          '<td class="text-right"><span class="rating ' + rc + '">' + p.rating + '</span></td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
+    // HOF inductees from this school
+    const hofAlumni = alumni.filter(p => p.hofInducted);
+    if (hofAlumni.length > 0) {
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">Hall of Fame · ' + hofAlumni.length + '</div>' +
+        '<div style="margin-top:8px">';
+      hofAlumni.forEach(p => {
+        html += '<div style="font-size:13px;padding:4px 0;cursor:pointer" onclick="game.showPlayer(' + p.id + ')">' +
+          '<strong>' + p.name + '</strong> <span class="muted">(' + p.position + ')</span></div>';
+      });
+      html += '</div></div>';
+    }
+    
+    this.showModal(school.name, html);
+  },
+  
+  // Helper: reverse-lookup a school abbr from its full name (used for runner-up matching).
+  findSchoolByName(name) {
+    const found = COLLEGE_SCHOOLS.find(s => s.name === name);
+    return found ? found.abbr : null;
+  },
+
+  // Show a college prospect's card with school, grade, year, projected draft range, and growth.
+  showProspectCard(prospectId) {
+    const p = (this.state.collegeProspects || []).find(x => x.id === prospectId);
+    if (!p) {
+      // Maybe they already declared / graduated — try to look up the resulting NFL player.
+      // (Prospects get removed from collegeProspects when they graduate.)
+      return;
+    }
+    const school = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+    const schoolName = school ? school.name : p.school;
+    const schoolColor = school ? school.primary : '#888';
+    
+    // Approximate age based on class year
+    const ageByYear = { 'Freshman': 18, 'Sophomore': 19, 'Junior': 20, 'Senior': 21 };
+    const age = ageByYear[p.year] || 19;
+    
+    // Projected NFL draft range based on grade
+    let projectedRound = 'UDFA';
+    if (p.prospectGrade >= 95) projectedRound = 'Top 5 pick';
+    else if (p.prospectGrade >= 90) projectedRound = 'Top 15 pick';
+    else if (p.prospectGrade >= 85) projectedRound = 'Round 1';
+    else if (p.prospectGrade >= 78) projectedRound = 'Rounds 1-2';
+    else if (p.prospectGrade >= 72) projectedRound = 'Rounds 2-3';
+    else if (p.prospectGrade >= 65) projectedRound = 'Rounds 3-5';
+    else if (p.prospectGrade >= 58) projectedRound = 'Rounds 5-7';
+    
+    const rc = p.prospectGrade >= 90 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 70 ? 'good' : 'avg';
+    
+    let html = '<div style="padding:20px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:64px 1fr;gap:14px;align-items:center">' +
+      '<div class="player-face-small" style="width:64px;height:64px">' + pixelFaceSVG(p.faceSeed) + '</div>' +
+      '<div>' +
+      '<div style="font-size:18px;font-weight:600">' + p.name + '</div>' +
+      '<div style="margin-top:4px;display:flex;gap:10px;align-items:center;font-size:12px">' +
+      '<span class="position-tag">' + p.position + '</span>' +
+      '<span class="muted">' + p.year + ' · age ~' + age + '</span>' +
+      '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + p.school + '\')">' + schoolName + '</span>' +
+      (p.declaredEarly ? '<span class="muted" style="font-size:11px">Declared early</span>' : '') +
+      '</div></div></div>';
+    
+    html += '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)">' +
+      '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Prospect grade</div><div style="font-size:24px;font-weight:600;font-family:var(--font-mono)"><span class="rating ' + rc + '">' + p.prospectGrade.toFixed(1) + '</span></div></div>' +
+      '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Draft projection</div><div style="font-size:14px;font-weight:600;padding-top:6px">' + projectedRound + '</div></div>' +
+      '</div>';
+    
+    // What year will they enter the draft?
+    const yearsUntilDraft = { 'Freshman': 3, 'Sophomore': 2, 'Junior': 1, 'Senior': 0 };
+    const earliestDraft = this.state.year + (yearsUntilDraft[p.year] || 0);
+    html += '<div style="padding:14px 20px"><div class="section-label">Eligibility</div>' +
+      '<div style="margin-top:6px;font-size:13px">Earliest NFL draft: <strong class="mono">' + earliestDraft + '</strong>';
+    if (p.year === 'Junior' && p.prospectGrade >= 85) {
+      html += ' <span class="muted">(may declare early)</span>';
+    }
+    html += '</div></div>';
+    
+    this.showModal(p.name + ' · ' + schoolName, html);
+  },
+
   showTeam(teamId) {
     const team = this.state.teams[teamId];
     let html = '<div style="padding:20px;border-bottom:1px solid var(--border)">' +
@@ -5487,10 +6050,14 @@ let game = {
     else if (c.role === 'Scout') styleStr = c.playstyle + ' specialty';
     else styleStr = c.playstyle + ' playstyle';
     
+    const teamLabel = team
+      ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</span>'
+      : 'Free Agent';
+    
     let html = '<div class="player-detail-header">' +
       '<div class="player-face-large">' + pixelFaceSVG(c.faceSeed) + '</div>' +
       '<div><div class="player-name-big">' + c.name + '</div>' +
-      '<div class="player-meta">' + COACH_ROLE_NAMES[c.role] + ' · ' + (team ? team.city + ' ' + team.name : 'Free Agent') + ' · Age ' + c.age + '</div>' +
+      '<div class="player-meta">' + COACH_ROLE_NAMES[c.role] + ' · ' + teamLabel + ' · Age ' + c.age + '</div>' +
       '<span class="rating ' + this.ratingClass(c.ovr) + '" style="font-size:14px;padding:4px 10px">OVR ' + c.ovr + '</span></div></div>' +
       '<div class="player-detail-body">' +
       '<div class="section-label">Profile</div><table class="stat-table">' +
@@ -5508,7 +6075,11 @@ let game = {
       html += '<div class="section-label">Season history</div><table class="stat-table">' +
         '<thead><tr><td><strong>Year</strong></td><td><strong>Team</strong></td><td><strong>Role</strong></td><td><strong>Record</strong></td><td><strong>Awards</strong></td></tr></thead>';
       [...c.seasonHistory].reverse().forEach(h => {
-        const teamLabel = h.teamAbbr || '—';
+        let teamLabel = h.teamAbbr || '—';
+        if (h.teamAbbr) {
+          const t = this.state.teams.find(x => x.abbr === h.teamAbbr);
+          if (t) teamLabel = '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + t.id + ')">' + h.teamAbbr + '</span>';
+        }
         const recordStr = (h.role === 'HC') ? (h.wins + '–' + h.losses) : '—';
         html += '<tr><td>' + h.year + '</td><td>' + teamLabel + '</td><td>' + h.role + '</td><td>' + recordStr + '</td><td>' + (h.coyAwarded ? 'COY' : '') + '</td></tr>';
       });
@@ -5539,15 +6110,28 @@ let game = {
     const isOnUserTeam = team && team.id === this.state.userTeamId;
     const cap = getSalaryCap(this.state.year);
 
+    const teamLabel = team
+      ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</span>'
+      : (p.retired ? 'Retired' : 'Free Agent');
+    
     let html = '<div class="player-detail-header">' +
       '<div class="player-face-large">' + pixelFaceSVG(p.faceSeed) + '</div>' +
       '<div><div class="player-name-big">' + p.name + '</div>' +
-      '<div class="player-meta">#' + p.jerseyNumber + ' · ' + p.position + ' · Age ' + p.age + ' · ' +
-      (team ? team.city + ' ' + team.name : (p.retired ? 'Retired' : 'Free Agent')) + '</div>' +
+      '<div class="player-meta">#' + p.jerseyNumber + ' · ' + p.position + ' · Age ' + p.age + ' · ' + teamLabel + '</div>' +
       '<span class="rating ' + rc + '" style="font-size:14px;padding:4px 10px">OVR ' + p.rating + '</span>' +
       '</div></div>' +
       '<div class="player-detail-body">';
 
+    // College link (if known) — schools store abbr in p.collegeSchool
+    let collegeRow = '';
+    if (p.collegeSchool) {
+      const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === p.collegeSchool);
+      const collegeName = schoolInfo ? schoolInfo.name : p.collegeSchool;
+      collegeRow = '<tr><td>College</td><td><span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + p.collegeSchool + '\')">' + collegeName + '</span>' +
+        (p.collegeGrade !== undefined ? ' <span class="muted" style="font-size:11px">(' + p.collegeGrade.toFixed(1) + ' prospect grade' + (p.declaredEarly ? ', early decl.' : '') + ')</span>' : '') +
+        '</td></tr>';
+    }
+    
     // Profile
     html += '<div class="section-label">Profile</div><table class="stat-table">' +
       '<tr><td>Position</td><td>' + p.position + '</td></tr>' +
@@ -5555,6 +6139,7 @@ let game = {
       '<tr><td>Age</td><td>' + p.age + '</td></tr>' +
       '<tr><td>Years in league</td><td>' + p.yearsInLeague + '</td></tr>' +
       '<tr><td>Draft year</td><td>' + p.draftYear + '</td></tr>' +
+      collegeRow +
       (p.potential ? '<tr><td>Potential</td><td>' + p.potential + (p.potential > p.rating ? ' <span style="color:var(--success);font-size:11px">(+' + (p.potential - p.rating) + ')</span>' : '') + '</td></tr>' : '') +
       '<tr><td>Status</td><td>' + (p.retired ? 'Retired' + (p.hofInducted ? ' · HOF' : '') : (team ? 'Active' : 'Free Agent')) + '</td></tr>' +
       '</table>';
@@ -5730,7 +6315,15 @@ let game = {
       else if (pos === 'K') { col1 = s.fieldGoalsMade || 0; col2 = s.extraPoints || 0; col3 = ''; }
       else if (pos === 'P') { col1 = s.punts || 0; col2 = (s.puntYards || 0).toLocaleString(); col3 = s.puntsInside20 || 0; }
       const awardsStr = (h.awards && h.awards.length > 0) ? h.awards.join(', ') : '';
-      html += '<tr><td>' + h.year + '</td><td>' + (h.teamAbbr || '—') + '</td>' +
+      // Make the team abbr clickable when we can resolve it to a current team
+      let teamCell = h.teamAbbr || '—';
+      if (h.teamAbbr) {
+        const team = this.state.teams.find(t => t.abbr === h.teamAbbr);
+        if (team) {
+          teamCell = '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + h.teamAbbr + '</span>';
+        }
+      }
+      html += '<tr><td>' + h.year + '</td><td>' + teamCell + '</td>' +
         '<td>' + col1 + '</td><td>' + col2 + '</td><td>' + col3 + '</td>' +
         '<td>' + (h.rating || '—') + '</td>' +
         '<td style="font-size:11px;color:var(--warning);font-weight:600">' + awardsStr + '</td></tr>';
@@ -5757,7 +6350,7 @@ let game = {
         '<div>' + p.name + '</div>' +
         '<div class="mono-num">' + p.age + '</div>' +
         '<div><span class="rating ' + rc + '">' + p.rating + '</span></div>' +
-        '<div class="mono-num muted">' + team.abbr + '</div></div>';
+        '<div class="mono-num muted"><span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + team.id + ')">' + team.abbr + '</span></div></div>';
     });
     html += '</div>';
     document.getElementById('content').innerHTML = html;
@@ -5800,9 +6393,12 @@ let game = {
       html += '<div class="card"><div class="card-header"><div class="card-title">' + c.title + '</div></div>';
       sorted.forEach((p, i) => {
         const team = this.state.teams[p.team];
+        const teamLabel = team
+          ? '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + team.id + ')">' + team.abbr + '</span>'
+          : 'FA';
         html += '<div class="leader-row" onclick="game.showPlayer(' + p.id + ')">' +
           '<div class="leader-rank">' + (i + 1) + '</div>' +
-          '<div><span class="leader-name">' + p.name + '</span><span class="leader-team">' + (team ? team.abbr : 'FA') + ' · ' + p.position + '</span></div>' +
+          '<div><span class="leader-name">' + p.name + '</span><span class="leader-team">' + teamLabel + ' · ' + p.position + '</span></div>' +
           '<div class="leader-stat">' + (p.seasonStats[c.key] || 0).toLocaleString() + '</div></div>';
       });
       html += '</div>';
@@ -5814,10 +6410,13 @@ let game = {
       html += '<div class="card"><div class="card-header"><div class="card-title">Punting · avg yards</div></div>';
       byAvg.forEach((p, i) => {
         const team = this.state.teams[p.team];
+        const teamLabel = team
+          ? '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + team.id + ')">' + team.abbr + '</span>'
+          : 'FA';
         const avg = (p.seasonStats.puntYards/p.seasonStats.punts).toFixed(1);
         html += '<div class="leader-row" onclick="game.showPlayer(' + p.id + ')">' +
           '<div class="leader-rank">' + (i + 1) + '</div>' +
-          '<div><span class="leader-name">' + p.name + '</span><span class="leader-team">' + (team ? team.abbr : 'FA') + '</span></div>' +
+          '<div><span class="leader-name">' + p.name + '</span><span class="leader-team">' + teamLabel + '</span></div>' +
           '<div class="leader-stat">' + avg + ' (' + p.seasonStats.punts + ' punts)</div></div>';
       });
       html += '</div>';
@@ -5843,10 +6442,13 @@ let game = {
       html += '<div class="card"><div class="card-header"><div class="card-title">' + c.title + '</div></div>';
       sorted.forEach((p, i) => {
         const team = p.team !== null ? this.state.teams[p.team] : null;
+        const teamLabel = team
+          ? '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + team.id + ')">' + team.abbr + '</span>'
+          : 'Retired';
         html += '<div class="leader-row" onclick="game.showPlayer(' + p.id + ')">' +
           '<div class="leader-rank">' + (i + 1) + '</div>' +
           '<div><span class="leader-name">' + p.name + (p.hofInducted ? ' ★' : '') + '</span>' +
-          '<span class="leader-team">' + (team ? team.abbr : 'Retired') + ' · ' + p.position + '</span></div>' +
+          '<span class="leader-team">' + teamLabel + ' · ' + p.position + '</span></div>' +
           '<div class="leader-stat">' + (p.careerStats[c.key] || 0).toLocaleString() + '</div></div>';
       });
       html += '</div>';
@@ -5936,9 +6538,20 @@ let game = {
         if (!a) return '<td class="muted">—</td>';
         if (a.playerId !== undefined) {
           const p = this.state.players[a.playerId];
-          return '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + a.playerId + ')">' + a.name + '</span></td>';
+          let teamAbbr = '—';
+          if (p) {
+            if (p.team !== null && this.state.teams[p.team]) teamAbbr = this.state.teams[p.team].abbr;
+            else if (p.retired) teamAbbr = 'RET';
+          }
+          return '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + a.playerId + ')">' + a.name + '</span> <span class="muted mono-num" style="font-size:10px">' + teamAbbr + '</span></td>';
         } else if (a.coachId) {
-          return '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showCoachCard(\'' + a.coachId + '\')">' + a.name + '</span></td>';
+          const c = this.getCoach(a.coachId);
+          let teamAbbr = '—';
+          if (c) {
+            if (c.teamId !== null && this.state.teams[c.teamId]) teamAbbr = this.state.teams[c.teamId].abbr;
+            else if (c.retired) teamAbbr = 'RET';
+          }
+          return '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showCoachCard(\'' + a.coachId + '\')">' + a.name + '</span> <span class="muted mono-num" style="font-size:10px">' + teamAbbr + '</span></td>';
         } else {
           return '<td>' + a.name + '</td>';
         }
@@ -5965,8 +6578,8 @@ let game = {
     }
     
     // Tally awards per player and per coach
-    const playerTallies = {}; // playerId → { name, position, mvp, opoy, dpoy, oroy, droy, total }
-    const coachTallies = {};  // coachId → { name, coy }
+    const playerTallies = {}; // playerId → { name, position, team, mvp, opoy, dpoy, oroy, droy, total }
+    const coachTallies = {};  // coachId → { name, team, coy }
     
     const awardKeys = ['mvp','opoy','dpoy','oroy','droy'];
     history.forEach(rec => {
@@ -5975,7 +6588,13 @@ let game = {
           const pid = rec[k].playerId;
           if (!playerTallies[pid]) {
             const p = this.state.players[pid];
-            playerTallies[pid] = { id: pid, name: p ? p.name : rec[k].name, position: p ? p.position : '—', mvp: 0, opoy: 0, dpoy: 0, oroy: 0, droy: 0, total: 0 };
+            playerTallies[pid] = {
+              id: pid,
+              name: p ? p.name : rec[k].name,
+              position: p ? p.position : '—',
+              teamAbbr: (p && p.team !== null && this.state.teams[p.team]) ? this.state.teams[p.team].abbr : '—',
+              mvp: 0, opoy: 0, dpoy: 0, oroy: 0, droy: 0, total: 0
+            };
           }
           playerTallies[pid][k]++;
           playerTallies[pid].total++;
@@ -5985,7 +6604,12 @@ let game = {
         const cid = rec.coy.coachId;
         if (!coachTallies[cid]) {
           const c = this.getCoach(cid);
-          coachTallies[cid] = { id: cid, name: c ? c.name : rec.coy.name, coy: 0 };
+          coachTallies[cid] = {
+            id: cid,
+            name: c ? c.name : rec.coy.name,
+            teamAbbr: (c && c.teamId !== null && this.state.teams[c.teamId]) ? this.state.teams[c.teamId].abbr : '—',
+            coy: 0
+          };
         }
         coachTallies[cid].coy++;
       }
@@ -5995,7 +6619,7 @@ let game = {
     const sortedCoaches = Object.values(coachTallies).sort((a, b) => b.coy - a.coy).slice(0, 15);
     
     let html = '<div class="card"><div class="card-header"><div class="card-title">All-time award leaders · players</div></div>' +
-      '<table><thead><tr><th>RK</th><th>Player</th><th class="text-center">POS</th>' +
+      '<table><thead><tr><th>RK</th><th>Player</th><th class="text-center">POS</th><th class="text-center">TEAM</th>' +
       '<th class="text-center">MVP</th><th class="text-center">OPOY</th><th class="text-center">DPOY</th>' +
       '<th class="text-center">OROY</th><th class="text-center">DROY</th>' +
       '<th class="text-right">Total</th></tr></thead><tbody>';
@@ -6004,6 +6628,7 @@ let game = {
         '<td class="mono-num">' + (i + 1) + '</td>' +
         '<td><strong>' + p.name + '</strong></td>' +
         '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
+        '<td class="text-center mono-num muted">' + p.teamAbbr + '</td>' +
         '<td class="text-center mono-num">' + (p.mvp || '') + '</td>' +
         '<td class="text-center mono-num">' + (p.opoy || '') + '</td>' +
         '<td class="text-center mono-num">' + (p.dpoy || '') + '</td>' +
@@ -6014,11 +6639,12 @@ let game = {
     html += '</tbody></table></div>';
     
     html += '<div class="card"><div class="card-header"><div class="card-title">All-time award leaders · coaches</div></div>' +
-      '<table><thead><tr><th>RK</th><th>Coach</th><th class="text-right">COY awards</th></tr></thead><tbody>';
+      '<table><thead><tr><th>RK</th><th>Coach</th><th class="text-center">TEAM</th><th class="text-right">COY awards</th></tr></thead><tbody>';
     sortedCoaches.forEach((c, i) => {
       html += '<tr onclick="game.showCoachCard(\'' + c.id + '\')" style="cursor:pointer">' +
         '<td class="mono-num">' + (i + 1) + '</td>' +
         '<td><strong>' + c.name + '</strong></td>' +
+        '<td class="text-center mono-num muted">' + c.teamAbbr + '</td>' +
         '<td class="text-right mono-num"><strong>' + c.coy + '</strong></td></tr>';
     });
     html += '</tbody></table></div>';
@@ -6090,18 +6716,28 @@ let game = {
   // RECORDS
   renderRecords() {
     const r = this.state.records;
+    // Helper to make a record-holder name clickable if we can resolve them to a player by name
+    const holderLink = (recObj) => {
+      if (!recObj.player) return 'No record yet';
+      const player = this.state.players.find(p => p.name === recObj.player);
+      const label = recObj.player + ' · ' + recObj.year;
+      if (player) {
+        return '<span style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + player.id + ')">' + label + '</span>';
+      }
+      return label;
+    };
     let html = '<div class="page-header"><div class="page-title">Records</div>' +
       '<div class="page-subtitle">Single-season records and franchise championships</div></div>' +
       '<div class="card"><div class="card-header"><div class="card-title">Single-season records</div></div>' +
       '<div class="record-item"><div class="record-label">Passing yards</div>' +
       '<div class="record-value">' + (r.seasonPassingYards.value > 0 ? r.seasonPassingYards.value.toLocaleString() : '—') + '</div>' +
-      '<div class="record-holder">' + (r.seasonPassingYards.player ? r.seasonPassingYards.player + ' · ' + r.seasonPassingYards.year : 'No record yet') + '</div></div>' +
+      '<div class="record-holder">' + holderLink(r.seasonPassingYards) + '</div></div>' +
       '<div class="record-item"><div class="record-label">Rushing yards</div>' +
       '<div class="record-value">' + (r.seasonRushingYards.value > 0 ? r.seasonRushingYards.value.toLocaleString() : '—') + '</div>' +
-      '<div class="record-holder">' + (r.seasonRushingYards.player ? r.seasonRushingYards.player + ' · ' + r.seasonRushingYards.year : 'No record yet') + '</div></div>' +
+      '<div class="record-holder">' + holderLink(r.seasonRushingYards) + '</div></div>' +
       '<div class="record-item"><div class="record-label">Receiving yards</div>' +
       '<div class="record-value">' + (r.seasonReceivingYards.value > 0 ? r.seasonReceivingYards.value.toLocaleString() : '—') + '</div>' +
-      '<div class="record-holder">' + (r.seasonReceivingYards.player ? r.seasonReceivingYards.player + ' · ' + r.seasonReceivingYards.year : 'No record yet') + '</div></div>' +
+      '<div class="record-holder">' + holderLink(r.seasonReceivingYards) + '</div></div>' +
       '</div>';
     // Championships by franchise
     const champs = [...this.state.teams].filter(t => t.historicalStats.championships > 0).sort((a, b) => b.historicalStats.championships - a.historicalStats.championships);
@@ -6126,11 +6762,16 @@ let game = {
     } else {
       html += '<div class="card">';
       [...this.state.champions].reverse().forEach(c => {
+        // Resolve runner-up team by its full name (champ records store strings)
+        const runnerUpTeam = this.state.teams.find(t => (t.city + ' ' + t.name) === c.runnerUp);
+        const runnerUpLabel = runnerUpTeam
+          ? '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + runnerUpTeam.id + ')">' + c.runnerUp + '</span>'
+          : c.runnerUp;
         html += '<div class="champ-row" onclick="game.showTeam(' + c.teamId + ')" style="cursor:pointer">' +
           '<div class="champ-year">' + c.year + '</div>' +
           '<div><div class="champ-team">' + c.team + '</div>' +
           '<div class="champ-record">' + c.record + '</div></div>' +
-          '<div class="champ-runnerup">Runner-up: ' + c.runnerUp + '</div></div>';
+          '<div class="champ-runnerup">Runner-up: ' + runnerUpLabel + '</div></div>';
       });
       html += '</div>';
     }
