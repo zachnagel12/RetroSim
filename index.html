@@ -44,6 +44,18 @@ main { display: grid; grid-template-columns: 200px 1fr 320px; overflow: hidden; 
 .nav-item.playoffs-nav.active { border-left-color: var(--accent); }
 .nav-icon { width: 16px; display: inline-flex; justify-content: center; opacity: 0.6; }
 .nav-item.active .nav-icon { opacity: 1; }
+/* Accordion groups: parent header is clickable, children slide in below */
+.nav-group { margin-bottom: 4px; }
+.nav-group-header { padding: 8px 16px 8px 20px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text); display: flex; align-items: center; justify-content: space-between; letter-spacing: 0.3px; user-select: none; }
+.nav-group-header:hover { background: var(--surface-2); }
+.nav-group-header-left { display: flex; align-items: center; gap: 10px; }
+.nav-group-chevron { font-size: 9px; opacity: 0.5; transition: transform 0.15s ease; }
+.nav-group.expanded .nav-group-chevron { transform: rotate(90deg); opacity: 0.9; }
+.nav-group-items { display: none; padding: 2px 0 6px; }
+.nav-group.expanded .nav-group-items { display: block; }
+/* Sub-items are visually nested with more indent */
+.nav-group-items .nav-item { padding-left: 38px; font-size: 12.5px; }
+.nav-group-items .nav-item.active { border-left-color: var(--text); }
 .content { background: var(--bg); overflow-y: auto; padding: 24px 32px; }
 .page-header { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .page-title { font-size: 22px; font-weight: 600; letter-spacing: -0.4px; margin-bottom: 4px; }
@@ -364,24 +376,55 @@ select { font-family: inherit; }
         <div class="nav-item playoffs-nav" data-view="playoffs"><span class="nav-icon">◆</span><span>Playoffs</span></div>
       </div>
       <div class="nav-section">
-        <div class="nav-title">League</div>
-        <div class="nav-item active" data-view="standings"><span class="nav-icon">▦</span><span>Standings</span></div>
-        <div class="nav-item" data-view="schedule"><span class="nav-icon">◫</span><span>Schedule</span></div>
-        <div class="nav-item" data-view="teams"><span class="nav-icon">◯</span><span>Teams</span></div>
-        <div class="nav-item" data-view="players"><span class="nav-icon">◐</span><span>Players</span></div>
-        <div class="nav-item" data-view="college"><span class="nav-icon">▲</span><span>College</span></div>
-        <div class="nav-item user-team-item" data-view="trades" id="navTrades" style="display:none"><span class="nav-icon">⇄</span><span>Trades</span></div>
-      </div>
-      <div class="nav-section">
-        <div class="nav-title">Insights</div>
-        <div class="nav-item" data-view="statistics"><span class="nav-icon">∑</span><span>Statistics</span></div>
-        <div class="nav-item" data-view="awards"><span class="nav-icon">♦</span><span>Awards</span></div>
-      </div>
-      <div class="nav-section">
-        <div class="nav-title">History</div>
-        <div class="nav-item" data-view="hof"><span class="nav-icon">★</span><span>Hall of Fame</span></div>
-        <div class="nav-item" data-view="records"><span class="nav-icon">↑</span><span>Records</span></div>
-        <div class="nav-item" data-view="champions"><span class="nav-icon">◆</span><span>Champions</span></div>
+        <div class="nav-group expanded" data-group="league">
+          <div class="nav-group-header" onclick="game.toggleNavGroup('league')">
+            <div class="nav-group-header-left"><span class="nav-icon">▦</span><span>League</span></div>
+            <span class="nav-group-chevron">▶</span>
+          </div>
+          <div class="nav-group-items">
+            <div class="nav-item active" data-view="schedule"><span>Schedule</span></div>
+            <div class="nav-item" data-view="standings"><span>Standings</span></div>
+            <div class="nav-item" data-view="teams"><span>Teams</span></div>
+            <div class="nav-item" data-view="players"><span>Players</span></div>
+            <div class="nav-item" data-view="freeagents"><span>Free Agents</span></div>
+            <div class="nav-item" data-view="playoffpicture"><span>Playoff Picture</span></div>
+            <div class="nav-item user-team-item" data-view="trades" id="navTrades" style="display:none"><span>Trades</span></div>
+          </div>
+        </div>
+        <div class="nav-group" data-group="insights">
+          <div class="nav-group-header" onclick="game.toggleNavGroup('insights')">
+            <div class="nav-group-header-left"><span class="nav-icon">∑</span><span>Insights</span></div>
+            <span class="nav-group-chevron">▶</span>
+          </div>
+          <div class="nav-group-items">
+            <div class="nav-item" data-view="statistics"><span>Statistics</span></div>
+            <div class="nav-item" data-view="awards"><span>Awards</span></div>
+          </div>
+        </div>
+        <div class="nav-group" data-group="history">
+          <div class="nav-group-header" onclick="game.toggleNavGroup('history')">
+            <div class="nav-group-header-left"><span class="nav-icon">★</span><span>History</span></div>
+            <span class="nav-group-chevron">▶</span>
+          </div>
+          <div class="nav-group-items">
+            <div class="nav-item" data-view="records"><span>Record Book</span></div>
+            <div class="nav-item" data-view="champions"><span>Champions</span></div>
+            <div class="nav-item" data-view="hof"><span>Hall of Fame</span></div>
+            <div class="nav-item" data-view="teamhistory"><span>Team History</span></div>
+          </div>
+        </div>
+        <div class="nav-group" data-group="college">
+          <div class="nav-group-header" onclick="game.toggleNavGroup('college')">
+            <div class="nav-group-header-left"><span class="nav-icon">▲</span><span>College</span></div>
+            <span class="nav-group-chevron">▶</span>
+          </div>
+          <div class="nav-group-items">
+            <div class="nav-item" data-view="college"><span>Top 25 Teams</span></div>
+            <div class="nav-item" data-view="prospects"><span>Top 100 Prospects</span></div>
+            <div class="nav-item" data-view="collegehistory"><span>College History</span></div>
+            <div class="nav-item" data-view="collegehof"><span>College HOF</span></div>
+          </div>
+        </div>
       </div>
       <div class="nav-section">
         <div class="nav-title">Settings</div>
@@ -847,7 +890,7 @@ const SCANDAL_TEMPLATES = [
 
 const EMPTY_GAME_STATS = () => ({ passingYards:0,passingTDs:0,completions:0,attempts:0,interceptionsThrown:0,rushingYards:0,rushingTDs:0,carries:0,receivingYards:0,receivingTDs:0,receptions:0,sacks:0,interceptionsMade:0,tackles:0,fieldGoalsMade:0,fieldGoalsAttempted:0,extraPoints:0,touchdowns:0,punts:0,puntYards:0,puntsInside20:0 });
 const EMPTY_SEASON_STATS = () => ({ passingYards:0,passingTDs:0,completions:0,attempts:0,interceptionsThrown:0,rushingYards:0,rushingTDs:0,carries:0,receivingYards:0,receivingTDs:0,receptions:0,sacks:0,interceptionsMade:0,tackles:0,fieldGoalsMade:0,fieldGoalsAttempted:0,extraPoints:0,touchdowns:0,punts:0,puntYards:0,puntsInside20:0,gamesPlayed:0 });
-const EMPTY_CAREER_STATS = () => ({ gamesPlayed:0,passingYards:0,passingTDs:0,rushingYards:0,rushingTDs:0,receivingYards:0,receivingTDs:0,sacks:0,interceptionsMade:0,tackles:0,fieldGoalsMade:0,punts:0,puntYards:0,touchdowns:0,seasonsPlayed:0 });
+const EMPTY_CAREER_STATS = () => ({ gamesPlayed:0,passingYards:0,passingTDs:0,interceptionsThrown:0,rushingYards:0,rushingTDs:0,receivingYards:0,receivingTDs:0,sacks:0,interceptionsMade:0,tackles:0,fieldGoalsMade:0,punts:0,puntYards:0,touchdowns:0,seasonsPlayed:0 });
 const EMPTY_TEAM_HIST = () => ({ wins:0,losses:0,championships:0,playoffApps:0,pointsFor:0,pointsAgainst:0,seasons:0 });
 
 // FACES
@@ -1091,6 +1134,28 @@ let game = {
     this.bindEvents();
   },
 
+  // Accordion sidebar — toggle a group's expanded state.
+  // Only one group expands at a time (closes others) to keep the sidebar compact.
+  toggleNavGroup(groupName) {
+    document.querySelectorAll('.nav-group').forEach(g => {
+      if (g.dataset.group === groupName) g.classList.toggle('expanded');
+      else g.classList.remove('expanded');
+    });
+  },
+  
+  // Make sure the parent group of the active nav-item is expanded.
+  // Called after render() so the visible group reflects the current view.
+  syncNavGroupForActive() {
+    const activeItem = document.querySelector('.nav-item.active');
+    if (!activeItem) return;
+    const parent = activeItem.closest('.nav-group');
+    if (!parent) return;
+    document.querySelectorAll('.nav-group').forEach(g => {
+      if (g === parent) g.classList.add('expanded');
+      else g.classList.remove('expanded');
+    });
+  },
+
   bindEvents() {
     document.querySelectorAll('.nav-item').forEach(item => {
       item.addEventListener('click', () => {
@@ -1098,6 +1163,9 @@ let game = {
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         item.classList.add('active');
         this.currentView = item.dataset.view;
+        // Reset drill-down sub-state when navigating via the sidebar so users always see the
+        // landing view (e.g. team-history list, not a stale drill-down).
+        if (this.currentView === 'teamhistory') this.viewingTeamHistoryId = null;
         this.render();
       });
     });
@@ -1143,10 +1211,11 @@ let game = {
     }
     
     if (mode === 'player') {
-      // Player career: show player-career nav. Stage drives the label.
+      // Player career: show player-career nav. Stage drives the label and the secondary item.
       const userPlayer = this.getUserPlayer();
       const stage = this.state.career.careerStage;
       const playerCareerNav = document.getElementById('navPlayerCareer');
+      
       if (userPlayer) {
         if (stage === 'college') {
           const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === userPlayer.school);
@@ -1166,7 +1235,44 @@ let game = {
         tag.textContent = 'Player Career';
       }
       tag.style.display = '';
-      if (playerCareerNav) playerCareerNav.style.display = '';
+      if (playerCareerNav) {
+        playerCareerNav.style.display = '';
+        // Rewrite the player nav contents based on stage so it stays contextually relevant:
+        // - College stage: "My Player" + "My School" (link to school card)
+        // - Declared stage: "My Player" + "Combine results" (link to combine page)
+        // - NFL stage: "My Player" + "My Team" (link to NFL team page)
+        // - Retired: just "My Player" (retired career view)
+        if (userPlayer && stage === 'college') {
+          playerCareerNav.innerHTML =
+            '<div class="nav-title">Your Career</div>' +
+            '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>' +
+            '<div class="nav-item" data-view="myschool"><span class="nav-icon">▲</span><span>My School</span></div>';
+        } else if (userPlayer && stage === 'declared') {
+          playerCareerNav.innerHTML =
+            '<div class="nav-title">Your Career</div>' +
+            '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>' +
+            '<div class="nav-item" data-view="combine"><span class="nav-icon">⚡</span><span>Combine</span></div>';
+        } else if (userPlayer && stage === 'nfl') {
+          playerCareerNav.innerHTML =
+            '<div class="nav-title">Your Career</div>' +
+            '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>' +
+            '<div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>';
+        } else {
+          playerCareerNav.innerHTML =
+            '<div class="nav-title">Your Career</div>' +
+            '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>';
+        }
+        // Rebind click handlers on the freshly-written nav items
+        playerCareerNav.querySelectorAll('.nav-item').forEach(item => {
+          item.addEventListener('click', () => {
+            if (this.state && this.state.draftActive) return;
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            item.classList.add('active');
+            this.currentView = item.dataset.view;
+            this.render();
+          });
+        });
+      }
       return;
     }
     
@@ -1384,9 +1490,18 @@ let game = {
       this.addHeadline({ title:'2026 season kicks off', body:'A new league begins in present day. Salary cap: ' + formatMoney(getSalaryCap(2026)) + '.' });
       document.getElementById('simBtn').style.display = '';
       this.updateUserTag();
-      this.currentView = userTeamId !== null ? 'myteam' : 'standings';
+      // Default landing view depends on mode:
+      // - Coach/Player career: 'mycareer' so the user sees their identity and any pending offers
+      // - Dynasty: 'myteam' since they have a franchise to manage
+      // - No career, no team: 'standings' as a neutral browse view
+      if (this.state.career && (this.state.career.mode === 'coach' || this.state.career.mode === 'player')) {
+        this.currentView = 'mycareer';
+      } else {
+        this.currentView = userTeamId !== null ? 'myteam' : 'standings';
+      }
       document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-      document.querySelector('[data-view="' + this.currentView + '"]').classList.add('active');
+      const activeNav = document.querySelector('[data-view="' + this.currentView + '"]');
+      if (activeNav) activeNav.classList.add('active');
       this.saveGame();
       this.render();
     }
@@ -1566,7 +1681,7 @@ let game = {
 
   // Generate job offers for the user's coach at a given role.
   // Returns offers from teams with that role vacant, ranked by team interest.
-  generateCoachOffers(userCoach, targetRole) {
+  generateCoachOffers(userCoach, targetRole, overrideCount) {
     const candidates = this.state.teams.filter(t => t.staff && t.staff[targetRole] === null);
     if (candidates.length === 0) return [];
     
@@ -1585,8 +1700,11 @@ let game = {
     });
     scored.sort((a, b) => b.interest - a.interest);
     
-    // Top 2-4 offers
-    const offerCount = Math.min(scored.length, userCoach.ovr >= 80 ? 4 : userCoach.ovr >= 70 ? 3 : 2);
+    // Default offer count by tier (in-season FA / promotion flow):
+    // OVR 80+ → 4 offers, 70+ → 3, below → 2. Initial hire path passes an override for more variety.
+    const defaultCount = userCoach.ovr >= 80 ? 4 : userCoach.ovr >= 70 ? 3 : 2;
+    const targetCount = overrideCount !== undefined ? overrideCount : defaultCount;
+    const offerCount = Math.min(scored.length, targetCount);
     
     return scored.slice(0, offerCount).map(({ team, wins }) => {
       // Salary offer: based on coach OVR, with rebuild teams paying 5-15% more
@@ -1651,7 +1769,14 @@ let game = {
     
     team.staff[newRole] = userCoach.id;
     this.state.career.pendingCoachOffers = null;
-    this.state.offseasonPhase = 'fa';
+    // If this was the initial hire at game creation, there's no offseason — clear the phase entirely
+    // so simWeek starts the regular season normally instead of triggering an annual draft.
+    if (this.state.career.initialCoachHiring) {
+      this.state.offseasonPhase = null;
+      this.state.career.initialCoachHiring = false;
+    } else {
+      this.state.offseasonPhase = 'fa';
+    }
     
     this.addHeadline({
       type: 'champ',
@@ -1668,7 +1793,12 @@ let game = {
     if (!userCoach) return;
     if (!confirm('Decline all offers? You\'ll stay in your current position (or remain FA). Continue?')) return;
     this.state.career.pendingCoachOffers = null;
-    this.state.offseasonPhase = 'fa';
+    if (this.state.career.initialCoachHiring) {
+      this.state.offseasonPhase = null;
+      this.state.career.initialCoachHiring = false;
+    } else {
+      this.state.offseasonPhase = 'fa';
+    }
     this.addHeadline({
       title: userCoach.name + ' rejects all coaching offers',
       body: 'Will stay in current role / remain FA.'
@@ -1828,6 +1958,24 @@ let game = {
           title: inPending.name + ' declares for the NFL Draft',
           body: 'After ' + (inPending.seasonHistory ? inPending.seasonHistory.length : 0) + ' years at ' + (schoolInfo ? schoolInfo.name : inPending.school) + ', final prospect grade: ' + inPending.prospectGrade.toFixed(1) + '. The draft is up next.'
         });
+        // Pre-compute combine results now so the grade adjustment is locked in before the draft uses it.
+        // The combine page renders these lazily, but generating early ensures the draft sees the adjusted grade.
+        if (!inPending.combineResults) {
+          inPending.combineResults = this.generateCombineResults(inPending);
+          if (inPending.combineResults.gradeAdjust) {
+            inPending.prospectGrade = Math.max(40, Math.min(99, inPending.prospectGrade + inPending.combineResults.gradeAdjust));
+          }
+          const adj = inPending.combineResults.gradeAdjust;
+          this.addHeadline({
+            title: inPending.name + ' completes the NFL Combine',
+            body: (adj > 0 ? 'Stock up: +' : adj < 0 ? 'Stock down: ' : 'Neutral: ') + adj.toFixed(1) + ' grade adjustment. Composite ' + inPending.combineResults.composite + '/100. New grade: ' + inPending.prospectGrade.toFixed(1) + '.'
+          });
+        }
+        // Stash combine results on declaredIdentity so they can be carried across the NFL bridge,
+        // which runs after pendingDraftClass has been cleared by the draft.
+        this.state.career.declaredIdentity.combineResults = inPending.combineResults;
+        // Auto-route the user to the combine page so they see results immediately.
+        this.currentView = 'combine';
       }
       // If still in college (junior or earlier), nothing to do — they keep playing.
     }
@@ -1847,6 +1995,11 @@ let game = {
       if (matchingPlayer) {
         // Bridge: re-point career to the NFL player
         matchingPlayer.isUserControlled = true;
+        // Carry combine results across the bridge so the Combine page is available retroactively.
+        // declaredIdentity holds them because pendingDraftClass is cleared by the time we get here.
+        if (id.combineResults) {
+          matchingPlayer.combineResults = id.combineResults;
+        }
         this.state.career.entityId = matchingPlayer.id;
         this.state.career.careerStage = 'nfl';
         this.state.career.declaredIdentity = null; // consumed
@@ -2079,58 +2232,80 @@ let game = {
   },
 
   // The previous occupant of that slot is released to the FA pool.
+  // Creates the user's coach as a free agent (no team) and queues up initial job offers.
+  // The user picks which team to start with via the regular Stage 3 acceptCoachOffer flow.
+  // This replaces the old behavior of dumping the user on a random team and booting that team's coach.
   installUserCoach({ name, role, age, ovr }) {
-    // Pick a random team — coach starts somewhere; user can climb from there.
-    const teamId = Math.floor(Math.random() * this.state.teams.length);
-    const team = this.state.teams[teamId];
-    
-    // Boot the existing coach in that role to the FA pool
-    const existingId = team.staff[role];
-    if (existingId) {
-      const old = this.getCoach(existingId);
-      if (old) {
-        old.teamId = null;
-        old.salary = 0;
-      }
-    }
-    
-    // Build the user's coach. We mostly reuse generateCoach to get a complete object,
-    // then override the user-controlled fields.
-    const namePool = () => name; // force the chosen name
+    // Build the user's coach as a free agent
+    const namePool = () => name;
     const userCoach = this.generateCoach(role, this.state.year, namePool);
     userCoach.name = name;
     userCoach.age = age;
     userCoach.ovr = ovr;
-    userCoach.teamId = teamId;
-    userCoach.salary = calculateCoachSalary(role, ovr);
+    userCoach.teamId = null;          // FA — will pick a team via offers
+    userCoach.salary = 0;
     userCoach.hiredYear = this.state.year;
     userCoach.isUserControlled = true;
-    
-    team.staff[role] = userCoach.id;
     
     // Wire up career state
     this.state.career.entityType = 'coach';
     this.state.career.entityId = userCoach.id;
-    // Cap-compliance: bumping in a user coach may push the team over the coach cap. Trim if needed.
-    let coachTotal = this.teamCoachingSalary(team);
-    if (coachTotal > COACHING_CAP) {
-      // Downgrade other staff first
-      const downgradeOrder = ['Scout', 'DC', 'OC', 'HC'].filter(r => r !== role);
-      for (const r of downgradeOrder) {
-        if (coachTotal <= COACHING_CAP) break;
-        const c = this.getCoach(team.staff[r]);
-        if (!c) continue;
-        while (coachTotal > COACHING_CAP && c.ovr > 50) {
-          c.ovr = Math.max(50, c.ovr - 5);
-          c.salary = calculateCoachSalary(c.role, c.ovr);
-          coachTotal = this.teamCoachingSalary(team);
-        }
-      }
+    
+    // Make sure there are enough open slots at the user's chosen role for a healthy offer slate.
+    // If fewer than 5 teams currently have that role vacant, fire some CPU coaches to make room.
+    // This is the "offseason hiring cycle" assumption — multiple teams hire in any given year.
+    const vacantTeams = () => this.state.teams.filter(t => t.staff && t.staff[role] === null);
+    const TARGET_VACANCIES = 6;
+    let attempts = 0;
+    while (vacantTeams().length < TARGET_VACANCIES && attempts < 20) {
+      attempts++;
+      // Pick a team that has someone in this role — prefer lower-OVR coaches (likely to be fired anyway)
+      const candidates = this.state.teams
+        .filter(t => t.staff && t.staff[role] !== null)
+        .map(t => {
+          const c = this.getCoach(t.staff[role]);
+          return { team: t, coach: c, ovr: c ? c.ovr : 0 };
+        })
+        .filter(x => x.coach)
+        .sort((a, b) => a.ovr - b.ovr);
+      
+      if (candidates.length === 0) break;
+      // Fire from the bottom — the worst coach at this role gets cut
+      const { team, coach } = candidates[0];
+      coach.teamId = null;
+      coach.salary = 0;
+      team.staff[role] = null;
     }
     
+    // Generate initial offers using the same machinery as Stage 3 FA offers.
+    // Pass overrideCount=5 so green coaches see a richer slate at career start (real life: green
+    // candidates often interview with 4-6 teams during a single hiring cycle).
+    const offers = this.generateCoachOffers(userCoach, role, 5);
+    
+    if (offers.length === 0) {
+      // Should never happen given the vacancy-forcing above, but fail gracefully:
+      // drop the user onto the first vacant team so they at least have a job
+      const fallback = vacantTeams()[0];
+      if (fallback) {
+        userCoach.teamId = fallback.id;
+        userCoach.salary = calculateCoachSalary(role, ovr);
+        fallback.staff[role] = userCoach.id;
+        this.addHeadline({
+          title: fallback.city + ' ' + fallback.name + ' hire ' + name + ' as ' + COACH_ROLE_NAMES[role],
+          body: 'Begins coaching career in ' + this.state.year + ' at age ' + age + ' (OVR ' + ovr + ').'
+        });
+      }
+      return;
+    }
+    
+    // Stash offers and set the picker phase. The user will see them on the My Career page.
+    this.state.career.pendingCoachOffers = offers;
+    this.state.career.initialCoachHiring = true;  // signals acceptCoachOffer to set phase=null, not 'fa'
+    this.state.offseasonPhase = 'coachJobChoice';
+    
     this.addHeadline({
-      title: team.city + ' ' + team.name + ' hire ' + name + ' as ' + COACH_ROLE_NAMES[role],
-      body: 'New ' + role + ' begins their coaching career in ' + this.state.year + ' at age ' + age + ' (OVR ' + ovr + ').'
+      title: name + ' enters the coaching market',
+      body: offers.length + ' team' + (offers.length === 1 ? '' : 's') + ' interested in hiring a new ' + COACH_ROLE_NAMES[role] + '. Pick where to begin your career.'
     });
   },
 
@@ -3552,6 +3727,10 @@ let game = {
     this.generateWeeklyHeadlines();
     if (Math.random() < 0.08) this.generateScandal();
     this.state.lastWeekRecap = this.buildWeekRecap(weekGames);
+    // Apply user player's weekly training boost (player career only). Done before clearing.
+    this.applyPlayerTrainingBoost();
+    // Clear weekly training picks now that the games are played. User must re-pick next week.
+    this.clearWeeklyTraining();
     document.getElementById('newsFeed').style.display = '';
     document.getElementById('mainGrid').style.gridTemplateColumns = '200px 1fr 320px';
     this.saveGame();
@@ -3677,15 +3856,27 @@ let game = {
     // HC OVR provides a small bump/penalty around 75 baseline
     const hc = this.getTeamHC(team);
     const coachBonus = hc ? (hc.ovr - 75) * 0.06 : 0;
-    return playerAvg + coachBonus;
+    // Training boost: a focused training week gives a small competitive edge (~+1 strength rating).
+    // Real NFL: prep matters but it's not transformative. This nudges win probability by a few percent.
+    const trainBonus = team.weeklyTraining ? 1.2 : 0;
+    // Aggressiveness slider: very aggressive playcalling slightly boosts strength (high variance, more upside)
+    let aggBonus = 0;
+    if (team.playcalling && team.playcalling.aggressiveness !== undefined) {
+      aggBonus = (team.playcalling.aggressiveness - 50) * 0.015; // -0.75 to +0.75
+    }
+    return playerAvg + coachBonus + trainBonus + aggBonus;
   },
 
   // Get effective pass emphasis for a team based on its coaching playstyle
   getTeamPassEmph(team) {
+    // Playcalling override takes precedence — user has manually set the pass/run balance.
+    if (team.playcalling && team.playcalling.passBalance !== undefined) {
+      // passBalance is a percentage (20-85). Map to passEmph (0.20-0.85).
+      return Math.max(0.20, Math.min(0.85, team.playcalling.passBalance / 100));
+    }
     const hc = this.getTeamHC(team);
     const oc = this.getCoach(team.staff && team.staff.OC);
     let style;
-    // OC playstyle takes precedence; fall back to HC offense; fall back to default
     if (oc && oc.playstyle) style = oc.playstyle;
     else if (hc && hc.playstyle && hc.playstyle.offense) style = hc.playstyle.offense;
     else style = 'Balanced';
@@ -3717,6 +3908,8 @@ let game = {
       const defStyle = this.getTeamDefStyle(team);
       const blitzMod = (defStyle === 'Blitz Heavy' || defStyle === 'Aggressive Front') ? 1.25 : (defStyle === 'Coverage First' ? 0.85 : 1.0);
       const coverageMod = (defStyle === 'Coverage First' || defStyle === 'Bend Don\'t Break') ? 1.20 : 1.0;
+      // Pull this team's weekly training boost (if user set one). Falls back to null for CPU teams.
+      const trainBoost = this.getTrainingBoost(team) || {};
       
       // Decompose the team's final score into target TDs and FGs.
       // Split TDs between passing and rushing based on pass-emphasis.
@@ -3761,13 +3954,16 @@ let game = {
         // Formula: base + variance × rating multiplier × passEmph scaling
         const ratingMult = 0.90 + Math.max(0, (qb.rating - 75)) / 38; // 0.90 at OVR 75, 1.16 at 85, 1.35 at 92
         const passEmphMult = 0.85 + passEmph * 0.32; // 0.85 to 1.17 range
-        teamPassYards = Math.floor((175 + Math.random() * 80) * ratingMult * passEmphMult);
+        teamPassYards = Math.floor((175 + Math.random() * 80) * ratingMult * passEmphMult * (trainBoost.passYdsMult || 1));
         const att = Math.floor((24 + Math.random() * 12) * passEmphMult);
         teamCompletions = Math.floor(att * (0.58 + Math.random() * 0.12 + (qb.rating - 75) / 200));
         teamCompletions = Math.min(teamCompletions, att);
         // Force passing TDs to match the decomposed target (instead of random)
         teamPassTDs = targetPassTDs;
-        const ints = Math.random() < 0.4 ? Math.floor(Math.random() * 2) : 0;
+        // Training: qbDev reduces INT rate; defensive coverage/passRush on OPPOSING team adds INTs
+        // (we model INTs as a function of this offense's training only, since opponent boosts are out of scope)
+        let intRate = trainBoost.intMult !== undefined ? trainBoost.intMult : 1.0;
+        const ints = Math.random() < 0.4 * intRate ? Math.floor(Math.random() * 2) : 0;
         const gs = ensureStats(qb.id);
         gs.passingYards += teamPassYards; gs.passingTDs += teamPassTDs;
         gs.attempts += att; gs.completions += teamCompletions; gs.interceptionsThrown += ints; gs.touchdowns += teamPassTDs;
@@ -3859,7 +4055,7 @@ let game = {
       // RUSHING GAME — team rush totals split between RBs and QB scrambles.
       // Sum of player rush yards/TDs must equal team rush totals.
       // =========================================================
-      const teamRushYards = Math.floor((75 + Math.random() * 145) * (1.6 - passEmph));
+      const teamRushYards = Math.floor((75 + Math.random() * 145) * (1.6 - passEmph) * (trainBoost.rushYdsMult || 1));
       const teamCarries = Math.floor((22 + Math.random() * 14) * (1.4 - passEmph));
       // Force rushing TDs to match the decomposed target (instead of random)
       const teamRushTDs = targetRushTDs;
@@ -3934,8 +4130,11 @@ let game = {
       // DEFENSE & SPECIAL TEAMS — unchanged (not stat-conserved per request)
       // =========================================================
       const edges = roster.filter(p => p.position === 'EDGE').sort((a, b) => b.rating - a.rating);
-      edges.slice(0, 3).forEach(dl => {
-        const sacks = Math.random() < (dl.rating / 90) * blitzMod ? Math.floor(Math.random() * 2) + (Math.random() < 0.25 * blitzMod ? 1 : 0) : 0;
+      // Training boost: passRush adds an extra sack to the top edge rusher
+      let bonusSacksLeft = trainBoost.sacksBonus || 0;
+      edges.slice(0, 3).forEach((dl, idx) => {
+        let sacks = Math.random() < (dl.rating / 90) * blitzMod ? Math.floor(Math.random() * 2) + (Math.random() < 0.25 * blitzMod ? 1 : 0) : 0;
+        if (idx === 0 && bonusSacksLeft > 0) { sacks += bonusSacksLeft; bonusSacksLeft = 0; }
         const tackles = Math.floor(2 + Math.random() * 5);
         const gs = ensureStats(dl.id);
         gs.sacks += sacks; gs.tackles += tackles;
@@ -5030,6 +5229,7 @@ let game = {
       // Accumulate career stats
       p.careerStats.passingYards += p.seasonStats.passingYards;
       p.careerStats.passingTDs += p.seasonStats.passingTDs;
+      p.careerStats.interceptionsThrown = (p.careerStats.interceptionsThrown || 0) + (p.seasonStats.interceptionsThrown || 0);
       p.careerStats.rushingYards += p.seasonStats.rushingYards;
       p.careerStats.rushingTDs += p.seasonStats.rushingTDs;
       p.careerStats.receivingYards += p.seasonStats.receivingYards;
@@ -5716,6 +5916,13 @@ let game = {
       case 'staff': this.renderStaff(); break;
       case 'freeagents': this.renderFreeAgents(); break;
       case 'college': this.renderCollege(); break;
+      case 'prospects': this.renderProspects(); break;
+      case 'collegehistory': this.renderCollegeHistoryPage(); break;
+      case 'collegehof': this.renderCollegeHOFPage(); break;
+      case 'playoffpicture': this.renderPlayoffPicture(); break;
+      case 'teamhistory': this.renderTeamHistory(); break;
+      case 'myschool': this.renderMySchool(); break;
+      case 'combine': this.renderCombine(); break;
       case 'trades': this.renderTrades(); break;
       case 'mycareer': this.renderMyCareer(); break;
       case 'hof': this.renderHOF(); break;
@@ -5724,6 +5931,8 @@ let game = {
       case 'about': this.renderAbout(); break;
       default: this.renderStandings();
     }
+    // Keep the accordion sidebar in sync with the currently-active view.
+    this.syncNavGroupForActive();
   },
 
   // MY TEAM
@@ -5992,6 +6201,17 @@ let game = {
         '</div>' +
         '</div>' +
         '</div></div>';
+      
+      // ============ TRAINING & PLAYCALLING ============
+      // Available when the coach is employed (has a team) and the season is in progress.
+      // Training: weekly pick that boosts a unit for one game. Reset each simWeek.
+      // Playcalling: persistent slider settings stored on the team. HC role only.
+      if (!this.state.playoffActive && this.state.week < 18 && this.state.offseasonPhase === null) {
+        html += this.renderTrainingCard(userCoach, team);
+        if (userCoach.role === 'HC') {
+          html += this.renderPlaycallingCard(userCoach, team);
+        }
+      }
     } else {
       html += '<div class="card"><div class="card-header"><div class="card-title">Free agent</div></div>' +
         '<div style="padding:16px">' +
@@ -6021,6 +6241,279 @@ let game = {
     }
     
     document.getElementById('content').innerHTML = html;
+  },
+
+  // ============================================================
+  // TRAINING PROGRAMS & PLAYCALLING SETUP (Item 3)
+  // ============================================================
+  
+  // Training focus options. Each one boosts a specific stat band for the next game.
+  // Stored on team.weeklyTraining = key. Cleared after each simWeek for the user team.
+  // The boost is applied during generateGameStats via getTrainingBoost.
+  TRAINING_OPTIONS: {
+    'qbDev':       { label: 'QB development',     desc: 'Sharper accuracy, fewer mistakes',  side: 'OFF', effect: '+8% passing yards, -25% INTs' },
+    'runReps':     { label: 'Run game reps',      desc: 'Sharper blocking and vision',       side: 'OFF', effect: '+10% rushing yards' },
+    'routeWork':   { label: 'Route running',      desc: 'Crisper releases, more separation', side: 'OFF', effect: '+10% receiving yards' },
+    'protection':  { label: 'Pass protection',    desc: 'OL holds up better',                side: 'OFF', effect: '-30% sacks allowed' },
+    'passRush':    { label: 'Pass rush drills',   desc: 'Get to the QB',                     side: 'DEF', effect: '+1 sack, -8% opp pass yds' },
+    'coverage':    { label: 'Coverage drills',    desc: 'Tighter windows',                   side: 'DEF', effect: '-10% opp pass yds' },
+    'tackling':    { label: 'Tackling fundamentals', desc: 'Shut down the run',              side: 'DEF', effect: '-10% opp rush yds' },
+    'specialTeams':{ label: 'Special teams',      desc: 'Sharper kicking and coverage',      side: 'ST',  effect: '+1 FG expected' }
+  },
+
+  // Render the training focus card on the coach career page.
+  renderTrainingCard(userCoach, team) {
+    const currentPick = team.weeklyTraining || null;
+    const opts = this.TRAINING_OPTIONS;
+    // Filter options by coach role: HC sees all, OC sees offense, DC sees defense
+    const allowed = userCoach.role === 'HC' ? Object.keys(opts)
+                  : userCoach.role === 'OC' ? Object.keys(opts).filter(k => opts[k].side === 'OFF')
+                  : userCoach.role === 'DC' ? Object.keys(opts).filter(k => opts[k].side === 'DEF')
+                  : [];
+    if (allowed.length === 0) return '';
+    
+    let html = '<div class="card"><div class="card-header"><div class="card-title">Weekly training focus</div>' +
+      '<div class="card-meta">Pick one for Week ' + (this.state.week + 1) + ' · resets after the game</div></div>' +
+      '<div style="padding:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">';
+    
+    allowed.forEach(key => {
+      const opt = opts[key];
+      const selected = currentPick === key;
+      const sideColor = opt.side === 'OFF' ? 'var(--accent)' : opt.side === 'DEF' ? 'var(--success)' : 'var(--warning)';
+      html += '<div onclick="game.setWeeklyTraining(\'' + key + '\')" style="cursor:pointer;border:' + (selected ? '2px solid var(--text)' : '1px solid var(--border)') + ';background:' + (selected ? 'var(--surface-2)' : 'var(--surface)') + ';padding:12px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
+        '<span style="font-size:13px;font-weight:600">' + opt.label + '</span>' +
+        '<span style="font-size:9px;color:' + sideColor + ';font-weight:600;letter-spacing:0.5px">' + opt.side + '</span>' +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">' + opt.desc + '</div>' +
+        '<div style="font-size:10px;color:var(--text);font-family:var(--font-mono)">' + opt.effect + '</div>' +
+        (selected ? '<div style="margin-top:6px;font-size:10px;color:var(--success);font-weight:600">✓ SELECTED</div>' : '') +
+        '</div>';
+    });
+    
+    html += '</div>';
+    if (!currentPick) {
+      html += '<div style="padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">No focus selected. Pick one before simming the week.</div>';
+    }
+    html += '</div>';
+    return html;
+  },
+
+  // Render the playcalling sliders card. HC-only feature.
+  renderPlaycallingCard(userCoach, team) {
+    if (!team.playcalling) {
+      team.playcalling = { passBalance: 60, aggressiveness: 50, defenseStyle: 50 };
+    }
+    const pc = team.playcalling;
+    
+    let html = '<div class="card"><div class="card-header"><div class="card-title">Playcalling setup</div>' +
+      '<div class="card-meta">Persistent · overrides default coaching style</div></div>' +
+      '<div style="padding:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px">';
+    
+    html += '<div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">' +
+      '<span>Run-heavy</span><span>Pass-heavy</span></div>' +
+      '<input type="range" min="20" max="85" value="' + pc.passBalance + '" oninput="game.setPlaycalling(\'passBalance\', this.value)" style="width:100%">' +
+      '<div style="font-size:12px;font-weight:600;text-align:center;margin-top:4px;font-family:var(--font-mono)">' + pc.passBalance + '% pass</div>' +
+      '<div style="font-size:10px;color:var(--text-muted);text-align:center;margin-top:2px">' +
+      (pc.passBalance < 40 ? 'Smashmouth' : pc.passBalance < 55 ? 'Run-first' : pc.passBalance < 65 ? 'Balanced' : pc.passBalance < 75 ? 'Pass-leaning' : 'Air-it-out') +
+      '</div></div>';
+    
+    html += '<div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">' +
+      '<span>Conservative</span><span>Aggressive</span></div>' +
+      '<input type="range" min="0" max="100" value="' + pc.aggressiveness + '" oninput="game.setPlaycalling(\'aggressiveness\', this.value)" style="width:100%">' +
+      '<div style="font-size:12px;font-weight:600;text-align:center;margin-top:4px;font-family:var(--font-mono)">' + pc.aggressiveness + '/100</div>' +
+      '<div style="font-size:10px;color:var(--text-muted);text-align:center;margin-top:2px">' +
+      (pc.aggressiveness < 30 ? 'Punt happy, low variance' : pc.aggressiveness < 60 ? 'By the book' : pc.aggressiveness < 80 ? 'Calculated risks' : 'High-risk, high-reward') +
+      '</div></div>';
+    
+    html += '<div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">' +
+      '<span>Coverage</span><span>Blitz</span></div>' +
+      '<input type="range" min="0" max="100" value="' + pc.defenseStyle + '" oninput="game.setPlaycalling(\'defenseStyle\', this.value)" style="width:100%">' +
+      '<div style="font-size:12px;font-weight:600;text-align:center;margin-top:4px;font-family:var(--font-mono)">' + pc.defenseStyle + '/100</div>' +
+      '<div style="font-size:10px;color:var(--text-muted);text-align:center;margin-top:2px">' +
+      (pc.defenseStyle < 30 ? 'Bend-don\'t-break' : pc.defenseStyle < 55 ? 'Coverage-first' : pc.defenseStyle < 75 ? 'Balanced front' : 'Send pressure') +
+      '</div></div>';
+    
+    html += '</div></div>';
+    return html;
+  },
+
+  // Set the weekly training focus on the user's team. Re-renders the page so the selection is visible.
+  setWeeklyTraining(key) {
+    const team = this.state.teams[this.getUserTeamId()];
+    if (!team) return;
+    team.weeklyTraining = key;
+    this.saveGame();
+    this.render();
+  },
+
+  // Update a playcalling slider value. Stored on team.playcalling. Persistent across weeks.
+  setPlaycalling(key, value) {
+    const team = this.state.teams[this.getUserTeamId()];
+    if (!team) return;
+    if (!team.playcalling) team.playcalling = { passBalance: 60, aggressiveness: 50, defenseStyle: 50 };
+    team.playcalling[key] = parseInt(value);
+    this.saveGame();
+  },
+
+  // Get training boost multipliers for a team's next game. Cleared after the game.
+  getTrainingBoost(team) {
+    const key = team.weeklyTraining;
+    if (!key) return null;
+    const boosts = {
+      'qbDev':       { passYdsMult: 1.08, intMult: 0.75 },
+      'runReps':     { rushYdsMult: 1.10 },
+      'routeWork':   { recYdsMult: 1.10 },
+      'protection':  { sacksAllowedMult: 0.70 },
+      'passRush':    { sacksBonus: 1, oppPassYdsMult: 0.92 },
+      'coverage':    { oppPassYdsMult: 0.90 },
+      'tackling':    { oppRushYdsMult: 0.90 },
+      'specialTeams':{ fgBonus: 1 }
+    };
+    return boosts[key] || null;
+  },
+
+  // After a game is simmed, clear weekly training picks so users must re-pick next week.
+  clearWeeklyTraining() {
+    this.state.teams.forEach(t => { t.weeklyTraining = null; });
+    // Also clear player-mode weekly training
+    if (this.state.career && this.state.career.mode === 'player') {
+      const p = this.getUserPlayer();
+      if (p) p.weeklyTraining = null;
+    }
+  },
+
+  // Player training regimens — keys are the focus skills, values describe effects.
+  // Each weekly pick gives a small ability gain (+0.4 to a primary, +0.1 to a secondary).
+  // Effects vary by player position so QB sees QB-relevant focuses, RBs see different ones, etc.
+  PLAYER_TRAINING_BY_POS: {
+    QB: [
+      { key: 'arm', label: 'Arm strength', desc: 'Throw further, harder', boosts: { armStrength: 0.4, deepBall: 0.2 } },
+      { key: 'accuracy', label: 'Accuracy drills', desc: 'Hit your spots', boosts: { accuracy: 0.4, awareness: 0.15 } },
+      { key: 'mobility', label: 'Mobility & footwork', desc: 'Extend plays', boosts: { mobility: 0.4, awareness: 0.1 } },
+      { key: 'film', label: 'Film study', desc: 'Read defenses faster', boosts: { awareness: 0.5 } }
+    ],
+    RB: [
+      { key: 'power', label: 'Power & leg drive', desc: 'Run through tackles', boosts: { power: 0.4, strength: 0.2 } },
+      { key: 'speed', label: 'Speed work', desc: 'Hit the edge faster', boosts: { speed: 0.4, elusiveness: 0.15 } },
+      { key: 'vision', label: 'Vision drills', desc: 'Find the hole', boosts: { vision: 0.4, awareness: 0.15 } },
+      { key: 'catching', label: 'Catching drills', desc: 'Become a 3-down back', boosts: { catching: 0.4 } }
+    ],
+    WR: [
+      { key: 'routes', label: 'Route running', desc: 'Sharper releases', boosts: { routeRunning: 0.4, release: 0.2 } },
+      { key: 'catching', label: 'Hands & catching', desc: 'Sticky fingers', boosts: { catching: 0.4, ballSkills: 0.2 } },
+      { key: 'speed', label: 'Speed work', desc: 'Separate downfield', boosts: { speed: 0.4 } },
+      { key: 'release', label: 'Press release work', desc: 'Beat physical CBs', boosts: { release: 0.4, routeRunning: 0.15 } }
+    ],
+    TE: [
+      { key: 'routes', label: 'Route running', desc: 'Win in coverage', boosts: { routeRunning: 0.4 } },
+      { key: 'blocking', label: 'Run blocking', desc: 'Be useful in-line', boosts: { blocking: 0.4, strength: 0.15 } },
+      { key: 'catching', label: 'Catching drills', desc: 'Move the chains', boosts: { catching: 0.4 } }
+    ],
+    EDGE: [
+      { key: 'rush', label: 'Pass rush moves', desc: 'Get to the QB', boosts: { passRush: 0.4, speed: 0.15 } },
+      { key: 'power', label: 'Strength training', desc: 'Set the edge', boosts: { strength: 0.4, runDefense: 0.2 } },
+      { key: 'tech', label: 'Hand technique', desc: 'Win with leverage', boosts: { technique: 0.4 } }
+    ],
+    DT: [
+      { key: 'rush', label: 'Interior rush', desc: 'Collapse the pocket', boosts: { passRush: 0.4 } },
+      { key: 'power', label: 'Strength training', desc: 'Stuff the run', boosts: { strength: 0.4, runDefense: 0.3 } },
+      { key: 'tech', label: 'Hand technique', desc: 'Shed blockers', boosts: { technique: 0.4 } }
+    ],
+    LB: [
+      { key: 'coverage', label: 'Coverage drills', desc: 'Cover backs and TEs', boosts: { coverage: 0.4, awareness: 0.15 } },
+      { key: 'rush', label: 'Pass rush moves', desc: 'Add a rush role', boosts: { passRush: 0.4 } },
+      { key: 'tackle', label: 'Tackling form', desc: 'Wrap up everything', boosts: { tackling: 0.4, runDefense: 0.15 } }
+    ],
+    CB: [
+      { key: 'cover', label: 'Man coverage', desc: 'Shadow receivers', boosts: { manCoverage: 0.4, speed: 0.15 } },
+      { key: 'zone', label: 'Zone awareness', desc: 'Read & react', boosts: { zoneCoverage: 0.4, awareness: 0.2 } },
+      { key: 'press', label: 'Press technique', desc: 'Disrupt at the line', boosts: { press: 0.4 } }
+    ],
+    S: [
+      { key: 'cover', label: 'Deep coverage', desc: 'Erase post routes', boosts: { coverage: 0.4, ballSkills: 0.2 } },
+      { key: 'tackle', label: 'Run support', desc: 'Eighth man in the box', boosts: { tackling: 0.4, runDefense: 0.2 } },
+      { key: 'awareness', label: 'Pre-snap reads', desc: 'See plays develop', boosts: { awareness: 0.5 } }
+    ],
+    K: [
+      { key: 'leg', label: 'Leg strength', desc: 'Long-range FGs', boosts: { kickPower: 0.4 } },
+      { key: 'accuracy', label: 'Accuracy work', desc: 'Don\'t miss the easy ones', boosts: { kickAccuracy: 0.4 } }
+    ],
+    P: [
+      { key: 'distance', label: 'Leg strength', desc: 'Boom the ball', boosts: { puntPower: 0.4 } },
+      { key: 'placement', label: 'Pin them inside 20', desc: 'Coffin-corner the ball', boosts: { puntAccuracy: 0.4 } }
+    ],
+    OT: [
+      { key: 'pass', label: 'Pass protection', desc: 'Keep the QB clean', boosts: { passBlock: 0.4 } },
+      { key: 'run', label: 'Run blocking', desc: 'Open holes', boosts: { runBlock: 0.4 } },
+      { key: 'tech', label: 'Hand technique', desc: 'Win first contact', boosts: { technique: 0.4 } }
+    ],
+    OG: [
+      { key: 'pass', label: 'Pass protection', desc: 'Anchor in pass pro', boosts: { passBlock: 0.4 } },
+      { key: 'run', label: 'Run blocking', desc: 'Generate movement', boosts: { runBlock: 0.4 } }
+    ],
+    C: [
+      { key: 'pass', label: 'Pass protection', desc: 'Anchor the line', boosts: { passBlock: 0.4 } },
+      { key: 'awareness', label: 'Pre-snap calls', desc: 'Direct traffic', boosts: { awareness: 0.5 } }
+    ]
+  },
+
+  renderPlayerTrainingCard(player) {
+    const opts = this.PLAYER_TRAINING_BY_POS[player.position] || [];
+    if (opts.length === 0) return '';
+    const currentPick = player.weeklyTraining || null;
+    
+    let html = '<div class="card"><div class="card-header"><div class="card-title">Weekly training</div>' +
+      '<div class="card-meta">Pick one focus for Week ' + (this.state.week + 1) + ' · gradual ability gain</div></div>' +
+      '<div style="padding:12px;display:grid;grid-template-columns:repeat(' + Math.min(opts.length, 4) + ',1fr);gap:8px">';
+    
+    opts.forEach(opt => {
+      const selected = currentPick === opt.key;
+      const boostStr = Object.entries(opt.boosts).map(([k, v]) => '+' + v + ' ' + k).join(', ');
+      html += '<div onclick="game.setPlayerTraining(\'' + opt.key + '\')" style="cursor:pointer;border:' + (selected ? '2px solid var(--text)' : '1px solid var(--border)') + ';background:' + (selected ? 'var(--surface-2)' : 'var(--surface)') + ';padding:12px">' +
+        '<div style="font-size:13px;font-weight:600;margin-bottom:4px">' + opt.label + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">' + opt.desc + '</div>' +
+        '<div style="font-size:10px;color:var(--text);font-family:var(--font-mono)">' + boostStr + '</div>' +
+        (selected ? '<div style="margin-top:6px;font-size:10px;color:var(--success);font-weight:600">✓ SELECTED</div>' : '') +
+        '</div>';
+    });
+    
+    html += '</div>';
+    if (!currentPick) {
+      html += '<div style="padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">No training selected this week. Pick one before simming.</div>';
+    }
+    html += '</div>';
+    return html;
+  },
+
+  // Set the user player's weekly training pick.
+  setPlayerTraining(key) {
+    const p = this.getUserPlayer();
+    if (!p) return;
+    p.weeklyTraining = key;
+    this.saveGame();
+    this.render();
+  },
+
+  // Apply player training boosts after the week sims. Called from simWeek after games run.
+  applyPlayerTrainingBoost() {
+    const p = this.getUserPlayer();
+    if (!p || !p.weeklyTraining) return;
+    const opts = this.PLAYER_TRAINING_BY_POS[p.position] || [];
+    const pick = opts.find(o => o.key === p.weeklyTraining);
+    if (!pick) return;
+    if (!p.abilities) p.abilities = {};
+    Object.entries(pick.boosts).forEach(([k, v]) => {
+      p.abilities[k] = Math.min(99, (p.abilities[k] || 70) + v);
+    });
+    // Bump OVR slightly if a primary boost lands (sum of all boosts × small factor)
+    const totalBoost = Object.values(pick.boosts).reduce((s, v) => s + v, 0);
+    if (Math.random() < totalBoost * 0.15) {
+      p.rating = Math.min(99, p.rating + 1);
+    }
   },
 
   // PLAYER CAREER PAGE — shows college recap, NFL stats, or retirement based on stage
@@ -6252,6 +6745,12 @@ let game = {
       html += this.renderPlayerFAOffersCard(p, this.state.career.pendingOffers);
     }
     
+    // Player training regimen — weekly pick that gradually boosts a specific skill.
+    // Only shown for active players during regular season.
+    if (stage === 'nfl' && !p.retired && team && !this.state.playoffActive && this.state.week < 18 && this.state.offseasonPhase === null) {
+      html += this.renderPlayerTrainingCard(p);
+    }
+    
     // Contract
     if (p.contract && !p.retired) {
       html += '<div class="card"><div class="card-header"><div class="card-title">Contract</div></div>' +
@@ -6469,30 +6968,33 @@ let game = {
   // FREE AGENTS PAGE — player signings
   // ============================================================
   renderFreeAgents() {
-    if (this.state.userTeamId === null || this.state.userTeamId === undefined) {
-      this.currentView = 'standings'; this.render(); return;
-    }
-    const team = this.state.teams[this.state.userTeamId];
-    const cap = getSalaryCap(this.state.year);
-    const capUsed = teamCapUsed(team, this.state.players);
-    const capSpace = cap - capUsed;
-    const rosterCount = team.roster.length;
+    const userTeamId = this.state.userTeamId;
+    const browseMode = userTeamId === null || userTeamId === undefined;
+    const team = browseMode ? null : this.state.teams[userTeamId];
+    const cap = browseMode ? null : getSalaryCap(this.state.year);
+    const capUsed = browseMode ? null : teamCapUsed(team, this.state.players);
+    const capSpace = browseMode ? null : cap - capUsed;
+    const rosterCount = browseMode ? null : team.roster.length;
     
     const fas = this.getFreeAgentPlayers();
     const filterPos = this.faFilter || 'ALL';
     const filtered = filterPos === 'ALL' ? fas : fas.filter(p => p.position === filterPos);
     filtered.sort((a, b) => b.rating - a.rating);
     
+    const subtitle = browseMode
+      ? fas.length + ' players available league-wide · browse only'
+      : fas.length + ' players available · ' + team.abbr + ' has ' + formatMoney(capSpace) + ' cap space · roster ' + rosterCount + '/' + ROSTER_SIZE;
+    
     let html = '<div class="page-header">' +
       '<div class="page-title">Free agents</div>' +
-      '<div class="page-subtitle">' + fas.length + ' players available · ' + team.abbr + ' has ' + formatMoney(capSpace) + ' cap space · roster ' + rosterCount + '/' + ROSTER_SIZE + '</div>' +
+      '<div class="page-subtitle">' + subtitle + '</div>' +
       '</div>' +
       '<div class="card"><div style="padding:12px 16px;border-bottom:1px solid var(--border)"><div class="draft-filters" style="margin:0">' +
       ['ALL'].concat(POSITIONS_FOR_DRAFT).map(pos =>
         '<button class="filter-btn ' + (filterPos === pos ? 'active' : '') + '" onclick="game.setFAFilter(\'' + pos + '\')">' + pos + '</button>'
       ).join('') + '</div></div>' +
       '<div class="card-header"><div class="card-title">Available · ranked by OVR</div><div class="card-meta">' + filtered.length + ' shown</div></div>' +
-      '<table><thead><tr><th>Name</th><th class="text-center">POS</th><th class="text-center">AGE</th><th class="text-center">OVR</th><th>Archetype</th><th class="text-right">Asking AAV</th><th></th></tr></thead><tbody>';
+      '<table><thead><tr><th>Name</th><th class="text-center">POS</th><th class="text-center">AGE</th><th class="text-center">OVR</th><th>Archetype</th><th class="text-right">Asking AAV</th>' + (browseMode ? '' : '<th></th>') + '</tr></thead><tbody>';
     
     filtered.slice(0, 100).forEach(p => {
       const rc = this.ratingClass(p.rating);
@@ -6504,12 +7006,12 @@ let game = {
         '<td class="text-center"><span class="rating ' + rc + '">' + p.rating + '</span></td>' +
         '<td style="font-size:12px;color:var(--text-muted)">' + (p.archetype || '—') + '</td>' +
         '<td class="text-right mono-num">' + formatMoney(aav) + '</td>' +
-        '<td class="text-right"><button class="btn btn-sm btn-success" onclick="game.signFreeAgent(' + p.id + ')">Sign</button></td>' +
+        (browseMode ? '' : '<td class="text-right"><button class="btn btn-sm btn-success" onclick="game.signFreeAgent(' + p.id + ')">Sign</button></td>') +
         '</tr>';
     });
     
     if (filtered.length === 0) {
-      html += '<tr><td colspan="7" class="empty-state">No free agents at this position</td></tr>';
+      html += '<tr><td colspan="' + (browseMode ? 6 : 7) + '" class="empty-state">No free agents at this position</td></tr>';
     }
     
     html += '</tbody></table></div>';
@@ -7028,6 +7530,61 @@ let game = {
       '<div class="page-subtitle">' + this.state.year + ' season · ' + recap.games.length + ' games</div>' +
       '</div>';
     
+    // ============ COLLEGE-STAGE USER BANNER ============
+    // If user is a player career in college stage, show their school's context atop the NFL recap.
+    // The user has no NFL team yet so the regular user-game banner won't fire; this gives them
+    // some "their world" content during the weeks when NFL games dominate the recap.
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'college') {
+      const p = this.getUserPlayer();
+      if (p && p.school) {
+        const school = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+        const prestige = (this.state.collegePrestige && this.state.collegePrestige[p.school] !== undefined)
+          ? Math.round(this.state.collegePrestige[p.school])
+          : (school ? school.prestige : 75);
+        // Recent ranking from last completed college season
+        const history = this.state.collegeHistory || [];
+        let rankLabel = 'Preseason';
+        let recordLabel = '';
+        if (history.length > 0 && history[0].finalRankings) {
+          const idx = history[0].finalRankings.findIndex(r => r.abbr === p.school);
+          if (idx >= 0) {
+            rankLabel = '#' + (idx + 1);
+            recordLabel = ' · ' + history[0].finalRankings[idx].record;
+          } else {
+            rankLabel = 'Unranked';
+          }
+        }
+        const primary = school ? school.primary : '#888';
+        html += '<div class="user-game-banner" style="cursor:pointer;display:block" onclick="game.currentView=\'myschool\';game.render()">' +
+          '<div class="user-game-banner-bar" style="background:' + primary + '"></div>' +
+          '<div style="padding:14px 18px">' +
+          '<div class="user-game-banner-label" style="margin-bottom:4px">YOUR SCHOOL · COLLEGE SEASON IN PROGRESS</div>' +
+          '<div class="user-game-banner-title" style="font-size:18px">' + (school ? school.name : p.school) + ' · ' + rankLabel + recordLabel + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">' + p.name + ' · ' + p.year + ' ' + p.position + ' · Prospect grade ' + (p.prospectGrade ? p.prospectGrade.toFixed(1) : '—') + ' · Click to view school</div>' +
+          '</div></div>';
+      }
+    }
+    
+    // ============ DECLARED-STAGE USER BANNER ============
+    // Between graduation and the draft, the user has neither college nor NFL team.
+    // Show a combine-prep banner pointing them to the combine page.
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'declared') {
+      const p = this.getUserPlayer();
+      if (p) {
+        const composite = p.combineResults ? p.combineResults.composite : null;
+        const adj = p.combineResults ? p.combineResults.gradeAdjust : null;
+        html += '<div class="user-game-banner" style="cursor:pointer;display:block;background:linear-gradient(180deg,var(--surface) 0%,var(--bg) 100%)" onclick="game.currentView=\'combine\';game.render()">' +
+          '<div class="user-game-banner-bar" style="background:var(--accent)"></div>' +
+          '<div style="padding:14px 18px">' +
+          '<div class="user-game-banner-label" style="margin-bottom:4px">DRAFT PROSPECT · AWAITING DRAFT DAY</div>' +
+          '<div class="user-game-banner-title" style="font-size:18px">' + p.name + ' · ' + p.position + ' from ' + p.school + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">' +
+          (composite !== null ? 'Combine composite ' + composite + '/100 · Grade ' + (adj > 0 ? '+' : '') + adj.toFixed(1) + ' · ' : '') +
+          'Final prospect grade ' + (p.prospectGrade ? p.prospectGrade.toFixed(1) : '—') + ' · Click for combine details' +
+          '</div></div></div>';
+      }
+    }
+    
     // ============ USER GAME SPOTLIGHT ============
     // Expanded user-game card with top performer, opponent record, division standing context.
     if (userTeam) {
@@ -7117,6 +7674,33 @@ let game = {
       }
     }
     
+    // ============ NEXT-WEEK MATCHUP PREVIEW ============
+    // Show the user's upcoming game (if any) so they get a hype-up screen before clicking Sim again.
+    // Only shows during the regular season; playoffs have their own dedicated bracket UI.
+    if (userTeam && !this.state.playoffActive && this.state.week < 18) {
+      const nextWeek = this.state.week + 1;
+      const nextGame = this.state.schedule.find(g =>
+        g.week === nextWeek && !g.played &&
+        (g.homeTeam === userTeamId || g.awayTeam === userTeamId)
+      );
+      if (nextGame) {
+        html += this.renderMatchupPreview(userTeam, nextGame, nextWeek);
+      } else {
+        // Detect bye week
+        const userHasGameInNextWeek = (this.state.schedule || []).some(g =>
+          g.week === nextWeek && (g.homeTeam === userTeamId || g.awayTeam === userTeamId)
+        );
+        if (!userHasGameInNextWeek && nextWeek <= 18) {
+          html += '<div class="card" style="margin:14px 0;border-left:3px solid var(--text-muted)">' +
+            '<div style="padding:16px">' +
+            '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">Week ' + nextWeek + ' · BYE WEEK</div>' +
+            '<div style="font-size:15px;font-weight:600">' + userTeam.city + ' ' + userTeam.name + ' on bye next week</div>' +
+            '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">Rest up. Players recover. Back the week after.</div>' +
+            '</div></div>';
+        }
+      }
+    }
+    
     html += '<div class="recap-section">' +
       '<div class="section-label">Standout performances</div>' +
       '<div class="standout-grid">' +
@@ -7143,6 +7727,254 @@ let game = {
     });
     html += '</div></div>';
     document.getElementById('content').innerHTML = html;
+  },
+
+  // Generate the matchup preview card for the user's next game. Returns HTML string.
+  // Shows win probability, betting line, recent form, key player matchups, and storylines.
+  renderMatchupPreview(userTeam, nextGame, nextWeek) {
+    const userIsHome = nextGame.homeTeam === userTeam.id;
+    const oppId = userIsHome ? nextGame.awayTeam : nextGame.homeTeam;
+    const opp = this.state.teams[oppId];
+    
+    // Strengths and win probability
+    const userStr = this.getTeamStrength(userTeam);
+    const oppStr = this.getTeamStrength(opp);
+    // Home field bump
+    const homeBonus = 1.5;
+    const userAdj = userIsHome ? userStr + homeBonus : userStr;
+    const oppAdj = userIsHome ? oppStr : oppStr + homeBonus;
+    const total = userAdj + oppAdj;
+    const userWinProb = userAdj / total; // simple ratio; calibrated below
+    // Calibrate to NFL realistic ranges: clamp to 0.20-0.80 and stretch slightly so closer matchups look closer
+    const calibratedProb = Math.max(0.20, Math.min(0.80, 0.5 + (userWinProb - 0.5) * 1.4));
+    const userProbPct = Math.round(calibratedProb * 100);
+    const oppProbPct = 100 - userProbPct;
+    const userIsFavored = userProbPct >= 50;
+    
+    // Betting line: derived from probability gap. Each 5% gap = ~1 point.
+    // 50/50 → pick'em. 60/40 → -2. 65/35 → -3.5. 75/25 → -7.
+    const probGap = userProbPct - 50;
+    const spreadFromUser = -Math.abs(probGap) / 3.5;
+    const spread = Math.round(spreadFromUser * 2) / 2; // round to nearest 0.5
+    const favTeam = userIsFavored ? userTeam : opp;
+    const dogTeam = userIsFavored ? opp : userTeam;
+    const spreadStr = spread === 0 ? 'PICK\'EM' : favTeam.abbr + ' ' + spread;
+    
+    // Over/under: derived from sum of team strengths
+    const overUnder = Math.round((userStr + oppStr) * 0.50);
+    
+    // Recent form: last 5 games for each team
+    const userRecentForm = this.getRecentForm(userTeam.id, 5);
+    const oppRecentForm = this.getRecentForm(opp.id, 5);
+    
+    // Key player matchups — derive a few interesting position-vs-position pairings
+    const matchups = this.deriveMatchupPairings(userTeam, opp);
+    
+    // Storylines — auto-detected narrative beats
+    const storylines = this.generateStorylines(userTeam, opp, nextWeek);
+    
+    // Build the card
+    let html = '<div class="card" style="margin:14px 0;border-left:3px solid var(--accent)">' +
+      '<div class="card-header"><div class="card-title">Next up · Week ' + nextWeek + ' matchup preview</div>' +
+      '<div class="card-meta">' + (userIsHome ? 'Home' : 'Away') + ' game</div></div>' +
+      '<div style="padding:18px">';
+    
+    // Headline row: team blocks + score prediction
+    html += '<div style="display:grid;grid-template-columns:1fr auto 1fr;gap:18px;align-items:center;margin-bottom:18px">';
+    // User team block
+    html += '<div style="display:flex;flex-direction:column;align-items:center;text-align:center">' +
+      '<div style="width:48px;height:6px;background:' + userTeam.primary + ';margin-bottom:8px"></div>' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px">' + (userIsHome ? 'HOME' : 'AWAY') + '</div>' +
+      '<div style="font-size:16px;font-weight:600;margin-top:4px">' + userTeam.city + ' ' + userTeam.name + '</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">' + userTeam.wins + '–' + userTeam.losses + ' · L5: ' + userRecentForm + '</div>' +
+      '</div>';
+    // Center: probability bar + line
+    html += '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;min-width:160px">' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;margin-bottom:6px">WIN PROBABILITY</div>' +
+      '<div style="display:flex;align-items:center;gap:4px;width:100%;margin-bottom:10px">' +
+      '<div style="font-size:14px;font-weight:600;font-family:var(--font-mono);min-width:32px;text-align:right">' + userProbPct + '%</div>' +
+      '<div style="flex:1;height:8px;background:var(--surface-2);position:relative;border-radius:4px;overflow:hidden">' +
+      '<div style="position:absolute;left:0;top:0;height:100%;width:' + userProbPct + '%;background:' + userTeam.primary + '"></div>' +
+      '<div style="position:absolute;left:50%;top:-2px;height:12px;width:1px;background:var(--text-muted);opacity:0.4"></div>' +
+      '</div>' +
+      '<div style="font-size:14px;font-weight:600;font-family:var(--font-mono);min-width:32px">' + oppProbPct + '%</div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--text-muted)">SPREAD <strong style="color:var(--text);font-family:var(--font-mono)">' + spreadStr + '</strong> · O/U <strong style="color:var(--text);font-family:var(--font-mono)">' + overUnder + '</strong></div>' +
+      '</div>';
+    // Opponent block
+    html += '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer" onclick="game.showTeam(' + opp.id + ')">' +
+      '<div style="width:48px;height:6px;background:' + opp.primary + ';margin-bottom:8px"></div>' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px">' + (userIsHome ? 'AWAY' : 'HOME') + '</div>' +
+      '<div style="font-size:16px;font-weight:600;margin-top:4px;text-decoration:underline">' + opp.city + ' ' + opp.name + '</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">' + opp.wins + '–' + opp.losses + ' · L5: ' + oppRecentForm + '</div>' +
+      '</div>';
+    html += '</div>'; // end headline row
+    
+    // Key matchups
+    if (matchups.length > 0) {
+      html += '<div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">' +
+        '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px">Key matchups</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(' + Math.min(matchups.length, 3) + ',1fr);gap:12px">';
+      matchups.forEach(m => {
+        html += '<div style="background:var(--surface);padding:10px 12px;font-size:12px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+          '<div style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + m.userPlayer.id + ')"><strong>' + m.userPlayer.name + '</strong> <span class="muted">' + m.userPlayer.position + '</span></div>' +
+          '<span class="muted" style="font-size:10px">vs</span>' +
+          '<div style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + m.oppPlayer.id + ')"><strong>' + m.oppPlayer.name + '</strong> <span class="muted">' + m.oppPlayer.position + '</span></div>' +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:6px">' + m.note + '</div>' +
+          '</div>';
+      });
+      html += '</div></div>';
+    }
+    
+    // Storylines
+    if (storylines.length > 0) {
+      html += '<div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">' +
+        '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px">Storylines</div>';
+      storylines.forEach(s => {
+        html += '<div style="font-size:13px;line-height:1.5;padding:4px 0;display:flex;gap:8px"><span style="color:var(--accent);font-weight:600">›</span><span>' + s + '</span></div>';
+      });
+      html += '</div>';
+    }
+    
+    html += '</div></div>'; // end padding, end card
+    
+    return html;
+  },
+
+  // Last N games results for a team — returns a string like "W-L-W-W-L" (most recent on right)
+  getRecentForm(teamId, n) {
+    const played = (this.state.schedule || []).filter(g =>
+      g.played && (g.homeTeam === teamId || g.awayTeam === teamId)
+    );
+    played.sort((a, b) => b.week - a.week);
+    const recent = played.slice(0, n).reverse();
+    if (recent.length === 0) return '—';
+    return recent.map(g => {
+      const isHome = g.homeTeam === teamId;
+      const myScore = isHome ? g.homeScore : g.awayScore;
+      const oppScore = isHome ? g.awayScore : g.homeScore;
+      return myScore > oppScore ? 'W' : 'L';
+    }).join('-');
+  },
+
+  // Pick 2-3 marquee individual matchups between user team and opponent.
+  // Pairings: top WR vs top CB, top RB vs run defense leader, top QB vs top pass-rusher.
+  deriveMatchupPairings(userTeam, opp) {
+    const matchups = [];
+    
+    const topAt = (team, pos) => {
+      const players = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired && p.position === pos);
+      players.sort((a, b) => b.rating - a.rating);
+      return players[0] || null;
+    };
+    
+    // Matchup 1: user QB vs opp top pass-rusher (EDGE)
+    const userQB = topAt(userTeam, 'QB');
+    const oppEdge = topAt(opp, 'EDGE');
+    if (userQB && oppEdge) {
+      const note = userQB.rating >= oppEdge.rating + 5 ? 'QB has the clear edge' :
+                   oppEdge.rating >= userQB.rating + 5 ? 'Pass rush could disrupt' :
+                   'Even matchup — pocket time will decide';
+      matchups.push({ userPlayer: userQB, oppPlayer: oppEdge, note });
+    }
+    
+    // Matchup 2: user top WR vs opp top CB
+    const userWR = topAt(userTeam, 'WR');
+    const oppCB = topAt(opp, 'CB');
+    if (userWR && oppCB) {
+      const note = userWR.rating >= oppCB.rating + 5 ? 'Mismatch in user team\'s favor' :
+                   oppCB.rating >= userWR.rating + 5 ? 'Tough cover assignment' :
+                   'Strength on strength';
+      matchups.push({ userPlayer: userWR, oppPlayer: oppCB, note });
+    }
+    
+    // Matchup 3: user top RB vs opp top LB
+    const userRB = topAt(userTeam, 'RB');
+    const oppLB = topAt(opp, 'LB');
+    if (userRB && oppLB) {
+      const note = userRB.rating >= oppLB.rating + 5 ? 'Ground game should travel' :
+                   oppLB.rating >= userRB.rating + 5 ? 'Front seven will be a problem' :
+                   'Trench warfare';
+      matchups.push({ userPlayer: userRB, oppPlayer: oppLB, note });
+    }
+    
+    return matchups.slice(0, 3);
+  },
+
+  // Generate 1-3 storyline beats based on team/game context.
+  generateStorylines(userTeam, opp, nextWeek) {
+    const stories = [];
+    
+    // Division rivalry
+    if (userTeam.conference === opp.conference && userTeam.division === opp.division) {
+      stories.push('Division rivalry — ' + userTeam.conference + ' ' + userTeam.division + ' clash with playoff seeding on the line.');
+    }
+    
+    // Streak detection (3+ wins or losses in a row)
+    const userStreak = this.getStreak(userTeam.id);
+    if (userStreak.count >= 3) {
+      stories.push(userTeam.city + ' ' + userTeam.name + ' enters on a ' + userStreak.count + '-game ' + (userStreak.type === 'W' ? 'win streak. Can they keep it going?' : 'losing skid. A win here changes the narrative.'));
+    }
+    const oppStreak = this.getStreak(opp.id);
+    if (oppStreak.count >= 3) {
+      stories.push(opp.city + ' ' + opp.name + ' is ' + (oppStreak.type === 'W' ? 'red hot' : 'reeling') + ' — ' + oppStreak.count + ' straight ' + (oppStreak.type === 'W' ? 'wins coming in' : 'losses coming in') + '.');
+    }
+    
+    // Both teams winning
+    if (userTeam.wins >= 7 && opp.wins >= 7 && nextWeek >= 10) {
+      stories.push('Both teams over .500 in the second half of the season. Major playoff implications.');
+    }
+    
+    // Statistical leaders facing off — passing TD leader on either side
+    const allPlayers = this.state.players.filter(p => !p.retired && p.position === 'QB' && p.team !== null);
+    allPlayers.sort((a, b) => (b.seasonStats.passingTDs || 0) - (a.seasonStats.passingTDs || 0));
+    const tdLeader = allPlayers[0];
+    if (tdLeader && (tdLeader.team === userTeam.id || tdLeader.team === opp.id) && (tdLeader.seasonStats.passingTDs || 0) >= 10) {
+      const team = tdLeader.team === userTeam.id ? userTeam : opp;
+      stories.push(tdLeader.name + ' (' + team.abbr + ') leads the league in passing TDs (' + tdLeader.seasonStats.passingTDs + ') — every drop-back is a chance to add to it.');
+    }
+    
+    // Bounce-back narrative
+    const userLastGame = this.getLastGame(userTeam.id);
+    if (userLastGame && !userLastGame.won && userLastGame.marginOfLoss >= 14) {
+      stories.push(userTeam.city + ' ' + userTeam.name + ' got blown out last week. Bounce-back game or two-game spiral?');
+    }
+    
+    // Cap to 3 storylines max so the card doesn't get cluttered
+    return stories.slice(0, 3);
+  },
+
+  // Get current streak for a team — { count, type: 'W'|'L' }
+  getStreak(teamId) {
+    const played = (this.state.schedule || []).filter(g => g.played && (g.homeTeam === teamId || g.awayTeam === teamId));
+    played.sort((a, b) => b.week - a.week);
+    if (played.length === 0) return { count: 0, type: null };
+    let count = 0;
+    let type = null;
+    for (const g of played) {
+      const isHome = g.homeTeam === teamId;
+      const myScore = isHome ? g.homeScore : g.awayScore;
+      const oppScore = isHome ? g.awayScore : g.homeScore;
+      const result = myScore > oppScore ? 'W' : 'L';
+      if (type === null) { type = result; count = 1; }
+      else if (result === type) count++;
+      else break;
+    }
+    return { count, type };
+  },
+
+  // Get the most recent game for a team — { won, marginOfLoss }
+  getLastGame(teamId) {
+    const played = (this.state.schedule || []).filter(g => g.played && (g.homeTeam === teamId || g.awayTeam === teamId));
+    if (played.length === 0) return null;
+    played.sort((a, b) => b.week - a.week);
+    const g = played[0];
+    const isHome = g.homeTeam === teamId;
+    const myScore = isHome ? g.homeScore : g.awayScore;
+    const oppScore = isHome ? g.awayScore : g.homeScore;
+    return { won: myScore > oppScore, marginOfLoss: oppScore - myScore };
   },
 
   renderStandoutCard(type, label, standout) {
@@ -8426,6 +9258,524 @@ let game = {
           '<div class="champ-runnerup">Runner-up: ' + runnerUpLabel + '</div></div>';
       });
       html += '</div>';
+    }
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // PLAYOFF PICTURE — live current-season seeding for both conferences plus bubble teams.
+  // Updates every week as standings shift; shows division leaders (auto-seed 1-4) and wildcards (5-7).
+  renderPlayoffPicture() {
+    const userTeamId = this.getUserTeamId();
+    let html = '<div class="page-header"><div class="page-title">Playoff picture</div>' +
+      '<div class="page-subtitle">' + this.state.year + ' season · Week ' + this.state.week + ' standings</div></div>';
+    
+    ['AFC', 'NFC'].forEach(conf => {
+      // Get all teams in this conference
+      const confTeams = this.state.teams.filter(t => t.conference === conf);
+      // Group by division to find division leaders
+      const divisions = {};
+      confTeams.forEach(t => {
+        if (!divisions[t.division]) divisions[t.division] = [];
+        divisions[t.division].push(t);
+      });
+      Object.keys(divisions).forEach(d => {
+        divisions[d].sort((a, b) => (b.wins - a.wins) || ((b.pointsFor - b.pointsAgainst) - (a.pointsFor - a.pointsAgainst)));
+      });
+      // Division leaders get seeds 1-4 by record
+      const divLeaders = Object.values(divisions).map(arr => arr[0]);
+      divLeaders.sort((a, b) => (b.wins - a.wins) || ((b.pointsFor - b.pointsAgainst) - (a.pointsFor - a.pointsAgainst)));
+      // Wildcards: all non-leaders sorted by record, take top 3
+      const wildCards = confTeams.filter(t => !divLeaders.includes(t));
+      wildCards.sort((a, b) => (b.wins - a.wins) || ((b.pointsFor - b.pointsAgainst) - (a.pointsFor - a.pointsAgainst)));
+      
+      html += '<div class="card" style="margin-bottom:16px">' +
+        '<div class="card-header"><div class="card-title">' + conf + ' picture</div>' +
+        '<div class="card-meta">Top 7 make the playoffs</div></div>' +
+        '<table><thead><tr><th style="width:50px">Seed</th><th>Team</th><th class="text-right">W-L</th><th class="text-right">PF</th><th class="text-right">PA</th><th class="text-right">Diff</th><th>Status</th></tr></thead><tbody>';
+      
+      // Seeds 1-4: division leaders
+      divLeaders.forEach((t, i) => {
+        const seed = i + 1;
+        const isUser = t.id === userTeamId;
+        const diff = t.pointsFor - t.pointsAgainst;
+        html += '<tr' + (isUser ? ' style="background:var(--surface-2);font-weight:600"' : '') + '>' +
+          '<td><span class="rating elite" style="font-size:11px;padding:2px 7px">' + seed + '</span></td>' +
+          '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + t.id + ')">' + t.abbr + ' · ' + t.city + ' ' + t.name + '</span>' + (isUser ? ' <span class="muted" style="font-size:10px">(YOU)</span>' : '') + '</td>' +
+          '<td class="text-right">' + t.wins + '–' + t.losses + '</td>' +
+          '<td class="text-right">' + t.pointsFor + '</td>' +
+          '<td class="text-right">' + t.pointsAgainst + '</td>' +
+          '<td class="text-right ' + (diff >= 0 ? 'text-success' : 'text-danger') + '">' + (diff >= 0 ? '+' : '') + diff + '</td>' +
+          '<td><span style="color:var(--success);font-size:11px;font-weight:600">DIV LEADER</span></td>' +
+          '</tr>';
+      });
+      
+      // Seeds 5-7: top 3 wildcards
+      wildCards.slice(0, 3).forEach((t, i) => {
+        const seed = i + 5;
+        const isUser = t.id === userTeamId;
+        const diff = t.pointsFor - t.pointsAgainst;
+        html += '<tr' + (isUser ? ' style="background:var(--surface-2);font-weight:600"' : '') + '>' +
+          '<td><span class="rating great" style="font-size:11px;padding:2px 7px">' + seed + '</span></td>' +
+          '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + t.id + ')">' + t.abbr + ' · ' + t.city + ' ' + t.name + '</span>' + (isUser ? ' <span class="muted" style="font-size:10px">(YOU)</span>' : '') + '</td>' +
+          '<td class="text-right">' + t.wins + '–' + t.losses + '</td>' +
+          '<td class="text-right">' + t.pointsFor + '</td>' +
+          '<td class="text-right">' + t.pointsAgainst + '</td>' +
+          '<td class="text-right ' + (diff >= 0 ? 'text-success' : 'text-danger') + '">' + (diff >= 0 ? '+' : '') + diff + '</td>' +
+          '<td><span style="color:var(--warning);font-size:11px;font-weight:600">WILDCARD</span></td>' +
+          '</tr>';
+      });
+      
+      // In the hunt: next 3 wildcards (seeds 8-10)
+      wildCards.slice(3, 6).forEach((t, i) => {
+        const seed = i + 8;
+        const isUser = t.id === userTeamId;
+        const diff = t.pointsFor - t.pointsAgainst;
+        // Games back from 7-seed
+        const seventhSeed = wildCards[2];
+        const gb = seventhSeed ? ((seventhSeed.wins - t.wins) + (t.losses - seventhSeed.losses)) / 2 : 0;
+        html += '<tr style="opacity:0.7' + (isUser ? ';background:var(--surface-2);font-weight:600;opacity:1' : '') + '">' +
+          '<td><span class="muted" style="font-size:11px">' + seed + '</span></td>' +
+          '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + t.id + ')">' + t.abbr + ' · ' + t.city + ' ' + t.name + '</span>' + (isUser ? ' <span class="muted" style="font-size:10px">(YOU)</span>' : '') + '</td>' +
+          '<td class="text-right">' + t.wins + '–' + t.losses + '</td>' +
+          '<td class="text-right">' + t.pointsFor + '</td>' +
+          '<td class="text-right">' + t.pointsAgainst + '</td>' +
+          '<td class="text-right">' + (diff >= 0 ? '+' : '') + diff + '</td>' +
+          '<td><span style="color:var(--text-muted);font-size:11px">IN THE HUNT · ' + (gb > 0 ? gb.toFixed(1) + ' GB' : 'TIED') + '</span></td>' +
+          '</tr>';
+      });
+      
+      html += '</tbody></table></div>';
+    });
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // TEAM HISTORY — pick a team, see their championship banners, decade-by-decade records,
+  // notable HOFers, all-time leaders. MVP version: list teams in a grid, drill down.
+  renderTeamHistory() {
+    // Optional state.viewingTeamHistory = teamId to drill into a specific team
+    const focusId = this.viewingTeamHistoryId;
+    
+    if (focusId === null || focusId === undefined) {
+      // Show the picker grid
+      let html = '<div class="page-header"><div class="page-title">Team history</div>' +
+        '<div class="page-subtitle">Pick a franchise to view their full history</div></div>' +
+        '<div class="team-grid">';
+      this.state.teams.forEach(t => {
+        const champCount = this.state.champions.filter(c => c.teamId === t.id).length;
+        const playoffApps = t.playoffAppearances || 0;
+        html += '<div class="team-card" onclick="game.showTeamHistory(' + t.id + ')">' +
+          '<div class="team-card-bar" style="background:' + t.primary + '"></div>' +
+          '<div class="team-card-name">' + t.city + ' ' + t.name + '</div>' +
+          '<div class="team-card-meta">' + champCount + ' ' + (champCount === 1 ? 'title' : 'titles') + ' · ' + playoffApps + ' playoff app' + (playoffApps === 1 ? '' : 's') + '</div>' +
+          '</div>';
+      });
+      html += '</div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+    
+    // Drill-down: detailed view for one team
+    const team = this.state.teams[focusId];
+    if (!team) {
+      this.viewingTeamHistoryId = null;
+      this.renderTeamHistory();
+      return;
+    }
+    
+    const championships = this.state.champions.filter(c => c.teamId === focusId);
+    const hofers = (this.state.hallOfFame || []).filter(h => {
+      // Find a player with this id and check if they ever played for this team
+      // For MVP, use their final team or seasonHistory
+      const player = this.state.players[h.playerId];
+      if (!player) return false;
+      if (player.team === focusId) return true;
+      return (player.seasonHistory || []).some(s => s.teamId === focusId);
+    });
+    
+    let html = '<div class="page-header">' +
+      '<div class="page-title"><span style="cursor:pointer;color:var(--text-muted);font-size:14px" onclick="game.showTeamHistory(null)">← All teams</span> · ' + team.city + ' ' + team.name + '</div>' +
+      '<div class="page-subtitle">Franchise history</div></div>';
+    
+    // Hero stats
+    html += '<div class="my-team-hero">' +
+      '<div class="my-team-hero-left">' +
+      '<div style="width:6px;height:80px;background:' + team.primary + '"></div>' +
+      '<div><div class="my-team-name">' + team.city + ' ' + team.name + '</div>' +
+      '<div class="my-team-meta">' + team.conference + ' · ' + team.division + '</div></div></div>' +
+      '<div class="my-team-stats">' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Titles</div><div class="my-team-stat-value">' + championships.length + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Playoff apps</div><div class="my-team-stat-value">' + (team.playoffAppearances || 0) + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">HOFers</div><div class="my-team-stat-value">' + hofers.length + '</div></div>' +
+      '</div></div>';
+    
+    // Championships
+    if (championships.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Championships</div></div>' +
+        '<table><thead><tr><th>Year</th><th>Record</th><th>Beat</th></tr></thead><tbody>';
+      championships.forEach(c => {
+        html += '<tr><td>' + c.year + '</td><td>' + c.record + '</td><td>' + c.runnerUp + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    } else {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Championships</div></div>' +
+        '<div class="empty-state" style="padding:24px">No titles yet.</div></div>';
+    }
+    
+    // HOFers from this franchise
+    html += '<div class="card"><div class="card-header"><div class="card-title">Franchise Hall of Famers</div>' +
+      '<div class="card-meta">' + hofers.length + ' players</div></div>';
+    if (hofers.length === 0) {
+      html += '<div class="empty-state" style="padding:24px">No HOFers yet.</div>';
+    } else {
+      html += '<table><thead><tr><th>Name</th><th>Position</th><th>Years</th><th class="text-right">Inducted</th></tr></thead><tbody>';
+      hofers.forEach(h => {
+        html += '<tr><td><span style="cursor:pointer;text-decoration:underline" onclick="game.showPlayerCard(' + h.playerId + ')">' + h.name + '</span></td>' +
+          '<td>' + h.position + '</td>' +
+          '<td>' + h.yearsInLeague + '</td>' +
+          '<td class="text-right">' + h.inductedYear + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // Helper to switch between team-history list and drill-down
+  showTeamHistory(teamId) {
+    this.viewingTeamHistoryId = teamId;
+    this.currentView = 'teamhistory';
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    const navEl = document.querySelector('[data-view="teamhistory"]');
+    if (navEl) navEl.classList.add('active');
+    this.render();
+  },
+
+  // MY SCHOOL — full-page view of the user player's college. Reuses the showCollegeCard data
+  // shape but renders it as a content page rather than a modal. Only meaningful in player career
+  // college stage; falls back gracefully otherwise.
+  renderMySchool() {
+    const userPlayer = this.getUserPlayer();
+    if (!userPlayer || !userPlayer.school) {
+      this.currentView = 'mycareer'; this.render(); return;
+    }
+    const school = COLLEGE_SCHOOLS.find(s => s.abbr === userPlayer.school);
+    if (!school) {
+      this.currentView = 'mycareer'; this.render(); return;
+    }
+    const prestige = (this.state.collegePrestige && this.state.collegePrestige[school.abbr] !== undefined)
+      ? Math.round(this.state.collegePrestige[school.abbr])
+      : school.prestige;
+    let tier = 'Mid-major';
+    if (prestige >= 92) tier = 'Blue blood';
+    else if (prestige >= 85) tier = 'Elite';
+    else if (prestige >= 78) tier = 'Strong';
+    else if (prestige >= 72) tier = 'Mid-tier';
+    else if (prestige >= 68) tier = 'Solid';
+    
+    // Past results from collegeHistory
+    const history = this.state.collegeHistory || [];
+    let championships = 0, runnerUps = 0, top10 = 0, heismans = 0;
+    const champYears = [];
+    history.forEach(rec => {
+      if (rec.championAbbr === school.abbr) { championships++; champYears.push(rec.year); }
+      if (rec.runnerUp && this.findSchoolByName && this.findSchoolByName(rec.runnerUp) === school.abbr) runnerUps++;
+      if (rec.heismanSchool === school.abbr) heismans++;
+      const rank = rec.finalRankings ? rec.finalRankings.findIndex(r => r.abbr === school.abbr) : -1;
+      if (rank >= 0 && rank < 10) top10++;
+    });
+    
+    // Current roster of prospects (teammates)
+    const teammates = (this.state.collegeProspects || []).filter(p => p.school === school.abbr && p.id !== userPlayer.id);
+    teammates.sort((a, b) => b.prospectGrade - a.prospectGrade);
+    
+    // Active NFL alumni
+    const alumni = this.state.players.filter(p => p.collegeSchool === school.abbr && !p.retired && p.team !== null);
+    alumni.sort((a, b) => b.rating - a.rating);
+    
+    let html = '<div class="page-header"><div class="page-title">My school</div>' +
+      '<div class="page-subtitle">' + school.name + ' · your home for ' + (4 - ['Freshman','Sophomore','Junior','Senior'].indexOf(userPlayer.year)) + ' more season' + ((4 - ['Freshman','Sophomore','Junior','Senior'].indexOf(userPlayer.year)) === 1 ? '' : 's') + '</div></div>';
+    
+    // Hero
+    html += '<div class="my-team-hero">' +
+      '<div class="my-team-hero-left">' +
+      '<div style="width:6px;height:80px;background:' + school.primary + '"></div>' +
+      '<div><div class="my-team-name">' + school.name + '</div>' +
+      '<div class="my-team-meta">' + tier + ' program · Prestige ' + prestige + '</div></div></div>' +
+      '<div class="my-team-stats">' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Titles</div><div class="my-team-stat-value">' + championships + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Top-10s</div><div class="my-team-stat-value">' + top10 + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Heismans</div><div class="my-team-stat-value">' + heismans + '</div></div>' +
+      '</div></div>';
+    
+    // Championships year list
+    if (champYears.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">National championship years</div></div>' +
+        '<div style="padding:16px;font-family:var(--font-mono);font-size:14px">' + champYears.reverse().join(' · ') + '</div></div>';
+    }
+    
+    // Top teammates
+    if (teammates.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Top teammates</div>' +
+        '<div class="card-meta">' + teammates.length + ' other prospects</div></div>' +
+        '<table><thead><tr><th>Name</th><th class="text-center">POS</th><th class="text-center">YEAR</th><th class="text-right">GRADE</th></tr></thead><tbody>';
+      teammates.slice(0, 10).forEach(p => {
+        const rc = p.prospectGrade >= 90 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 70 ? 'good' : 'avg';
+        html += '<tr onclick="game.showProspectCard(\'' + p.id + '\')" style="cursor:pointer">' +
+          '<td><strong>' + p.name + '</strong></td>' +
+          '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
+          '<td class="text-center" style="font-size:12px;color:var(--text-muted)">' + p.year + '</td>' +
+          '<td class="text-right"><span class="rating ' + rc + '">' + p.prospectGrade.toFixed(1) + '</span></td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
+    // Active NFL alumni
+    if (alumni.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Active NFL alumni</div>' +
+        '<div class="card-meta">' + alumni.length + ' currently playing</div></div>' +
+        '<table><thead><tr><th>Name</th><th class="text-center">POS</th><th class="text-center">TEAM</th><th class="text-right">OVR</th></tr></thead><tbody>';
+      alumni.slice(0, 12).forEach(p => {
+        const team = this.state.teams[p.team];
+        const rc = this.ratingClass(p.rating);
+        html += '<tr onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer">' +
+          '<td><strong>' + p.name + '</strong></td>' +
+          '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
+          '<td class="text-center"><span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + p.team + ')">' + (team ? team.abbr : '—') + '</span></td>' +
+          '<td class="text-right"><span class="rating ' + rc + '">' + p.rating + '</span></td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // COMBINE — auto-fires when the user player transitions from college to declared.
+  // Generates combine results from the player's abilities/archetype and gives a stock-up/stock-down
+  // narrative. The results affect the player's final prospectGrade slightly so the combine matters.
+  // The results are stored on the player so the page can be revisited.
+  renderCombine() {
+    const userPlayer = this.getUserPlayer();
+    if (!userPlayer) {
+      this.currentView = 'mycareer'; this.render(); return;
+    }
+    
+    // Generate combine results lazily — first visit creates them.
+    if (!userPlayer.combineResults) {
+      userPlayer.combineResults = this.generateCombineResults(userPlayer);
+      // Apply the grade adjustment
+      if (userPlayer.combineResults.gradeAdjust && userPlayer.prospectGrade !== undefined) {
+        userPlayer.prospectGrade = Math.max(40, Math.min(99, userPlayer.prospectGrade + userPlayer.combineResults.gradeAdjust));
+      }
+    }
+    
+    const cr = userPlayer.combineResults;
+    const stockColor = cr.gradeAdjust > 0 ? 'var(--success)' : cr.gradeAdjust < 0 ? 'var(--danger)' : 'var(--warning)';
+    const stockText = cr.gradeAdjust > 0 ? 'STOCK UP' : cr.gradeAdjust < 0 ? 'STOCK DOWN' : 'NEUTRAL';
+    
+    let html = '<div class="page-header"><div class="page-title">NFL Combine</div>' +
+      '<div class="page-subtitle">' + userPlayer.name + ' · ' + userPlayer.position + ' · ' + userPlayer.school + '</div></div>';
+    
+    // Hero with stock-shift
+    html += '<div class="my-team-hero">' +
+      '<div class="my-team-hero-left">' +
+      '<div style="width:48px;height:48px;background:' + stockColor + ';display:flex;align-items:center;justify-content:center;font-weight:600;color:#fff">' + (cr.gradeAdjust > 0 ? '↑' : cr.gradeAdjust < 0 ? '↓' : '=') + '</div>' +
+      '<div><div class="my-team-name">' + stockText + '</div>' +
+      '<div class="my-team-meta">Grade change: ' + (cr.gradeAdjust > 0 ? '+' : '') + cr.gradeAdjust.toFixed(1) + ' · Now ' + userPlayer.prospectGrade.toFixed(1) + ' overall</div></div></div>' +
+      '<div class="my-team-stats">' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Composite</div><div class="my-team-stat-value">' + cr.composite + '</div></div>' +
+      '</div></div>';
+    
+    // Drill data
+    html += '<div class="card"><div class="card-header"><div class="card-title">Drill results</div></div>' +
+      '<table><thead><tr><th>Drill</th><th class="text-right">Result</th><th>Percentile</th></tr></thead><tbody>';
+    cr.drills.forEach(d => {
+      const pct = d.percentile;
+      const barWidth = pct + '%';
+      const barColor = pct >= 80 ? 'var(--success)' : pct >= 60 ? 'var(--accent)' : pct >= 40 ? 'var(--warning)' : 'var(--danger)';
+      html += '<tr>' +
+        '<td><strong>' + d.name + '</strong></td>' +
+        '<td class="text-right mono-num">' + d.result + '</td>' +
+        '<td><div style="display:flex;align-items:center;gap:8px"><div style="width:120px;height:6px;background:var(--surface-2)"><div style="width:' + barWidth + ';height:100%;background:' + barColor + '"></div></div><span class="muted" style="font-size:11px">' + pct + 'th</span></div></td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    // Storyline
+    html += '<div class="card"><div class="card-header"><div class="card-title">Scout takeaways</div></div>' +
+      '<div style="padding:16px;font-size:13px;line-height:1.7">' + cr.narrative + '</div></div>';
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // Generate combine drill results from a player's abilities. Returns an object with drill scores,
+  // percentiles, a composite score (0-100), a grade adjustment (-3 to +3), and a narrative.
+  generateCombineResults(player) {
+    const ab = player.abilities || {};
+    // Prospects don't have ability scores yet — fall back to prospectGrade or rating.
+    // Use a scattered approach so different drills get different scores instead of all matching.
+    const baseScore = ab.speed !== undefined ? null : (player.prospectGrade || player.rating || 70);
+    const ability = (key, jitterRange) => {
+      if (ab[key] !== undefined) return ab[key];
+      // Add per-drill jitter so a prospect's drills aren't all identical
+      return Math.max(40, Math.min(99, baseScore + (Math.random() - 0.5) * (jitterRange || 16)));
+    };
+    const speed = ability('speed', 18);
+    const strength = ability('strength', 18);
+    const elusiveness = ability('elusiveness', 18);
+    const awareness = ability('awareness', 14);
+    
+    // 40-yd dash: lower is better. Elite (speed 95) = 4.28, avg (speed 75) = 4.60, slow (speed 55) = 4.95
+    const fortyTime = (5.00 - speed * 0.0075 + (Math.random() - 0.5) * 0.08).toFixed(2);
+    const fortyPct = Math.max(1, Math.min(99, Math.round((speed - 50) * 2)));
+    
+    // Bench press: higher is better. Reps of 225. Elite (strength 95) = 32, avg (strength 75) = 22, weak = 12
+    const benchReps = Math.max(2, Math.round(strength * 0.30 + (Math.random() - 0.5) * 4));
+    const benchPct = Math.max(1, Math.min(99, Math.round((strength - 50) * 2)));
+    
+    // Vertical jump: explosiveness. Use speed + elusiveness. Elite = 42, avg = 33, weak = 26
+    const vertical = (24 + speed * 0.10 + elusiveness * 0.08 + (Math.random() - 0.5) * 3).toFixed(1);
+    const vertPct = Math.max(1, Math.min(99, Math.round(((speed + elusiveness) / 2 - 50) * 2)));
+    
+    // 3-cone drill: agility. Lower is better. Elite = 6.55s, avg = 7.10s
+    const threeCone = (7.60 - elusiveness * 0.011 + (Math.random() - 0.5) * 0.15).toFixed(2);
+    const conePct = Math.max(1, Math.min(99, Math.round((elusiveness - 50) * 2)));
+    
+    // Wonderlic-style awareness/intelligence test (scored 0-50)
+    const wonderlic = Math.max(5, Math.min(48, Math.round(awareness * 0.45 + (Math.random() - 0.5) * 8)));
+    const wonderlicPct = Math.max(1, Math.min(99, Math.round((awareness - 50) * 2)));
+    
+    const drills = [
+      { name: '40-yard dash', result: fortyTime + 's', percentile: fortyPct },
+      { name: 'Bench press (225 lb)', result: benchReps + ' reps', percentile: benchPct },
+      { name: 'Vertical jump', result: vertical + '"', percentile: vertPct },
+      { name: '3-cone drill', result: threeCone + 's', percentile: conePct },
+      { name: 'Wonderlic test', result: wonderlic + '/50', percentile: wonderlicPct }
+    ];
+    
+    const composite = Math.round((fortyPct + benchPct + vertPct + conePct + wonderlicPct) / 5);
+    
+    // Grade adjustment: composite 80+ → +1 to +3, composite 50-79 → -1 to +1, below 50 → -3 to -1
+    let gradeAdjust;
+    if (composite >= 85) gradeAdjust = 2 + Math.random();
+    else if (composite >= 70) gradeAdjust = 0.5 + Math.random();
+    else if (composite >= 50) gradeAdjust = (Math.random() - 0.5) * 2;
+    else if (composite >= 35) gradeAdjust = -0.5 - Math.random();
+    else gradeAdjust = -2 - Math.random();
+    gradeAdjust = parseFloat(gradeAdjust.toFixed(1));
+    
+    // Narrative based on standout drills and composite
+    let narrative;
+    const standoutDrill = drills.slice().sort((a, b) => b.percentile - a.percentile)[0];
+    const weakestDrill = drills.slice().sort((a, b) => a.percentile - b.percentile)[0];
+    
+    if (composite >= 85) {
+      narrative = 'Outstanding workout. ' + standoutDrill.name + ' (' + standoutDrill.result + ', ' + standoutDrill.percentile + 'th percentile) confirmed the elite athleticism scouts had on tape. ' +
+        'Front offices are buzzing — expect a meaningful rise up draft boards. Could push into the top half of the first round if not already there.';
+    } else if (composite >= 70) {
+      narrative = 'Solid showing across the board. ' + standoutDrill.name + ' was the standout (' + standoutDrill.result + '), confirming the athletic profile teams hoped to see. ' +
+        'Won\'t fall, possibly rises a few spots, but no dramatic shake-up of the board.';
+    } else if (composite >= 50) {
+      narrative = 'Mixed bag. ' + standoutDrill.name + ' was respectable, but ' + weakestDrill.name + ' (' + weakestDrill.result + ', only ' + weakestDrill.percentile + 'th percentile) raised some flags. ' +
+        'Scouts will need to go back to the tape. Stock holds steady.';
+    } else {
+      narrative = 'Disappointing workout. Particularly poor in ' + weakestDrill.name + ' (' + weakestDrill.result + '). ' +
+        'Concerns about pure athletic ability resurface. Likely to slip on draft day as teams downgrade physical traits.';
+    }
+    
+    return { drills, composite, gradeAdjust, narrative };
+  },
+
+  // PROSPECTS (Top 100) — extracted from College page into its own view.
+  renderProspects() {
+    const prospects = (this.state.collegeProspects || [])
+      .filter(p => p.year === 'Senior' || p.year === 'Junior')
+      .sort((a, b) => b.prospectGrade - a.prospectGrade)
+      .slice(0, 100);
+    
+    let html = '<div class="page-header"><div class="page-title">Top 100 prospects</div>' +
+      '<div class="page-subtitle">' + this.state.year + ' draft class · ranked by grade</div></div>';
+    
+    if (prospects.length === 0) {
+      html += '<div class="empty-state">No prospects yet. Wait for the next class to develop.</div>';
+    } else {
+      html += '<div class="card"><table><thead><tr><th>#</th><th>Name</th><th>Pos</th><th>School</th><th>Year</th><th class="text-right">Grade</th></tr></thead><tbody>';
+      prospects.forEach((p, i) => {
+        const gradeClass = p.prospectGrade >= 88 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 72 ? 'good' : 'avg';
+        html += '<tr>' +
+          '<td>' + (i + 1) + '</td>' +
+          '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showProspectCard(\'' + p.id + '\')">' + p.name + '</span></td>' +
+          '<td>' + p.position + '</td>' +
+          '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + p.school + '\')">' + p.school + '</span></td>' +
+          '<td>' + p.year + '</td>' +
+          '<td class="text-right"><span class="rating ' + gradeClass + '">' + p.prospectGrade + '</span></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // COLLEGE HISTORY page — past national champions and Heisman winners (sidebar version).
+  // Separate from renderCollegeHistory() which is the in-page tab returning an HTML string.
+  renderCollegeHistoryPage() {
+    const history = this.state.collegeHistory || [];
+    let html = '<div class="page-header"><div class="page-title">College history</div>' +
+      '<div class="page-subtitle">' + history.length + ' season' + (history.length === 1 ? '' : 's') + ' in the books</div></div>';
+    
+    if (history.length === 0) {
+      html += '<div class="empty-state">No college seasons completed yet.</div>';
+    } else {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Year-by-year</div></div>' +
+        '<table><thead><tr><th>Year</th><th>National Champion</th><th>Runner-up</th><th>Heisman winner</th></tr></thead><tbody>';
+      history.forEach(r => {
+        html += '<tr>' +
+          '<td>' + r.year + '</td>' +
+          '<td><strong>' + (r.champion || '—') + '</strong></td>' +
+          '<td>' + (r.runnerUp || '—') + '</td>' +
+          '<td>' + (r.heismanName ? r.heismanName + ' (' + r.heismanPosition + ', ' + r.heismanSchool + ')' : '—') + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // COLLEGE HOF page (sidebar) — top 25 prospects of all time (already maintained as state.collegeHOF).
+  // Separate from the in-page tab renderCollegeHOFTab() that returns an HTML string.
+  renderCollegeHOFPage() {
+    const hof = this.state.collegeHOF || [];
+    let html = '<div class="page-header"><div class="page-title">College Hall of Fame</div>' +
+      '<div class="page-subtitle">Top 25 prospects of all time · ranked by college grade</div></div>';
+    
+    if (hof.length === 0) {
+      html += '<div class="empty-state">No inductees yet. Top prospects get inducted after they declare for the NFL.</div>';
+    } else {
+      html += '<div class="card"><table><thead><tr><th>#</th><th>Name</th><th>Pos</th><th>School</th><th>Class</th><th class="text-right">Grade</th><th>NFL career</th></tr></thead><tbody>';
+      hof.forEach((h, i) => {
+        const gradeClass = h.prospectGrade >= 88 ? 'elite' : h.prospectGrade >= 80 ? 'great' : 'good';
+        // Look up NFL career if playerId is in players
+        const nflPlayer = h.playerId !== null && h.playerId !== undefined ? this.state.players[h.playerId] : null;
+        let nflCareer = '—';
+        if (nflPlayer && nflPlayer.careerStats) {
+          const cs = nflPlayer.careerStats;
+          if (h.position === 'QB') nflCareer = (cs.passingYards || 0).toLocaleString() + ' yds · ' + (cs.passingTDs || 0) + ' TD';
+          else if (h.position === 'RB') nflCareer = (cs.rushingYards || 0).toLocaleString() + ' yds · ' + (cs.rushingTDs || 0) + ' TD';
+          else if (h.position === 'WR' || h.position === 'TE') nflCareer = (cs.receivingYards || 0).toLocaleString() + ' yds · ' + (cs.receivingTDs || 0) + ' TD';
+          else nflCareer = nflPlayer.yearsInLeague + ' yrs · ' + (nflPlayer.awards ? nflPlayer.awards.length : 0) + ' awards';
+        }
+        html += '<tr>' +
+          '<td>' + (i + 1) + '</td>' +
+          '<td>' + (nflPlayer ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showPlayerCard(' + nflPlayer.id + ')">' + h.prospectName + '</span>' : h.prospectName) + '</td>' +
+          '<td>' + h.position + '</td>' +
+          '<td><span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + h.school + '\')">' + h.school + '</span></td>' +
+          '<td>' + h.classYear + '</td>' +
+          '<td class="text-right"><span class="rating ' + gradeClass + '">' + h.prospectGrade + '</span></td>' +
+          '<td><span class="muted" style="font-size:12px">' + nflCareer + '</span></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
     }
     document.getElementById('content').innerHTML = html;
   },
