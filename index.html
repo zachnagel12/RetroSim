@@ -347,6 +347,17 @@ select { font-family: inherit; }
         <div class="nav-item user-team-item" data-view="staff"><span class="nav-icon">⚭</span><span>Coaching Staff</span></div>
         <div class="nav-item user-team-item" data-view="freeagents"><span class="nav-icon">+</span><span>Free Agents</span></div>
       </div>
+      <div class="nav-section" id="navCoachCareer" style="display:none">
+        <div class="nav-title">Your Career</div>
+        <div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Coach</span></div>
+        <div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>
+        <div class="nav-item" data-view="staff"><span class="nav-icon">⚭</span><span>Coaching Staff</span></div>
+      </div>
+      <div class="nav-section" id="navPlayerCareer" style="display:none">
+        <div class="nav-title">Your Career</div>
+        <div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>
+        <div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>
+      </div>
       <div class="nav-section" id="navPlayoffs" style="display:none">
         <div class="nav-title">Postseason</div>
         <div class="nav-item playoffs-nav" data-view="playoffs"><span class="nav-icon">◆</span><span>Playoffs</span></div>
@@ -1105,17 +1116,70 @@ let game = {
   updateUserTag() {
     const tag = document.getElementById('userTeamTag');
     const myTeamNav = document.getElementById('navMyTeam');
+    const coachCareerNav = document.getElementById('navCoachCareer');
     const tradesNav = document.getElementById('navTrades');
-    if (this.state && this.state.userTeamId !== null && this.state.userTeamId !== undefined) {
+    
+    // Default: hide everything user-specific
+    tag.style.display = 'none';
+    myTeamNav.style.display = 'none';
+    if (coachCareerNav) coachCareerNav.style.display = 'none';
+    if (tradesNav) tradesNav.style.display = 'none';
+    
+    if (!this.state) return;
+    const mode = this.state.career ? this.state.career.mode : 'dynasty';
+    
+    if (mode === 'coach') {
+      // Coach career: show coach-career nav. User's team is derived from where the coach works.
+      const userCoach = this.getUserCoach();
+      const userTeamId = this.getUserTeamId();
+      if (userCoach && userTeamId !== null) {
+        const t = this.state.teams[userTeamId];
+        tag.textContent = userCoach.name + ' · ' + t.abbr + ' ' + userCoach.role;
+      } else if (userCoach) {
+        tag.textContent = userCoach.name + ' · Free Agent';
+      } else {
+        tag.textContent = 'Coach Career';
+      }
+      tag.style.display = '';
+      if (coachCareerNav) coachCareerNav.style.display = '';
+      return;
+    }
+    
+    if (mode === 'player') {
+      // Player career: show player-career nav. Stage drives the label.
+      const userPlayer = this.getUserPlayer();
+      const stage = this.state.career.careerStage;
+      const playerCareerNav = document.getElementById('navPlayerCareer');
+      if (userPlayer) {
+        if (stage === 'college') {
+          const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === userPlayer.school);
+          tag.textContent = userPlayer.name + ' · ' + userPlayer.year + ' at ' + (schoolInfo ? schoolInfo.abbr : userPlayer.school);
+        } else if (stage === 'declared') {
+          tag.textContent = userPlayer.name + ' · Awaiting Draft';
+        } else if (stage === 'nfl') {
+          const userTeamId = this.getUserTeamId();
+          const t = userTeamId !== null ? this.state.teams[userTeamId] : null;
+          tag.textContent = userPlayer.name + ' · ' + userPlayer.position + (t ? ' · ' + t.abbr : '');
+        } else if (stage === 'retired') {
+          tag.textContent = userPlayer.name + ' · Retired';
+        } else {
+          tag.textContent = userPlayer.name + ' · Player';
+        }
+      } else {
+        tag.textContent = 'Player Career';
+      }
+      tag.style.display = '';
+      if (playerCareerNav) playerCareerNav.style.display = '';
+      return;
+    }
+    
+    // Dynasty mode: original behavior
+    if (this.state.userTeamId !== null && this.state.userTeamId !== undefined) {
       const t = this.state.teams[this.state.userTeamId];
       tag.textContent = t.abbr + ' • Manager';
       tag.style.display = '';
       myTeamNav.style.display = '';
       if (tradesNav) tradesNav.style.display = '';
-    } else {
-      tag.style.display = 'none';
-      myTeamNav.style.display = 'none';
-      if (tradesNav) tradesNav.style.display = 'none';
     }
   },
 
@@ -1137,14 +1201,119 @@ let game = {
 
   showModeChoice() {
     if (this.state && !confirm('This will erase your current league. Continue?')) return;
+    // Step 1: career mode (what role do you play?)
     document.getElementById('content').innerHTML = '<div class="welcome">' +
-      '<h1 class="welcome-title">Choose your mode</h1>' +
-      '<p class="welcome-subtitle">How do you want to start your league?</p>' +
+      '<h1 class="welcome-title">Choose your career</h1>' +
+      '<p class="welcome-subtitle">How do you want to experience the league?</p>' +
+      '<div class="mode-choice">' +
+      '<div class="mode-card" onclick="game.chooseCareerMode(\'dynasty\')"><h3>🏟️ Dynasty</h3><p>Take over an NFL franchise. Build the roster, manage the cap, win Super Bowls. Full GM control of one team.</p></div>' +
+      '<div class="mode-card" onclick="game.chooseCareerMode(\'coach\')"><h3>🎯 Coach Career</h3><p>Create a coach and build your career. Start as an OC/DC, work up to head coach, move between teams. Win COY hardware.</p></div>' +
+      '<div class="mode-card" onclick="game.chooseCareerMode(\'player\')"><h3>🏈 Player Career</h3><p>Create a college prospect, play 3-4 years of college football, declare for the NFL Draft, then play out your career.</p></div>' +
+      '<div class="mode-card" style="opacity:0.45;cursor:not-allowed" onclick="alert(\'Agent Career coming in Stage 4. Pick another mode for now.\')"><h3>💼 Agent Career <span style="font-size:11px;color:var(--text-muted)">(coming soon)</span></h3><p>Run a sports agency. Sign clients, negotiate their contracts, build a stable of 20-30 stars.</p></div>' +
+      '</div>' +
+      '<button class="btn" onclick="game.showWelcome()">← Back</button></div>';
+  },
+
+  chooseCareerMode(careerMode) {
+    this.pendingCareerMode = careerMode;
+    if (careerMode === 'dynasty') {
+      // Original flow: pick league setup mode (default rosters vs startup draft)
+      this.showDynastySetupChoice();
+    } else if (careerMode === 'coach') {
+      this.showCoachCreation();
+    } else if (careerMode === 'player') {
+      this.showPlayerCreation();
+    }
+  },
+  
+  showDynastySetupChoice() {
+    document.getElementById('content').innerHTML = '<div class="welcome">' +
+      '<h1 class="welcome-title">League setup</h1>' +
+      '<p class="welcome-subtitle">Dynasty mode · how should the league begin?</p>' +
       '<div class="mode-choice">' +
       '<div class="mode-card" onclick="game.chooseMode(\'default\')"><h3>⚡ Default rosters</h3><p>Skip the draft. All 32 teams get auto-generated rosters with contracts and the season starts immediately.</p></div>' +
       '<div class="mode-card" onclick="game.chooseMode(\'draft\')"><h3>🎯 Draft your roster</h3><p>Pick your team and draft all 53 roster spots from 1,696 prospects. CPU autopicks for other teams.</p></div>' +
       '</div>' +
-      '<button class="btn" onclick="game.showWelcome()">← Back</button></div>';
+      '<button class="btn" onclick="game.showModeChoice()">← Back</button></div>';
+  },
+
+  showCoachCreation() {
+    const namePool = () => this.generateName(2026);
+    const suggestedName = namePool();
+    document.getElementById('content').innerHTML = '<div class="welcome" style="max-width:560px">' +
+      '<h1 class="welcome-title">Create your coach</h1>' +
+      '<p class="welcome-subtitle">Stage 1 · build your coach and pick where to start</p>' +
+      '<div style="background:var(--surface);border:1px solid var(--border);padding:20px;text-align:left;margin-top:16px">' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Coach name</label>' +
+      '<input id="coachNameInput" type="text" value="' + suggestedName + '" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"></div>' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Starting role</label>' +
+      '<select id="coachRoleInput" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' +
+      '<option value="OC">Offensive Coordinator (calls offense, learning to be HC)</option>' +
+      '<option value="DC">Defensive Coordinator (calls defense, learning to be HC)</option>' +
+      '<option value="Scout">Scout (build a player evaluation career)</option>' +
+      '<option value="HC">Head Coach (skip the climb, take a job at the top)</option>' +
+      '</select></div>' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Starting age</label>' +
+      '<input id="coachAgeInput" type="number" value="38" min="28" max="55" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"><div style="font-size:11px;color:var(--text-muted);margin-top:4px">Coaches typically start 28-45. Older = higher starting OVR, fewer career years.</div></div>' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Starting OVR</label>' +
+      '<input id="coachOvrInput" type="number" value="65" min="50" max="80" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"><div style="font-size:11px;color:var(--text-muted);margin-top:4px">50-65 is realistic for a starting coach. You can grow into a top coach through wins and tenure.</div></div>' +
+      '</div>' +
+      '<div style="margin-top:20px;display:flex;gap:8px;justify-content:center"><button class="btn" onclick="game.showModeChoice()">← Back</button>' +
+      '<button class="btn btn-primary" onclick="game.startCoachCareer()">Start Career →</button></div>' +
+      '</div>';
+  },
+
+  startCoachCareer() {
+    const name = document.getElementById('coachNameInput').value.trim() || this.generateName(2026);
+    const role = document.getElementById('coachRoleInput').value;
+    const age = Math.max(28, Math.min(55, parseInt(document.getElementById('coachAgeInput').value) || 38));
+    const ovr = Math.max(50, Math.min(80, parseInt(document.getElementById('coachOvrInput').value) || 65));
+    // Stash creation params and proceed to default league setup (no GM team picked).
+    this.coachCareerParams = { name, role, age, ovr };
+    this.pendingMode = 'default';
+    this.startLeague(null); // null userTeamId — no GM ownership; team comes from job assignment
+  },
+
+  showPlayerCreation() {
+    const namePool = () => this.generateName(2026);
+    const suggestedName = namePool();
+    // School options grouped by tier for guided picking
+    const schools = COLLEGE_SCHOOLS.slice().sort((a, b) => b.prestige - a.prestige);
+    let schoolOpts = '';
+    schools.forEach(s => {
+      const tier = s.prestige >= 92 ? 'Blue Blood' : s.prestige >= 85 ? 'Elite' : s.prestige >= 78 ? 'Strong' : s.prestige >= 72 ? 'Mid-tier' : s.prestige >= 68 ? 'Solid' : 'Mid-major';
+      schoolOpts += '<option value="' + s.abbr + '">' + s.name + ' · ' + tier + '</option>';
+    });
+    const positions = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
+    let posOpts = '';
+    positions.forEach(p => { posOpts += '<option value="' + p + '">' + p + '</option>'; });
+    
+    document.getElementById('content').innerHTML = '<div class="welcome" style="max-width:560px">' +
+      '<h1 class="welcome-title">Create your prospect</h1>' +
+      '<p class="welcome-subtitle">Stage 2 · build your college prospect and start your football career</p>' +
+      '<div style="background:var(--surface);border:1px solid var(--border);padding:20px;text-align:left;margin-top:16px">' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Your name</label>' +
+      '<input id="playerNameInput" type="text" value="' + suggestedName + '" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"></div>' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Position</label>' +
+      '<select id="playerPositionInput" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' + posOpts + '</select></div>' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">College</label>' +
+      '<select id="playerSchoolInput" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' + schoolOpts + '</select><div style="font-size:11px;color:var(--text-muted);margin-top:4px">Higher-prestige schools have stronger teammates and better visibility for NFL scouts.</div></div>' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Starting prospect grade</label>' +
+      '<input id="playerGradeInput" type="number" value="68" min="50" max="85" step="0.5" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"><div style="font-size:11px;color:var(--text-muted);margin-top:4px">60-75 is realistic for a freshman recruit. Your grade grows with each college season based on performance.</div></div>' +
+      '</div>' +
+      '<div style="margin-top:20px;display:flex;gap:8px;justify-content:center"><button class="btn" onclick="game.showModeChoice()">← Back</button>' +
+      '<button class="btn btn-primary" onclick="game.startPlayerCareer()">Start Career →</button></div>' +
+      '</div>';
+  },
+
+  startPlayerCareer() {
+    const name = document.getElementById('playerNameInput').value.trim() || this.generateName(2026);
+    const position = document.getElementById('playerPositionInput').value;
+    const school = document.getElementById('playerSchoolInput').value;
+    const grade = Math.max(50, Math.min(85, parseFloat(document.getElementById('playerGradeInput').value) || 68));
+    this.playerCareerParams = { name, position, school, grade };
+    this.pendingMode = 'default';
+    this.startLeague(null); // user isn't a GM; they're a college freshman
   },
 
   chooseMode(mode) {
@@ -1179,6 +1348,10 @@ let game = {
       },
       schedule: [],
       userTeamId: userTeamId,
+      // Career mode: 'dynasty' (default), 'coach', 'player' (future), 'agent' (future).
+      // For dynasty: userTeamId is set, career.entityId unused.
+      // For coach: userTeamId is *derived* from career.entityId's current team (re-computed each render).
+      career: { mode: this.pendingCareerMode || 'dynasty', entityType: null, entityId: null },
       lastWeekRecap: null,
       draftActive: false,
       draftPool: [], draftPicks: [], draftOrder: [], draftCurrentIdx: 0,
@@ -1189,6 +1362,20 @@ let game = {
     this.generateCoachFAPool();
     this.generateCollegeProspectPool();
     this.initDraftPicks();
+    
+    // Coach career mode: replace a random team's coach at the chosen role with the user's coach.
+    // We do this AFTER generateTeams (which assigns initial staff) so we can swap into a real slot.
+    if (this.pendingCareerMode === 'coach' && this.coachCareerParams) {
+      this.installUserCoach(this.coachCareerParams);
+      this.coachCareerParams = null; // consumed
+    }
+    
+    // Player career mode: install the user's prospect into the college pool at their chosen school.
+    if (this.pendingCareerMode === 'player' && this.playerCareerParams) {
+      this.installUserPlayer(this.playerCareerParams);
+      this.playerCareerParams = null;
+    }
+    
     if (this.pendingMode === 'draft') {
       this.startDraft();
     } else {
@@ -1283,6 +1470,403 @@ let game = {
 
   getTeamHC(team) {
     return team.staff ? this.getCoach(team.staff.HC) : null;
+  },
+
+  // CAREER MODE HELPERS
+  // Returns the coach object the user is playing as, or null if not in coach career mode.
+  getUserCoach() {
+    if (!this.state || !this.state.career || this.state.career.mode !== 'coach') return null;
+    return this.getCoach(this.state.career.entityId);
+  },
+
+  // Returns the team the user effectively controls — derived from career mode.
+  // - Dynasty: userTeamId directly.
+  // - Coach: the team where the user's coach currently works (could be null if between jobs).
+  // - Player: the team the user's player is on (null if still in college or retired).
+  // - Other modes: null for now.
+  getUserTeamId() {
+    if (!this.state) return null;
+    if (!this.state.career || this.state.career.mode === 'dynasty') {
+      return this.state.userTeamId;
+    }
+    if (this.state.career.mode === 'coach') {
+      const c = this.getUserCoach();
+      if (c && c.teamId !== null && c.teamId !== undefined) return c.teamId;
+      return null;
+    }
+    if (this.state.career.mode === 'player') {
+      const p = this.getUserPlayer();
+      // Only NFL-stage players have a team. College/declared stages return null.
+      if (p && this.state.career.careerStage === 'nfl' && p.team !== null && p.team !== undefined) return p.team;
+      return null;
+    }
+    return null;
+  },
+
+  // Coach career progression — called each offseason. Decides if the user's coach gets:
+  //   - PROMOTED to HC (if currently OC/DC with strong results and an HC vacancy fits)
+  //   - FIRED as HC (if losing records pile up)
+  //   - HIRED again (if currently FA between jobs)
+  // Stage 1 = simple deterministic rules; Stage 3 will replace with offer-selection UI.
+  runCoachCareerProgression() {
+    const userCoach = this.getUserCoach();
+    if (!userCoach || userCoach.retired) return;
+    
+    const lastSeason = userCoach.seasonHistory && userCoach.seasonHistory.length > 0
+      ? userCoach.seasonHistory[userCoach.seasonHistory.length - 1]
+      : null;
+    
+    // CASE A: User is currently a HC. Check for firing.
+    if (userCoach.role === 'HC' && userCoach.teamId !== null) {
+      if (lastSeason && lastSeason.wins < 5) {
+        // 2 straight bad seasons triggers a firing
+        const seasonBefore = userCoach.seasonHistory[userCoach.seasonHistory.length - 2];
+        if (seasonBefore && seasonBefore.role === 'HC' && seasonBefore.wins < 5) {
+          const oldTeam = this.state.teams[userCoach.teamId];
+          oldTeam.staff.HC = null;
+          this.addHeadline({
+            title: oldTeam.city + ' ' + oldTeam.name + ' fire ' + userCoach.name,
+            body: 'Two straight losing seasons. You\'re now a free agent — wait for a job offer next offseason.'
+          });
+          userCoach.teamId = null;
+          userCoach.salary = 0;
+        }
+      }
+      return; // HC who isn't fired stays put
+    }
+    
+    // CASE B: User is OC/DC and may be eligible for HC promotion.
+    if ((userCoach.role === 'OC' || userCoach.role === 'DC') && userCoach.teamId !== null) {
+      // Eligible if their team just had a strong season AND they have ≥3 years tenure as coordinator AND OVR ≥ 75
+      const tenureAsCoordinator = (userCoach.seasonHistory || []).filter(h => h.role === 'OC' || h.role === 'DC').length;
+      const eligible = userCoach.ovr >= 72 && tenureAsCoordinator >= 2;
+      if (eligible) {
+        // Find HC vacancies (teams with no HC) — start with own team if vacant
+        let vacancyTeam = null;
+        const ownTeam = this.state.teams[userCoach.teamId];
+        if (ownTeam.staff.HC === null) vacancyTeam = ownTeam;
+        else {
+          // Look at random other teams
+          const vacancies = this.state.teams.filter(t => t.staff && t.staff.HC === null);
+          if (vacancies.length > 0) {
+            vacancyTeam = vacancies[Math.floor(Math.random() * vacancies.length)];
+          }
+        }
+        if (vacancyTeam) {
+          // Promote!
+          const oldRole = userCoach.role;
+          const oldTeam = this.state.teams[userCoach.teamId];
+          oldTeam.staff[oldRole] = null; // vacate the OC/DC slot
+          
+          userCoach.role = 'HC';
+          userCoach.teamId = vacancyTeam.id;
+          userCoach.hiredYear = this.state.year + 1;
+          userCoach.salary = calculateCoachSalary('HC', userCoach.ovr);
+          // Convert playstyle from single-string (OC/DC) to HC's offense/defense object
+          if (typeof userCoach.playstyle === 'string') {
+            userCoach.playstyle = {
+              offense: oldRole === 'OC' ? userCoach.playstyle : 'Balanced',
+              defense: oldRole === 'DC' ? userCoach.playstyle : 'Balanced'
+            };
+          }
+          vacancyTeam.staff.HC = userCoach.id;
+          
+          this.addHeadline({
+            type: 'champ',
+            title: vacancyTeam.city + ' ' + vacancyTeam.name + ' name ' + userCoach.name + ' head coach',
+            body: 'Your strong work as ' + COACH_ROLE_NAMES[oldRole] + ' on ' + (oldTeam ? oldTeam.abbr : 'previous team') + ' earned the promotion. Welcome to HC.'
+          });
+        }
+      }
+      return;
+    }
+    
+    // CASE C: User is Free Agent. Try to find them a job.
+    if (userCoach.teamId === null) {
+      // Prefer: HC vacancy if user was HC before, otherwise OC/DC vacancy
+      const wasHC = userCoach.role === 'HC';
+      const targetRole = wasHC ? 'HC' : userCoach.role;
+      const vacancies = this.state.teams.filter(t => t.staff && t.staff[targetRole] === null);
+      
+      let pickTeam = null;
+      if (vacancies.length > 0) {
+        pickTeam = vacancies[Math.floor(Math.random() * vacancies.length)];
+      } else if (wasHC) {
+        // No HC opening — accept a coordinator gig
+        const fallbackRole = userCoach.playstyle && userCoach.playstyle.offense ? 'OC' : 'DC';
+        const fallback = this.state.teams.filter(t => t.staff && t.staff[fallbackRole] === null);
+        if (fallback.length > 0) {
+          pickTeam = fallback[Math.floor(Math.random() * fallback.length)];
+          userCoach.role = fallbackRole;
+          // Convert HC playstyle to single-string OC/DC playstyle
+          if (typeof userCoach.playstyle === 'object') {
+            userCoach.playstyle = fallbackRole === 'OC' ? userCoach.playstyle.offense : userCoach.playstyle.defense;
+          }
+        }
+      }
+      
+      if (pickTeam) {
+        userCoach.teamId = pickTeam.id;
+        userCoach.hiredYear = this.state.year + 1;
+        userCoach.salary = calculateCoachSalary(userCoach.role, userCoach.ovr);
+        pickTeam.staff[userCoach.role] = userCoach.id;
+        this.addHeadline({
+          title: pickTeam.city + ' ' + pickTeam.name + ' hire ' + userCoach.name + ' as ' + COACH_ROLE_NAMES[userCoach.role],
+          body: 'Welcome to your new team.'
+        });
+      }
+    }
+  },
+
+
+  // ============================================================
+  // PLAYER CAREER MODE
+  // ============================================================
+  
+  // Returns the player object the user is playing as, or null if not in player career mode.
+  getUserPlayer() {
+    if (!this.state || !this.state.career || this.state.career.mode !== 'player') return null;
+    const id = this.state.career.entityId;
+    if (id === null || id === undefined) return null;
+    // Player career entity may live in collegeProspects (college), pendingDraftClass (declared, between college
+    // graduation and draft conversion), or state.players (NFL stage / retired).
+    const stage = this.state.career.careerStage;
+    if (stage === 'college') {
+      return (this.state.collegeProspects || []).find(p => p.id === id) || null;
+    } else if (stage === 'declared') {
+      // First check pendingDraftClass (where graduates sit before the draft converts them)
+      const inPending = (this.state.pendingDraftClass || []).find(p => p.id === id);
+      if (inPending) return inPending;
+      // Fallback: maybe the draft already ran but our entityId still points to the prospect.
+      // Try to find the matching NFL player by name+school.
+      const inProspects = (this.state.collegeProspects || []).find(p => p.id === id);
+      return inProspects || null;
+    } else {
+      // NFL / retired — entityId points to a player in state.players
+      return this.state.players[id] || null;
+    }
+  },
+
+  // Install user's prospect into the college pool. They start as a Freshman at the chosen school.
+  installUserPlayer({ name, position, school, grade }) {
+    if (!this.state.collegeProspects) this.state.collegeProspects = [];
+    const prospect = {
+      id: 'user_prospect_' + Math.random().toString(36).slice(2, 10),
+      name,
+      school,
+      position,
+      year: 'Freshman',
+      prospectGrade: Math.round(grade * 10) / 10,
+      faceSeed: Math.floor(Math.random() * 1000000),
+      classYear: this.state.year,
+      isUserControlled: true
+    };
+    this.state.collegeProspects.push(prospect);
+    
+    // Wire career state — entity is the prospect; stage is 'college' until they declare and get drafted.
+    this.state.career.entityType = 'player';
+    this.state.career.entityId = prospect.id;
+    this.state.career.careerStage = 'college';
+    
+    const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === school);
+    const schoolName = schoolInfo ? schoolInfo.name : school;
+    this.addHeadline({
+      title: name + ' enrolls at ' + schoolName,
+      body: 'Freshman ' + position + ' begins their college career. Initial scout grade: ' + prospect.prospectGrade.toFixed(1) + '.'
+    });
+  },
+
+  // Each year of college, generate a season stat line + grade evolution for the user's prospect.
+  // CPU prospects get the existing grade-bump logic; the user gets a more detailed annual recap.
+  simUserCollegeSeason() {
+    const p = this.getUserPlayer();
+    if (!p || !this.state.career || this.state.career.careerStage !== 'college') return;
+    if (!p.seasonHistory) p.seasonHistory = [];
+    
+    // Stat line scales with current prospect grade × random variance × position
+    const grade = p.prospectGrade;
+    const variance = 0.75 + Math.random() * 0.5; // 0.75x – 1.25x
+    const gradeMod = grade / 80; // 80 = ~baseline; star (95) gets 1.19x; mid (65) gets 0.81x
+    
+    let line = { games: 12, year: this.state.year, classYear: p.year, prospectGrade: grade };
+    
+    if (p.position === 'QB') {
+      line.passingYards = Math.round((2400 + Math.random() * 1800) * gradeMod * variance);
+      line.passingTDs = Math.round((18 + Math.random() * 22) * gradeMod * variance);
+      line.interceptionsThrown = Math.max(0, Math.round((6 + Math.random() * 8) * (2 - gradeMod)));
+      line.completionPct = Math.min(75, 55 + (grade - 65) * 0.4 + Math.random() * 4);
+    } else if (p.position === 'RB') {
+      line.rushingYards = Math.round((650 + Math.random() * 1100) * gradeMod * variance);
+      line.rushingTDs = Math.round((6 + Math.random() * 14) * gradeMod * variance);
+      line.receivingYards = Math.round((100 + Math.random() * 400) * gradeMod * variance);
+      line.receivingTDs = Math.round((Math.random() * 5) * gradeMod);
+    } else if (p.position === 'WR' || p.position === 'TE') {
+      line.receivingYards = Math.round((p.position === 'WR' ? 600 : 400) + Math.random() * (p.position === 'WR' ? 1000 : 700) * gradeMod * variance);
+      line.receivingTDs = Math.round((p.position === 'WR' ? 5 : 3) + Math.random() * 12 * gradeMod * variance);
+      line.receptions = Math.round((p.position === 'WR' ? 40 : 30) + Math.random() * 50 * gradeMod);
+    } else if (p.position === 'EDGE' || p.position === 'DT' || p.position === 'LB') {
+      line.tackles = Math.round((40 + Math.random() * 70) * gradeMod * variance);
+      line.sacks = Math.round((p.position === 'EDGE' ? 4 : p.position === 'DT' ? 3 : 2) + Math.random() * 8 * gradeMod * variance);
+      line.interceptionsMade = p.position === 'LB' ? Math.round(Math.random() * 3 * gradeMod) : 0;
+    } else if (p.position === 'CB' || p.position === 'S') {
+      line.tackles = Math.round((30 + Math.random() * 50) * gradeMod * variance);
+      line.interceptionsMade = Math.round((1 + Math.random() * 4) * gradeMod * variance);
+      line.passDeflections = Math.round((4 + Math.random() * 10) * gradeMod);
+    } else if (p.position === 'K') {
+      line.fieldGoalsMade = Math.round((10 + Math.random() * 15) * gradeMod * variance);
+      line.fieldGoalsAttempted = Math.round(line.fieldGoalsMade * 1.15);
+      line.extraPoints = Math.round((25 + Math.random() * 20) * gradeMod);
+    } else if (p.position === 'P') {
+      line.punts = Math.round((40 + Math.random() * 30) * variance);
+      line.puntYards = Math.round(line.punts * (38 + Math.random() * 8) * gradeMod);
+      line.puntsInside20 = Math.round(line.punts * (0.20 + Math.random() * 0.20) * gradeMod);
+    }
+    
+    // Did they win major awards?
+    line.awards = [];
+    // Heisman/Maxwell may have been assigned during simCollegeSeason — check via latestCollegeRecap.
+    const recap = this.state.latestCollegeRecap;
+    if (recap) {
+      if (recap.heismanSchool === p.school && (p.position === 'QB' || p.position === 'RB' || p.position === 'WR')) {
+        // Plausible Heisman fit: hijack the assignment for the user if their grade is high enough
+        if (grade >= 88 && Math.random() < 0.5) {
+          recap.heismanName = p.name;
+          recap.heismanPosition = p.position;
+          line.awards.push('Heisman');
+        }
+      }
+    }
+    
+    p.seasonHistory.push(line);
+  },
+
+  // Player career progression — called each offseason. Handles college grade evolution
+  // (with user-controlled prospect getting more granular treatment) and the declaration→NFL transition.
+  runPlayerCareerProgression() {
+    if (!this.state.career || this.state.career.mode !== 'player') return;
+    const stage = this.state.career.careerStage;
+    const id = this.state.career.entityId;
+    
+    // CASE: still in college — handle graduation transition.
+    // We look in BOTH collegeProspects (still enrolled) and pendingDraftClass (just graduated)
+    // because by the time RPCP runs after advanceCollegeSeason, the user senior has been moved
+    // from collegeProspects → pendingDraftClass.
+    if (stage === 'college') {
+      const inCollege = (this.state.collegeProspects || []).find(p => p.id === id);
+      const inPending = (this.state.pendingDraftClass || []).find(p => p.id === id);
+      if (!inCollege && inPending) {
+        // They graduated this offseason — transition to 'declared' stage.
+        this.state.career.careerStage = 'declared';
+        this.state.career.declaredIdentity = {
+          name: inPending.name,
+          school: inPending.school,
+          position: inPending.position,
+          classYear: inPending.classYear,
+          declareYear: this.state.year
+        };
+        const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === inPending.school);
+        this.addHeadline({
+          title: inPending.name + ' declares for the NFL Draft',
+          body: 'After ' + (inPending.seasonHistory ? inPending.seasonHistory.length : 0) + ' years at ' + (schoolInfo ? schoolInfo.name : inPending.school) + ', final prospect grade: ' + inPending.prospectGrade.toFixed(1) + '. The draft is up next.'
+        });
+      }
+      // If still in college (junior or earlier), nothing to do — they keep playing.
+    }
+    
+    if (stage === 'declared') {
+      // The draft should have happened by now and the prospect should have been converted to a player.
+      // Use the stashed identity to find them — pendingDraftClass is cleared by this point.
+      const id = this.state.career.declaredIdentity;
+      if (!id) return;
+      const matchingPlayer = this.state.players.find(p =>
+        !p.retired &&
+        p.name === id.name &&
+        p.collegeSchool === id.school &&
+        p.position === id.position &&
+        p.draftYear === id.declareYear
+      );
+      if (matchingPlayer) {
+        // Bridge: re-point career to the NFL player
+        matchingPlayer.isUserControlled = true;
+        this.state.career.entityId = matchingPlayer.id;
+        this.state.career.careerStage = 'nfl';
+        this.state.career.declaredIdentity = null; // consumed
+        const team = matchingPlayer.team !== null ? this.state.teams[matchingPlayer.team] : null;
+        this.addHeadline({
+          title: matchingPlayer.name + ' drafted by ' + (team ? team.city + ' ' + team.name : 'unknown team'),
+          body: 'Your NFL career begins. Initial OVR: ' + matchingPlayer.rating + '. Contract: ' + (matchingPlayer.contract ? formatMoney(matchingPlayer.contract.aav) + '/yr for ' + matchingPlayer.contract.years + ' years' : 'pending') + '.'
+        });
+      }
+    }
+    
+    if (stage === 'nfl') {
+      // NFL stage — handled by the existing player aging/retirement system.
+      // If player retired this offseason, mark career as retired.
+      const p = this.state.players[this.state.career.entityId];
+      if (p && p.retired) {
+        this.state.career.careerStage = 'retired';
+        this.addHeadline({
+          title: p.name + ' retires from the NFL',
+          body: 'After ' + p.yearsInLeague + ' seasons. Career awards: ' + (p.awards ? p.awards.length : 0) + '. Status: ' + (p.hofInducted ? 'Hall of Fame.' : 'Eligible for HOF consideration.')
+        });
+      }
+    }
+  },
+
+  // The previous occupant of that slot is released to the FA pool.
+  installUserCoach({ name, role, age, ovr }) {
+    // Pick a random team — coach starts somewhere; user can climb from there.
+    const teamId = Math.floor(Math.random() * this.state.teams.length);
+    const team = this.state.teams[teamId];
+    
+    // Boot the existing coach in that role to the FA pool
+    const existingId = team.staff[role];
+    if (existingId) {
+      const old = this.getCoach(existingId);
+      if (old) {
+        old.teamId = null;
+        old.salary = 0;
+      }
+    }
+    
+    // Build the user's coach. We mostly reuse generateCoach to get a complete object,
+    // then override the user-controlled fields.
+    const namePool = () => name; // force the chosen name
+    const userCoach = this.generateCoach(role, this.state.year, namePool);
+    userCoach.name = name;
+    userCoach.age = age;
+    userCoach.ovr = ovr;
+    userCoach.teamId = teamId;
+    userCoach.salary = calculateCoachSalary(role, ovr);
+    userCoach.hiredYear = this.state.year;
+    userCoach.isUserControlled = true;
+    
+    team.staff[role] = userCoach.id;
+    
+    // Wire up career state
+    this.state.career.entityType = 'coach';
+    this.state.career.entityId = userCoach.id;
+    // Cap-compliance: bumping in a user coach may push the team over the coach cap. Trim if needed.
+    let coachTotal = this.teamCoachingSalary(team);
+    if (coachTotal > COACHING_CAP) {
+      // Downgrade other staff first
+      const downgradeOrder = ['Scout', 'DC', 'OC', 'HC'].filter(r => r !== role);
+      for (const r of downgradeOrder) {
+        if (coachTotal <= COACHING_CAP) break;
+        const c = this.getCoach(team.staff[r]);
+        if (!c) continue;
+        while (coachTotal > COACHING_CAP && c.ovr > 50) {
+          c.ovr = Math.max(50, c.ovr - 5);
+          c.salary = calculateCoachSalary(c.role, c.ovr);
+          coachTotal = this.teamCoachingSalary(team);
+        }
+      }
+    }
+    
+    this.addHeadline({
+      title: team.city + ' ' + team.name + ' hire ' + name + ' as ' + COACH_ROLE_NAMES[role],
+      body: 'New ' + role + ' begins their coaching career in ' + this.state.year + ' at age ' + age + ' (OVR ' + ovr + ').'
+    });
   },
 
   generateCoachFAPool() {
@@ -1531,6 +2115,10 @@ let game = {
     
     // Sim college season + championship + awards
     this.simCollegeSeason();
+    
+    // After CPU sim but BEFORE aging: capture user's college season stat line
+    // (so it reflects the current class year — e.g. "Freshman 2026 stats")
+    this.simUserCollegeSeason();
     
     // ===== AGE PROSPECTS UP AND HANDLE DECLARATIONS =====
     const graduates = [];
@@ -2047,6 +2635,9 @@ let game = {
         title: this.state.year + ' draft concludes',
         body: '7 rounds, 224 picks. ' + this.state.year + ' season begins.'
       });
+      
+      // Post-draft: bridge user prospect → NFL player if applicable
+      this.runPlayerCareerProgression();
     } else {
       // Inaugural draft: allocate contracts retroactively to fit exactly into the $300M cap.
       // Each team's total AAV = the league cap, with vets/stars getting bigger shares.
@@ -2453,13 +3044,16 @@ let game = {
       }
     });
     
-    // Assign bye weeks (5-14) evenly across 32 teams
-    // Each bye-week gets ~3-4 teams on bye so each week has 14-15 games
+    // Assign bye weeks (5-14) so each bye week has an EVEN number of teams on bye.
+    // 32 teams must spread across weeks 5-14 with even counts per week (so the remaining teams
+    // can pair into complete games).
+    // Allocation: 4 teams per bye week × 8 of the 10 available weeks = 32. Use weeks 5-12 by default.
+    // (Weeks 13-14 are left bye-free to keep late-season schedules denser, mirroring NFL practice.)
     const byeWeeks = {};
     const shuffledTeams = [...teams].sort(() => Math.random() - 0.5);
+    const byeWeekSlots = [5, 6, 7, 8, 9, 10, 11, 12]; // 8 weeks × 4 teams = 32 byes
     shuffledTeams.forEach((t, idx) => {
-      // Spread across weeks 5-14 (10 weeks)
-      byeWeeks[t.id] = 5 + (idx % 10);
+      byeWeeks[t.id] = byeWeekSlots[Math.floor(idx / 4)];
     });
     
     // Place matchups into weeks. Each team plays at most one game per week, not on bye.
@@ -2501,12 +3095,15 @@ let game = {
       if (!placed) unplaced.push(g);
     });
     
-    // Try to recover unplaced games — swap with other games to free up weeks
-    // (this is a simplified retry; perfect scheduling is NP-hard)
+    // Try to recover unplaced games — swap with other games to free up weeks.
+    // First do simple retry. Then if any remain, try swap-based recovery: find a game already placed
+    // such that swapping it out would free a week for the unplaced game, AND the displaced game
+    // can find a new home elsewhere.
     let retryRounds = 0;
-    while (unplaced.length > 0 && retryRounds < 3) {
+    while (unplaced.length > 0 && retryRounds < 10) {
       const stillUnplaced = [];
       unplaced.forEach(g => {
+        // Try fresh placement first
         for (let w = 1; w <= WEEKS; w++) {
           if (!teamWeekUsed[g.teamA].has(w) && !teamWeekUsed[g.teamB].has(w)) {
             const aIsHome = Math.random() < 0.5;
@@ -2522,12 +3119,99 @@ let game = {
             return;
           }
         }
-        stillUnplaced.push(g);
+        // SWAP RECOVERY: try to find a placed game we can move to free up a slot for `g`.
+        // For each week w where both g.teamA AND g.teamB are busy, see if the conflicting games can shift.
+        let swapped = false;
+        for (let w = 1; w <= WEEKS && !swapped; w++) {
+          // We need both teams free at w. Find what's blocking them.
+          // If teamA's bye is w, can't unblock (don't move byes).
+          if (byeWeeks[g.teamA] === w || byeWeeks[g.teamB] === w) continue;
+          
+          // Find the placed games at week w involving each of our teams
+          const blockerA = weekGames[w].find(gm => gm.homeTeam === g.teamA || gm.awayTeam === g.teamA);
+          const blockerB = weekGames[w].find(gm => gm.homeTeam === g.teamB || gm.awayTeam === g.teamB);
+          // If one team is already free, we only need to move the other blocker
+          const needToMove = [];
+          if (blockerA) needToMove.push(blockerA);
+          if (blockerB && blockerB !== blockerA) needToMove.push(blockerB);
+          if (needToMove.length === 0) continue;
+          // For each blocker, find an alternate week where both its teams are free (and not their byes)
+          const alternates = needToMove.map(blocker => {
+            const otherTeamA = blocker.homeTeam, otherTeamB = blocker.awayTeam;
+            for (let w2 = 1; w2 <= WEEKS; w2++) {
+              if (w2 === w) continue;
+              if (byeWeeks[otherTeamA] === w2 || byeWeeks[otherTeamB] === w2) continue;
+              if (!teamWeekUsed[otherTeamA].has(w2) && !teamWeekUsed[otherTeamB].has(w2)) {
+                return { blocker, newWeek: w2 };
+              }
+            }
+            return null;
+          });
+          if (alternates.every(a => a !== null)) {
+            // Execute the swaps
+            alternates.forEach(({ blocker, newWeek }) => {
+              const idx = weekGames[w].indexOf(blocker);
+              weekGames[w].splice(idx, 1);
+              teamWeekUsed[blocker.homeTeam].delete(w);
+              teamWeekUsed[blocker.awayTeam].delete(w);
+              blocker.week = newWeek;
+              weekGames[newWeek].push(blocker);
+              teamWeekUsed[blocker.homeTeam].add(newWeek);
+              teamWeekUsed[blocker.awayTeam].add(newWeek);
+            });
+            // Now place g at w
+            const aIsHome = Math.random() < 0.5;
+            weekGames[w].push({
+              week: w,
+              homeTeam: aIsHome ? g.teamA : g.teamB,
+              awayTeam: aIsHome ? g.teamB : g.teamA,
+              isDivisional: g.isDivisional,
+              played: false, homeScore: 0, awayScore: 0, playerStats: {}
+            });
+            teamWeekUsed[g.teamA].add(w);
+            teamWeekUsed[g.teamB].add(w);
+            swapped = true;
+          }
+        }
+        if (!swapped) stillUnplaced.push(g);
       });
       if (stillUnplaced.length === unplaced.length) break; // no progress
       unplaced.length = 0;
       stillUnplaced.forEach(g => unplaced.push(g));
       retryRounds++;
+    }
+    
+    // FINAL FALLBACK: eliminate phantom byes by pairing up idle teams in each week.
+    // A team should play exactly once per week (or be on its assigned bye). If after all retries
+    // a team has neither played nor is on bye for a given week, pair it with another similarly-idle
+    // team and create a synthetic game. This may duplicate an existing matchup, but it prevents
+    // teams from appearing to have multiple bye weeks. Real NFL doesn't have this issue because
+    // its matchup formula is constructed to fit exactly, but our greedy placer can leave gaps.
+    for (let w = 1; w <= WEEKS; w++) {
+      const idleTeams = teams.filter(t =>
+        byeWeeks[t.id] !== w && !teamWeekUsed[t.id].has(w)
+      );
+      // Pair them up (in order — divisional pairs would be nicer but we just need to fill slots)
+      // Shuffle for variety
+      idleTeams.sort(() => Math.random() - 0.5);
+      while (idleTeams.length >= 2) {
+        const a = idleTeams.pop();
+        const b = idleTeams.pop();
+        const aIsHome = Math.random() < 0.5;
+        const aDivisional = (a.conference === b.conference && a.division === b.division);
+        weekGames[w].push({
+          week: w,
+          homeTeam: aIsHome ? a.id : b.id,
+          awayTeam: aIsHome ? b.id : a.id,
+          isDivisional: aDivisional,
+          played: false, homeScore: 0, awayScore: 0, playerStats: {},
+          synthetic: true // marker for debugging
+        });
+        teamWeekUsed[a.id].add(w);
+        teamWeekUsed[b.id].add(w);
+      }
+      // If exactly 1 team is idle (odd count due to bye misalignment), that's an unsolvable
+      // single phantom bye for that team this week. Should be rare with even bye distribution.
     }
     
     // Flatten into schedule
@@ -2595,6 +3279,44 @@ let game = {
     this.render();
   },
 
+  // Round a candidate score down/up to the nearest valid NFL score: 7*TD + 3*FG for non-negative TD, FG.
+  // Examples: 23 → 23 (2TD + 3FG), 22 → 21 or 24, 11 → 10 or 13. Bias toward nearest valid value.
+  // Returns the closest valid score (ties broken by rounding up).
+  roundToValidScore(s) {
+    if (s <= 0) return 0;
+    // Try s, s-1, s+1, s-2, s+2, ... up to ±3
+    for (let delta = 0; delta <= 4; delta++) {
+      for (const sign of [1, -1]) {
+        if (delta === 0 && sign === -1) continue;
+        const candidate = s + delta * sign;
+        if (candidate < 0) continue;
+        // Check if candidate = 7a + 3b for some non-negative integers
+        for (let a = 0; a * 7 <= candidate; a++) {
+          const rem = candidate - a * 7;
+          if (rem % 3 === 0) return candidate;
+        }
+      }
+    }
+    return s; // fallback (shouldn't happen for reasonable scores)
+  },
+
+  // Decompose a valid score into a [tdCount, fgCount] pair.
+  // Preference: more TDs than FGs (NFL realism — most scoring is TDs).
+  // Returns the combo with the most TDs that satisfies tdCount*7 + fgCount*3 === score.
+  decomposeScore(score) {
+    if (score <= 0) return { tds: 0, fgs: 0 };
+    let best = { tds: 0, fgs: Math.floor(score / 3) };
+    for (let tds = 0; tds * 7 <= score; tds++) {
+      const rem = score - tds * 7;
+      if (rem % 3 === 0) {
+        const fgs = rem / 3;
+        // Prefer combos with more TDs (NFL realism)
+        if (tds > best.tds) best = { tds, fgs };
+      }
+    }
+    return best;
+  },
+
   simGame(g) {
     const home = this.state.teams[g.homeTeam];
     const away = this.state.teams[g.awayTeam];
@@ -2603,10 +3325,22 @@ let game = {
     const homeWinProb = (hs / (hs + as)) + 0.05;
     const homeWins = Math.random() < homeWinProb;
     const base = 14 + Math.floor(MODERN_GAME_RATE * 8);
-    const hScore = Math.max(3, base + Math.floor(Math.random() * 20) + (homeWins ? 7 : -7));
-    const aScore = Math.max(3, base + Math.floor(Math.random() * 20) + (homeWins ? -7 : 7));
+    let hScore = Math.max(3, base + Math.floor(Math.random() * 20) + (homeWins ? 7 : -7));
+    let aScore = Math.max(3, base + Math.floor(Math.random() * 20) + (homeWins ? -7 : 7));
+    // Round each score to a valid TD+FG combination (7a + 3b for a,b≥0).
+    // This guarantees box-score TDs + FGs will sum exactly to the final score.
+    hScore = this.roundToValidScore(hScore);
+    aScore = this.roundToValidScore(aScore);
     g.homeScore = homeWins ? Math.max(hScore, aScore + 1) : hScore;
     g.awayScore = !homeWins ? Math.max(aScore, hScore + 1) : aScore;
+    // Final coercion if the "winner forced higher" adjustment broke validity
+    g.homeScore = this.roundToValidScore(g.homeScore);
+    g.awayScore = this.roundToValidScore(g.awayScore);
+    if (g.homeScore === g.awayScore) {
+      // No ties in this league — bump the winner up by the smallest valid step
+      if (homeWins) g.homeScore = this.roundToValidScore(g.homeScore + 3);
+      else g.awayScore = this.roundToValidScore(g.awayScore + 3);
+    }
     g.played = true;
     g.playerStats = {};
     // Get head coaches for win/loss tracking
@@ -2685,6 +3419,20 @@ let game = {
       const defStyle = this.getTeamDefStyle(team);
       const blitzMod = (defStyle === 'Blitz Heavy' || defStyle === 'Aggressive Front') ? 1.25 : (defStyle === 'Coverage First' ? 0.85 : 1.0);
       const coverageMod = (defStyle === 'Coverage First' || defStyle === 'Bend Don\'t Break') ? 1.20 : 1.0;
+      
+      // Decompose the team's final score into target TDs and FGs.
+      // Split TDs between passing and rushing based on pass-emphasis.
+      // passEmph ~0.5 average → 60% pass / 40% rush TDs. passEmph 0.75 → 75/25. passEmph 0.25 → 35/65.
+      const decomp = this.decomposeScore(score);
+      const targetTotalTDs = decomp.tds;
+      const targetFGs = decomp.fgs;
+      const passShare = Math.max(0.2, Math.min(0.85, 0.4 + passEmph * 0.5));
+      let targetPassTDs = Math.round(targetTotalTDs * passShare);
+      let targetRushTDs = targetTotalTDs - targetPassTDs;
+      // Clamp to [0, targetTotalTDs]
+      if (targetPassTDs < 0) { targetRushTDs += targetPassTDs; targetPassTDs = 0; }
+      if (targetRushTDs < 0) { targetPassTDs += targetRushTDs; targetRushTDs = 0; }
+      
       const ensureStats = (pid) => {
         if (!gameObj.playerStats[pid]) gameObj.playerStats[pid] = EMPTY_GAME_STATS();
         return gameObj.playerStats[pid];
@@ -2712,7 +3460,8 @@ let game = {
         const att = Math.floor((18 + Math.random() * 16) * (0.7 + passEmph * 0.6));
         teamCompletions = Math.floor(att * (0.55 + Math.random() * 0.2));
         teamCompletions = Math.min(teamCompletions, att);
-        teamPassTDs = Math.floor(Math.random() * 3.5 * passEmph * 1.3);
+        // Force passing TDs to match the decomposed target (instead of random)
+        teamPassTDs = targetPassTDs;
         const ints = Math.random() < 0.4 ? Math.floor(Math.random() * 2) : 0;
         const gs = ensureStats(qb.id);
         gs.passingYards += teamPassYards; gs.passingTDs += teamPassTDs;
@@ -2807,7 +3556,8 @@ let game = {
       // =========================================================
       const teamRushYards = Math.floor((75 + Math.random() * 145) * (1.6 - passEmph));
       const teamCarries = Math.floor((22 + Math.random() * 14) * (1.4 - passEmph));
-      const teamRushTDs = Math.random() < 0.75 ? Math.floor(Math.random() * 3) : 0;
+      // Force rushing TDs to match the decomposed target (instead of random)
+      const teamRushTDs = targetRushTDs;
       
       // Distribute among top 2 RBs + maybe QB (scrambler bonus)
       const rushers = [];
@@ -2921,9 +3671,15 @@ let game = {
       const kickers = roster.filter(p => p.position === 'K').sort((a, b) => b.rating - a.rating);
       if (kickers[0]) {
         const k = kickers[0];
-        const fgAtt = Math.floor(1 + Math.random() * 4);
-        const fgMade = Math.floor(fgAtt * (0.6 + (k.rating / 200)));
-        const xp = Math.max(0, Math.floor(score / 7) - Math.floor(Math.random() * 2));
+        // Force FG made to match decomposed target (instead of random)
+        const fgMade = targetFGs;
+        // FG attempts = made + a couple misses (kicker's accuracy)
+        const missRate = Math.max(0.05, 0.25 - (k.rating - 70) / 100); // 5-25% miss rate by OVR
+        const extraAttempts = fgMade > 0 ? Math.floor(fgMade * missRate + Math.random()) : Math.floor(Math.random() * 2);
+        const fgAtt = fgMade + extraAttempts;
+        // XPs = number of TDs (since every TD is presumed to have a successful XP in the 7-point bucket).
+        // teamPassTDs + teamRushTDs sum to total TDs for this team.
+        const xp = targetPassTDs + targetRushTDs;
         const gs = ensureStats(k.id);
         gs.fieldGoalsMade += fgMade; gs.fieldGoalsAttempted += fgAtt; gs.extraPoints += xp;
         k.seasonStats.fieldGoalsMade += fgMade; k.seasonStats.fieldGoalsAttempted += fgAtt;
@@ -4080,7 +4836,7 @@ let game = {
       });
     });
     
-    // Process coaches: snapshot history, age, retire
+    // Process coaches: snapshot history, grow OVR based on success, age, retire
     if (this.state.coaches) {
       Object.values(this.state.coaches).forEach(coach => {
         if (!coach.seasonHistory) coach.seasonHistory = [];
@@ -4093,6 +4849,29 @@ let game = {
           losses: coach.losses,
           coyAwarded: awardRecord.coy && awardRecord.coy.coachId === coach.id
         });
+        
+        // OVR growth based on success — small but cumulative across a career.
+        // Real NFL: a coach with strong results genuinely improves over time as they refine their craft.
+        // HC: +2 OVR for 12+ wins, +1 for 9-11 wins, 0 for 6-8, -1 for 3-5, -2 for <3
+        // Coordinator/Scout: +1 if their team won 11+ (carry success), +0 otherwise
+        let ovrDelta = 0;
+        if (coach.role === 'HC') {
+          if (coach.wins >= 12) ovrDelta = 2;
+          else if (coach.wins >= 9) ovrDelta = 1;
+          else if (coach.wins >= 6) ovrDelta = 0;
+          else if (coach.wins >= 3) ovrDelta = -1;
+          else ovrDelta = -2;
+          if (awardRecord.coy && awardRecord.coy.coachId === coach.id) ovrDelta += 2; // COY bonus
+        } else if (coach.teamId !== null) {
+          const team = this.state.teams[coach.teamId];
+          if (team && team.wins >= 11) ovrDelta = 1;
+        }
+        // Update salary to match new OVR (small annual contract adjustments)
+        if (ovrDelta !== 0) {
+          coach.ovr = Math.max(40, Math.min(99, coach.ovr + ovrDelta));
+          if (coach.teamId !== null) coach.salary = calculateCoachSalary(coach.role, coach.ovr);
+        }
+        
         coach.age++;
         coach.wins = 0;
         coach.losses = 0;
@@ -4145,6 +4924,13 @@ let game = {
       // Remove retired coaches from FA pool so they don't show up
       // (Keep them in state for historical reference but they're not signable)
     }
+    
+    // Coach career progression — runs BEFORE backfill so the user's old slot can be filled by the league.
+    // This determines if the user's coach gets promoted, fired, or stays put.
+    this.runCoachCareerProgression();
+    
+    // Player career progression for player mode gets called LATER, after advanceCollegeSeason,
+    // because that's when graduates (including possibly the user) land in pendingDraftClass.
     
     // Backfill any vacated coach roles with auto-hires — CPU teams only.
     // User team vacancies persist; user uses the Fill Position button to hire.
@@ -4215,6 +5001,11 @@ let game = {
 
     // Advance college season — graduates are stashed in state.pendingDraftClass
     this.advanceCollegeSeason();
+    
+    // Player career progression — handles college→declared transition.
+    // Runs AFTER advanceCollegeSeason so we can see graduates landing in pendingDraftClass.
+    // The declared→NFL bridge happens later, after the draft completes (in finishDraft).
+    this.runPlayerCareerProgression();
     
     // ===== ENTER FREE AGENCY PHASE =====
     // User has a chance to sign veteran FAs (existing pool + any from contract expirations).
@@ -4598,6 +5389,7 @@ let game = {
       case 'freeagents': this.renderFreeAgents(); break;
       case 'college': this.renderCollege(); break;
       case 'trades': this.renderTrades(); break;
+      case 'mycareer': this.renderMyCareer(); break;
       case 'hof': this.renderHOF(); break;
       case 'records': this.renderRecords(); break;
       case 'champions': this.renderChampions(); break;
@@ -4608,10 +5400,11 @@ let game = {
 
   // MY TEAM
   renderMyTeam() {
-    if (this.state.userTeamId === null || this.state.userTeamId === undefined) {
+    const userTeamId = this.getUserTeamId();
+    if (userTeamId === null || userTeamId === undefined) {
       this.currentView = 'standings'; this.render(); return;
     }
-    const team = this.state.teams[this.state.userTeamId];
+    const team = this.state.teams[userTeamId];
     const games = team.wins + team.losses;
     const pct = games > 0 ? (team.wins / games).toFixed(3) : '.000';
     const cap = getSalaryCap(this.state.year);
@@ -4801,11 +5594,278 @@ let game = {
   // ============================================================
   // STAFF PAGE — coaching cap + hire/fire management
   // ============================================================
-  renderStaff() {
-    if (this.state.userTeamId === null || this.state.userTeamId === undefined) {
+  // MY CAREER — dispatches to coach or player based on career mode
+  renderMyCareer() {
+    if (!this.state.career) { this.currentView = 'standings'; this.render(); return; }
+    const mode = this.state.career.mode;
+    if (mode === 'coach') this.renderMyCoachCareer();
+    else if (mode === 'player') this.renderMyPlayerCareer();
+    else { this.currentView = 'standings'; this.render(); return; }
+  },
+
+  renderMyCoachCareer() {
+    const userCoach = this.getUserCoach();
+    if (!userCoach) {
       this.currentView = 'standings'; this.render(); return;
     }
-    const team = this.state.teams[this.state.userTeamId];
+    const team = userCoach.teamId !== null ? this.state.teams[userCoach.teamId] : null;
+    const totalWins = (userCoach.seasonHistory || []).reduce((s, h) => s + (h.wins || 0), 0) + userCoach.wins;
+    const totalLosses = (userCoach.seasonHistory || []).reduce((s, h) => s + (h.losses || 0), 0) + userCoach.losses;
+    const totalGames = totalWins + totalLosses;
+    const careerPct = totalGames > 0 ? (totalWins / totalGames).toFixed(3) : '.000';
+    const yearsCoaching = this.state.year - userCoach.hiredYear;
+    
+    let styleStr;
+    if (userCoach.role === 'HC') styleStr = userCoach.playstyle.offense + ' offense / ' + userCoach.playstyle.defense + ' defense';
+    else if (userCoach.role === 'Scout') styleStr = userCoach.playstyle + ' specialty';
+    else styleStr = userCoach.playstyle + ' playstyle';
+    
+    let html = '<div class="page-header">' +
+      '<div class="page-title">My career</div>' +
+      '<div class="page-subtitle">' + userCoach.name + ' · ' + COACH_ROLE_NAMES[userCoach.role] + (team ? ' · ' + team.city + ' ' + team.name : ' · Free Agent') + '</div>' +
+      '</div>';
+    
+    // Hero block
+    html += '<div class="my-team-hero">' +
+      '<div class="my-team-hero-left">' +
+      '<div class="coach-face" style="width:88px;height:88px">' + pixelFaceSVG(userCoach.faceSeed) + '</div>' +
+      '<div><div class="my-team-name">' + userCoach.name + '</div>' +
+      '<div class="my-team-meta">' + COACH_ROLE_NAMES[userCoach.role] + ' · Age ' + userCoach.age + ' · Year ' + (yearsCoaching + 1) + ' as a coach</div>' +
+      '<div style="margin-top:8px"><span class="rating ' + this.ratingClass(userCoach.ovr) + '" style="font-size:14px;padding:4px 10px">OVR ' + userCoach.ovr + '</span></div></div></div>' +
+      '<div class="my-team-stats">' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Career W</div><div class="my-team-stat-value">' + totalWins + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Career L</div><div class="my-team-stat-value">' + totalLosses + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Win PCT</div><div class="my-team-stat-value">' + careerPct + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">COY</div><div class="my-team-stat-value">' + (userCoach.coachOfYears || 0) + '</div></div>' +
+      '</div></div>';
+    
+    // Current job card
+    if (team) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Current job</div></div>' +
+        '<div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px">' +
+        '<div>' +
+        '<div class="section-label">Role</div>' +
+        '<div style="font-size:16px;font-weight:600;margin-top:4px">' + COACH_ROLE_NAMES[userCoach.role] + ' · ' + team.city + ' ' + team.name + '</div>' +
+        '<div class="muted" style="font-size:12px;margin-top:2px">Hired ' + userCoach.hiredYear + ' · ' + yearsCoaching + ' year' + (yearsCoaching === 1 ? '' : 's') + ' here</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:8px"><strong>Salary:</strong> ' + formatMoney(userCoach.salary) + '/yr</div>' +
+        '<div style="font-size:12px;color:var(--text-muted)"><strong>Playstyle:</strong> ' + styleStr + '</div>' +
+        '</div>' +
+        '<div>' +
+        '<div class="section-label">This season</div>' +
+        '<div style="font-size:18px;font-weight:600;margin-top:4px">' + userCoach.wins + '–' + userCoach.losses + '</div>' +
+        '<div class="muted" style="font-size:12px;margin-top:2px">Team record (W' + this.state.week + ' of season)</div>' +
+        '<div style="margin-top:8px">' +
+        '<button class="btn btn-sm" onclick="game.showTeam(' + team.id + ')">View team →</button>' +
+        '</div>' +
+        '</div>' +
+        '</div></div>';
+    } else {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Free agent</div></div>' +
+        '<div style="padding:16px">' +
+        '<div style="font-size:14px;margin-bottom:8px">You\'re between jobs. The next offseason will bring potential offers.</div>' +
+        '<div class="muted" style="font-size:12px">Tip: Stage 3 will add a job-offer selection screen. For now, the league auto-places you when a fitting role opens.</div>' +
+        '</div></div>';
+    }
+    
+    // Season-by-season history
+    if (userCoach.seasonHistory && userCoach.seasonHistory.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Career history</div></div>' +
+        '<table><thead><tr><th>Year</th><th>Team</th><th>Role</th><th class="text-right">Record</th><th>Awards</th></tr></thead><tbody>';
+      [...userCoach.seasonHistory].reverse().forEach(h => {
+        let teamCell = h.teamAbbr || '—';
+        if (h.teamAbbr) {
+          const t = this.state.teams.find(x => x.abbr === h.teamAbbr);
+          if (t) teamCell = '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + t.id + ')">' + h.teamAbbr + '</span>';
+        }
+        const recordStr = (h.role === 'HC') ? (h.wins + '–' + h.losses) : '—';
+        html += '<tr><td class="mono-num">' + h.year + '</td>' +
+          '<td>' + teamCell + '</td>' +
+          '<td>' + COACH_ROLE_NAMES[h.role] + '</td>' +
+          '<td class="text-right mono-num">' + recordStr + '</td>' +
+          '<td style="font-size:12px;color:var(--warning);font-weight:600">' + (h.coyAwarded ? 'COY' : '') + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // PLAYER CAREER PAGE — shows college recap, NFL stats, or retirement based on stage
+  renderMyPlayerCareer() {
+    const p = this.getUserPlayer();
+    if (!p) {
+      this.currentView = 'standings'; this.render(); return;
+    }
+    const stage = this.state.career.careerStage;
+    
+    if (stage === 'college' || stage === 'declared') {
+      this.renderPlayerCareerCollege(p, stage);
+    } else {
+      // NFL or retired — use existing showPlayer-style breakdown but as a full page
+      this.renderPlayerCareerNFL(p, stage);
+    }
+  },
+
+  renderPlayerCareerCollege(p, stage) {
+    const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+    const schoolName = schoolInfo ? schoolInfo.name : p.school;
+    const schoolColor = schoolInfo ? schoolInfo.primary : '#888';
+    const gradeRC = p.prospectGrade >= 90 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 70 ? 'good' : 'avg';
+    
+    // Projected draft range
+    let projection = 'UDFA';
+    if (p.prospectGrade >= 95) projection = 'Top 5 pick';
+    else if (p.prospectGrade >= 90) projection = 'Top 15 pick';
+    else if (p.prospectGrade >= 85) projection = 'Round 1';
+    else if (p.prospectGrade >= 78) projection = 'Rounds 1-2';
+    else if (p.prospectGrade >= 72) projection = 'Rounds 2-3';
+    else if (p.prospectGrade >= 65) projection = 'Rounds 3-5';
+    else if (p.prospectGrade >= 58) projection = 'Rounds 5-7';
+    
+    let html = '<div class="page-header">' +
+      '<div class="page-title">My career</div>' +
+      '<div class="page-subtitle">' + p.name + ' · ' + p.position + ' · ' + (stage === 'declared' ? 'Awaiting NFL Draft' : p.year + ' at ' + schoolName) + '</div>' +
+      '</div>';
+    
+    // Hero block
+    html += '<div class="my-team-hero">' +
+      '<div class="my-team-hero-left">' +
+      '<div class="player-face-large" style="width:88px;height:88px">' + pixelFaceSVG(p.faceSeed) + '</div>' +
+      '<div><div class="my-team-name">' + p.name + '</div>' +
+      '<div class="my-team-meta">' + p.position + ' · ' + (stage === 'declared' ? 'NFL prospect' : p.year) + ' · <span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + p.school + '\')">' + schoolName + '</span></div>' +
+      '<div style="margin-top:8px"><span class="rating ' + gradeRC + '" style="font-size:14px;padding:4px 10px">GRADE ' + p.prospectGrade.toFixed(1) + '</span></div></div></div>' +
+      '<div class="my-team-stats">' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Class</div><div class="my-team-stat-value" style="font-size:14px">' + (stage === 'declared' ? 'Declared' : p.year) + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Years played</div><div class="my-team-stat-value">' + (p.seasonHistory ? p.seasonHistory.length : 0) + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Draft proj.</div><div class="my-team-stat-value" style="font-size:13px">' + projection + '</div></div>' +
+      '</div></div>';
+    
+    // Stage info
+    if (stage === 'declared') {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Draft incoming</div></div>' +
+        '<div style="padding:16px">' +
+        '<div style="font-size:14px;margin-bottom:8px">You\'ve declared for the NFL Draft. Continue simming to see where you go.</div>' +
+        '<div class="muted" style="font-size:12px">Your prospect grade is ' + p.prospectGrade.toFixed(1) + '. Projection: ' + projection + '.</div>' +
+        '</div></div>';
+    } else {
+      const yearsLeft = { 'Freshman': 3, 'Sophomore': 2, 'Junior': 1, 'Senior': 0 }[p.year] || 0;
+      html += '<div class="card"><div class="card-header"><div class="card-title">College status</div></div>' +
+        '<div style="padding:16px">' +
+        '<div style="font-size:13px;margin-bottom:6px"><strong>' + p.year + '</strong> · ' + yearsLeft + ' year' + (yearsLeft === 1 ? '' : 's') + ' until eligible for the draft</div>' +
+        (p.year === 'Junior' && p.prospectGrade >= 85
+          ? '<div style="font-size:12px;color:var(--success);margin-top:4px">Eligible to declare early next offseason</div>'
+          : '') +
+        '</div></div>';
+    }
+    
+    // Season-by-season college stat lines
+    if (p.seasonHistory && p.seasonHistory.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">College stats</div></div>' +
+        '<table><thead><tr><th>Year</th><th>Class</th>';
+      if (p.position === 'QB') html += '<th class="text-right">PASS YDS</th><th class="text-right">TD</th><th class="text-right">INT</th>';
+      else if (p.position === 'RB') html += '<th class="text-right">RUSH YDS</th><th class="text-right">RUSH TD</th><th class="text-right">REC YDS</th>';
+      else if (p.position === 'WR' || p.position === 'TE') html += '<th class="text-right">REC</th><th class="text-right">YDS</th><th class="text-right">TD</th>';
+      else if (p.position === 'EDGE' || p.position === 'DT' || p.position === 'LB') html += '<th class="text-right">TKL</th><th class="text-right">SCK</th><th class="text-right">INT</th>';
+      else if (p.position === 'CB' || p.position === 'S') html += '<th class="text-right">TKL</th><th class="text-right">INT</th><th class="text-right">PD</th>';
+      else if (p.position === 'K') html += '<th class="text-right">FGM/A</th><th class="text-right">XP</th><th></th>';
+      else if (p.position === 'P') html += '<th class="text-right">PUNTS</th><th class="text-right">YDS</th><th class="text-right">I20</th>';
+      html += '<th class="text-right">GRADE</th><th>Awards</th></tr></thead><tbody>';
+      p.seasonHistory.forEach(h => {
+        let c1='—', c2='—', c3='—';
+        if (p.position === 'QB') { c1 = (h.passingYards||0).toLocaleString(); c2 = h.passingTDs||0; c3 = h.interceptionsThrown||0; }
+        else if (p.position === 'RB') { c1 = (h.rushingYards||0).toLocaleString(); c2 = h.rushingTDs||0; c3 = (h.receivingYards||0).toLocaleString(); }
+        else if (p.position === 'WR' || p.position === 'TE') { c1 = h.receptions||0; c2 = (h.receivingYards||0).toLocaleString(); c3 = h.receivingTDs||0; }
+        else if (p.position === 'EDGE' || p.position === 'DT' || p.position === 'LB') { c1 = h.tackles||0; c2 = h.sacks||0; c3 = h.interceptionsMade||0; }
+        else if (p.position === 'CB' || p.position === 'S') { c1 = h.tackles||0; c2 = h.interceptionsMade||0; c3 = h.passDeflections||0; }
+        else if (p.position === 'K') { c1 = (h.fieldGoalsMade||0) + '/' + (h.fieldGoalsAttempted||0); c2 = h.extraPoints||0; c3 = ''; }
+        else if (p.position === 'P') { c1 = h.punts||0; c2 = (h.puntYards||0).toLocaleString(); c3 = h.puntsInside20||0; }
+        const awardsStr = h.awards && h.awards.length > 0 ? h.awards.join(', ') : '';
+        html += '<tr><td class="mono-num">' + h.year + '</td><td>' + h.classYear + '</td>' +
+          '<td class="text-right mono-num">' + c1 + '</td><td class="text-right mono-num">' + c2 + '</td><td class="text-right mono-num">' + c3 + '</td>' +
+          '<td class="text-right mono-num">' + h.prospectGrade.toFixed(1) + '</td>' +
+          '<td style="font-size:11px;color:var(--warning);font-weight:600">' + awardsStr + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  renderPlayerCareerNFL(p, stage) {
+    const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
+    const rc = this.ratingClass(p.rating);
+    const careerWins = p.careerStats && p.careerStats.seasonsPlayed > 0 ? p.careerStats.seasonsPlayed : 0;
+    
+    let html = '<div class="page-header">' +
+      '<div class="page-title">My career</div>' +
+      '<div class="page-subtitle">' + p.name + ' · ' + p.position + ' · ' + (stage === 'retired' ? 'Retired' + (p.hofInducted ? ' (HOF)' : '') : (team ? team.city + ' ' + team.name : 'Free Agent')) + '</div>' +
+      '</div>';
+    
+    // Hero
+    html += '<div class="my-team-hero">' +
+      '<div class="my-team-hero-left">' +
+      '<div class="player-face-large" style="width:88px;height:88px">' + pixelFaceSVG(p.faceSeed) + '</div>' +
+      '<div><div class="my-team-name">' + p.name + '</div>' +
+      '<div class="my-team-meta">#' + p.jerseyNumber + ' · ' + p.position + ' · Age ' + p.age + ' · ' +
+      (team ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</span>' : 'Free Agent') + '</div>' +
+      '<div style="margin-top:8px"><span class="rating ' + rc + '" style="font-size:14px;padding:4px 10px">OVR ' + p.rating + '</span></div></div></div>' +
+      '<div class="my-team-stats">' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Seasons</div><div class="my-team-stat-value">' + (p.yearsInLeague || 0) + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Awards</div><div class="my-team-stat-value">' + (p.awards ? p.awards.length : 0) + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Status</div><div class="my-team-stat-value" style="font-size:13px">' + (p.retired ? (p.hofInducted ? 'HOF' : 'Retired') : 'Active') + '</div></div>' +
+      '</div></div>';
+    
+    // Contract
+    if (p.contract && !p.retired) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Contract</div></div>' +
+        '<div style="padding:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:16px">' +
+        '<div><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">AAV</div><div style="font-size:18px;font-weight:600">' + formatMoney(p.contract.aav) + '</div></div>' +
+        '<div><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Years left</div><div style="font-size:18px;font-weight:600;font-family:var(--font-mono)">' + p.contract.yearsRemaining + ' / ' + p.contract.years + '</div></div>' +
+        '<div><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Total value</div><div style="font-size:18px;font-weight:600">' + formatMoney(p.contract.totalValue) + '</div></div>' +
+        '<div><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Signing bonus</div><div style="font-size:18px;font-weight:600">' + formatMoney(p.contract.signingBonus) + '</div></div>' +
+        '</div></div>';
+    }
+    
+    // Career stats summary
+    if (p.careerStats) {
+      const cs = p.careerStats;
+      const parts = [];
+      if (cs.passingYards > 0) parts.push(['Pass yds', cs.passingYards.toLocaleString()]);
+      if (cs.passingTDs > 0) parts.push(['Pass TDs', cs.passingTDs.toLocaleString()]);
+      if (cs.rushingYards > 0) parts.push(['Rush yds', cs.rushingYards.toLocaleString()]);
+      if (cs.rushingTDs > 0) parts.push(['Rush TDs', cs.rushingTDs.toLocaleString()]);
+      if (cs.receivingYards > 0) parts.push(['Rec yds', cs.receivingYards.toLocaleString()]);
+      if (cs.receivingTDs > 0) parts.push(['Rec TDs', cs.receivingTDs.toLocaleString()]);
+      if (cs.tackles > 0) parts.push(['Tackles', cs.tackles.toLocaleString()]);
+      if (cs.sacks > 0) parts.push(['Sacks', cs.sacks.toLocaleString()]);
+      if (cs.interceptionsMade > 0) parts.push(['INTs', cs.interceptionsMade.toLocaleString()]);
+      if (parts.length > 0) {
+        html += '<div class="card"><div class="card-header"><div class="card-title">Career stats</div></div>' +
+          '<div style="padding:16px;display:grid;grid-template-columns:repeat(' + Math.min(parts.length, 4) + ',1fr);gap:16px">';
+        parts.forEach(([label, val]) => {
+          html += '<div><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">' + label + '</div><div style="font-size:18px;font-weight:600">' + val + '</div></div>';
+        });
+        html += '</div></div>';
+      }
+    }
+    
+    // Season-by-season — reuse renderPlayerHistoryTable
+    if (p.seasonHistory && p.seasonHistory.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Season history</div></div>' +
+        this.renderPlayerHistoryTable(p) + '</div>';
+    }
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  renderStaff() {
+    const userTeamId = this.getUserTeamId();
+    if (userTeamId === null || userTeamId === undefined) {
+      this.currentView = 'standings'; this.render(); return;
+    }
+    const team = this.state.teams[userTeamId];
+    const isDynasty = !this.state.career || this.state.career.mode === 'dynasty';
+    const userCoach = this.getUserCoach();
     const used = this.teamCoachingSalary(team);
     const space = COACHING_CAP - used;
     const usedPct = (used / COACHING_CAP) * 100;
@@ -4831,16 +5891,18 @@ let game = {
           '<div class="coach-label">' + COACH_ROLE_NAMES[role] + '</div>' +
           '<div style="font-size:14px;color:var(--text-dim);margin:8px 0 4px;font-weight:600">— Vacant —</div>' +
           '<div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">No coach currently filling this role.</div>' +
-          '<button class="btn btn-sm btn-success" onclick="game.openHireCoachDialog(\'' + role + '\')">Fill Position</button></div>';
+          (isDynasty ? '<button class="btn btn-sm btn-success" onclick="game.openHireCoachDialog(\'' + role + '\')">Fill Position</button>' : '<div class="muted" style="font-size:11px;font-style:italic">Front office handles hiring.</div>') +
+          '</div>';
         return;
       }
+      const isUserCoach = userCoach && c.id === userCoach.id;
       const styleStr = c.role === 'HC'
         ? (c.playstyle.offense + ' offense · ' + c.playstyle.defense + ' defense')
         : (typeof c.playstyle === 'string' ? c.playstyle : '—');
-      html += '<div style="background:var(--surface);padding:16px">' +
+      html += '<div style="background:' + (isUserCoach ? 'var(--surface-2)' : 'var(--surface)') + ';padding:16px;' + (isUserCoach ? 'border-left:3px solid var(--accent)' : '') + '">' +
         '<div style="display:grid;grid-template-columns:64px 1fr;gap:12px;align-items:center;margin-bottom:12px;cursor:pointer" onclick="game.showCoachCard(\'' + c.id + '\')">' +
         '<div class="coach-face" style="width:64px;height:64px">' + pixelFaceSVG(c.faceSeed) + '</div>' +
-        '<div><div class="coach-label">' + COACH_ROLE_NAMES[role] + '</div>' +
+        '<div><div class="coach-label">' + COACH_ROLE_NAMES[role] + (isUserCoach ? ' <span style="background:var(--gold);color:var(--bg);font-size:9px;padding:1px 4px;margin-left:4px;letter-spacing:0.5px">YOU</span>' : '') + '</div>' +
         '<div class="coach-name" style="font-size:15px">' + c.name + '</div>' +
         '<div class="coach-meta">Age ' + c.age + ' · OVR <span class="rating ' + this.ratingClass(c.ovr) + '" style="font-size:11px;padding:1px 6px">' + c.ovr + '</span></div></div></div>' +
         '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px"><strong>Playstyle:</strong> ' + styleStr + '</div>' +
@@ -4848,28 +5910,33 @@ let game = {
         '<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px"><strong>Career:</strong> ' + ((c.seasonHistory || []).reduce((s,h) => s+(h.wins||0), 0) + c.wins) + '–' + ((c.seasonHistory || []).reduce((s,h) => s+(h.losses||0), 0) + c.losses) + (c.coachOfYears > 0 ? ' · ' + c.coachOfYears + 'x COY' : '') + '</div>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
         '<button class="btn btn-sm" onclick="game.showCoachCard(\'' + c.id + '\')">Details</button>' +
-        ((role === 'OC' || role === 'DC') ? '<button class="btn btn-sm btn-success" onclick="game.promoteCoach(\'' + c.id + '\')">Promote</button>' : '') +
-        '<button class="btn btn-sm btn-danger" onclick="game.fireCoach(\'' + c.id + '\')">Fire</button>' +
+        // GM-only actions: only shown in dynasty mode (user is the GM).
+        (isDynasty
+          ? (((role === 'OC' || role === 'DC') ? '<button class="btn btn-sm btn-success" onclick="game.promoteCoach(\'' + c.id + '\')">Promote</button>' : '') +
+             '<button class="btn btn-sm btn-danger" onclick="game.fireCoach(\'' + c.id + '\')">Fire</button>')
+          : '') +
         '</div></div>';
     });
     html += '</div></div>';
     
-    // FA coaches list
-    const faCoaches = this.getFreeAgentCoaches();
-    if (faCoaches.length > 0) {
-      html += '<div class="card"><div class="card-header"><div class="card-title">Available coaches</div><div class="card-meta">' + faCoaches.length + ' free agents</div></div>' +
-        '<table><thead><tr><th>Name</th><th class="text-center">Role</th><th class="text-center">OVR</th><th>Playstyle</th><th class="text-right">Asking</th><th></th></tr></thead><tbody>';
-      faCoaches.sort((a, b) => b.ovr - a.ovr).slice(0, 20).forEach(c => {
-        const styleStr = c.role === 'HC' ? (c.playstyle.offense + ' / ' + c.playstyle.defense) : (typeof c.playstyle === 'string' ? c.playstyle : '—');
-        const askingSalary = calculateCoachSalary(c.role, c.ovr);
-        html += '<tr><td onclick="game.showCoachCard(\'' + c.id + '\')" style="cursor:pointer"><strong>' + c.name + '</strong></td>' +
-          '<td class="text-center">' + COACH_ROLE_NAMES[c.role] + '</td>' +
-          '<td class="text-center"><span class="rating ' + this.ratingClass(c.ovr) + '">' + c.ovr + '</span></td>' +
-          '<td style="font-size:12px;color:var(--text-muted)">' + styleStr + '</td>' +
-          '<td class="text-right mono-num">' + formatMoney(askingSalary) + '</td>' +
-          '<td class="text-right"><button class="btn btn-sm btn-success" onclick="game.hireCoach(\'' + c.id + '\',\'' + c.role + '\')">Hire</button></td></tr>';
-      });
-      html += '</tbody></table></div>';
+    // FA coaches list (dynasty mode only — coach career users can't hire)
+    if (isDynasty) {
+      const faCoaches = this.getFreeAgentCoaches();
+      if (faCoaches.length > 0) {
+        html += '<div class="card"><div class="card-header"><div class="card-title">Available coaches</div><div class="card-meta">' + faCoaches.length + ' free agents</div></div>' +
+          '<table><thead><tr><th>Name</th><th class="text-center">Role</th><th class="text-center">OVR</th><th>Playstyle</th><th class="text-right">Asking</th><th></th></tr></thead><tbody>';
+        faCoaches.sort((a, b) => b.ovr - a.ovr).slice(0, 20).forEach(c => {
+          const styleStr = c.role === 'HC' ? (c.playstyle.offense + ' / ' + c.playstyle.defense) : (typeof c.playstyle === 'string' ? c.playstyle : '—');
+          const askingSalary = calculateCoachSalary(c.role, c.ovr);
+          html += '<tr><td onclick="game.showCoachCard(\'' + c.id + '\')" style="cursor:pointer"><strong>' + c.name + '</strong></td>' +
+            '<td class="text-center">' + COACH_ROLE_NAMES[c.role] + '</td>' +
+            '<td class="text-center"><span class="rating ' + this.ratingClass(c.ovr) + '">' + c.ovr + '</span></td>' +
+            '<td style="font-size:12px;color:var(--text-muted)">' + styleStr + '</td>' +
+            '<td class="text-right mono-num">' + formatMoney(askingSalary) + '</td>' +
+            '<td class="text-right"><button class="btn btn-sm btn-success" onclick="game.hireCoach(\'' + c.id + '\',\'' + c.role + '\')">Hire</button></td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
     }
     
     document.getElementById('content').innerHTML = html;
