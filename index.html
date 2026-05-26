@@ -1693,29 +1693,28 @@ let game = {
   },
 
   // STARTUP DRAFT VALUE — used only for the inaugural 53-round draft.
-  // Explicit 70/20/10 split: OVR/potential, positional value, years-until-cliff.
-  // OVR is the dominant factor; positional value and youth are tiebreakers.
+  // OVR-DOMINANT: 90% rating/potential, 10% age-and-positional combined as a small tiebreaker.
+  // This simulates redistributing an existing NFL league: best players go first regardless of position.
   startupDraftValue(player) {
-    // Component 1 (70%): OVR/potential blend, 0-100 scale.
-    // Rating dominates with a small unrealized-potential bump.
+    // Component 1 (90%): OVR/potential blend on a 0-100 scale.
+    // Rating heavily dominates; potential is a small upside bump.
     const pot = player.potential || player.rating;
-    const ovrComponent = player.rating * 0.85 + pot * 0.15;
+    const ovrComponent = player.rating * 0.88 + pot * 0.12;
     
-    // Component 2 (20%): positional value on a tighter 0-100 scale.
-    // POSITION_VALUE ranges 0.38 (P) to 1.55 (QB). Average position ≈ 1.0.
-    // We map by ratio-from-average so a "premium" position adds value without
-    // overwhelming OVR differences. Range: P→~30, average→~70, QB→100.
-    const posValue = POSITION_VALUE[player.position] || 1.0;
-    const posComponent = 50 + (posValue - 1.0) * 65; // 0.38→25, 1.0→50, 1.55→86, 1.55cap→100
-    
-    // Component 3 (10%): years until positional age cliff, 0-100 scale.
-    // Uses position+archetype+generational aging curve. Clamp 0-15 years → 0-100.
+    // Component 2 (10%): age + positional tiebreaker on a 0-100 scale.
+    // - 60% of this slice is years-until-decline (younger players preferred when OVR is equal)
+    // - 40% is positional value (premium positions break ties between equal OVR/age)
+    // Net effect: a 92 OVR QB barely edges a 92 OVR LB. A 95 OVR LB easily beats an 87 OVR QB.
     const aging = getEffectiveAging(player.position, player.archetype, player.peakOvr || player.rating);
     const yearsUntilCliff = Math.max(0, aging.declineStart - player.age);
-    const cliffComponent = Math.min(100, (yearsUntilCliff / 15) * 100);
+    const youthComponent = Math.min(100, (yearsUntilCliff / 12) * 100);
     
-    // Weighted sum
-    return ovrComponent * 0.70 + posComponent * 0.20 + cliffComponent * 0.10;
+    const posValue = POSITION_VALUE[player.position] || 1.0;
+    const posComponent = 50 + (posValue - 1.0) * 50; // 0.38→19, 1.0→50, 1.55→78
+    
+    const tiebreakerComponent = youthComponent * 0.6 + posComponent * 0.4;
+    
+    return ovrComponent * 0.90 + tiebreakerComponent * 0.10;
   },
 
   startDraft() {
@@ -1730,9 +1729,12 @@ let game = {
       posDistribution.push(POSITIONS_FOR_DRAFT[Math.floor(Math.random() * POSITIONS_FOR_DRAFT.length)]);
     }
     posDistribution.forEach(pos => {
-      const p = this.generatePlayer(pos, null, rookieAge());
-      p.yearsInLeague = 0;
-      p.draftYear = this.state.year;
+      // Startup draft simulates redistributing an existing NFL league.
+      // Players are pulled from the full age curve per position — not all rookies.
+      const age = realisticNFLAgeForPosition(pos);
+      const p = this.generatePlayer(pos, null, age);
+      p.yearsInLeague = Math.max(0, age - 22);
+      p.draftYear = this.state.year - p.yearsInLeague;
       this.state.draftPool.push(p);
       this.state.players.push(p);
     });
@@ -1757,17 +1759,23 @@ let game = {
     if (!team) return;
     const need = this.calculateTeamNeeds(team);
     const candidates = this.state.draftPool.slice(0, 25);
-    // Annual draft favors potential/youth; startup draft is 70/20/10 OVR-heavy
+    // Annual draft favors potential/youth; startup draft is OVR-dominant
     const valueFn = this.state.draftIsAnnual ? this.draftValue.bind(this) : this.startupDraftValue.bind(this);
-    // Need bonus magnitude differs because the two value scales differ:
-    //   draftValue ranges ~50-220 → need*4 is meaningful but not dominant
-    //   startupDraftValue ranges ~0-100 → need*1 keeps it as a tiebreaker, not a forcing function
-    const needBonusScale = this.state.draftIsAnnual ? 4 : 1;
-    const noiseScale = this.state.draftIsAnnual ? 3 : 1;
+    // Need bonus differs by draft mode:
+    //   Annual draft: need*4, no cap — teams strongly prioritize gaps
+    //   Startup draft: need*0.4, cap at +2 — small tilt, OVR dominates so best player available wins
+    const isAnnual = this.state.draftIsAnnual;
+    const noiseScale = isAnnual ? 3 : 1;
     let best = null;
     let bestScore = -Infinity;
     candidates.forEach(p => {
-      const needBonus = (need[p.position] || 0) * needBonusScale;
+      let needBonus;
+      if (isAnnual) {
+        needBonus = (need[p.position] || 0) * 4;
+      } else {
+        // Startup: small tiebreaker only. A team with no QB still gets a tiny boost, but it can't override a real OVR gap.
+        needBonus = Math.min(2, (need[p.position] || 0) * 0.4);
+      }
       const score = valueFn(p) + needBonus + Math.random() * noiseScale;
       if (score > bestScore) { bestScore = score; best = p; }
     });
@@ -1809,7 +1817,9 @@ let game = {
 
   applyPick(teamId, player) {
     player.team = teamId;
-    player.contract = generateContract(player.position, player.rating, player.age, this.state.year, true);
+    // Rookie-scale only if truly a rookie (yearsInLeague 0). Startup-draft vets get vet contracts.
+    const isRookieContract = player.yearsInLeague === 0;
+    player.contract = generateContract(player.position, player.rating, player.age, this.state.year, isRookieContract);
     this.state.teams[teamId].roster.push(player.id);
     const idx = this.state.draftPool.indexOf(player);
     if (idx !== -1) this.state.draftPool.splice(idx, 1);
@@ -2069,7 +2079,7 @@ let game = {
       ).join('') +
       '</div>' +
       '<div class="card"><div class="card-header">' +
-      '<div class="card-title">Available prospects · ranked by positional value + OVR + youth</div>' +
+      '<div class="card-title">Available prospects · ranked by OVR (with small age/positional tiebreaker)</div>' +
       '<div class="card-meta">' + this.state.draftPool.length + ' remaining</div></div>' +
       '<div class="draft-pick-row" style="background:var(--surface-2);font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">' +
       '<div>RK</div><div>POS</div><div>NAME</div><div>AGE</div><div>OVR</div></div>';
