@@ -449,10 +449,211 @@ select { font-family: inherit; }
 </div>
 <script>
 // CONSTANTS
-const FIRST_NAMES_70S = ['John','Mike','David','Robert','James','Larry','Steve','Tom','Bill','Jim','Bob','Joe','Dan','Frank','Gary','Roger','Terry','Don','Ray','Ken','Bruce','Wayne','Carl','Glenn','Earl','Stan','Vince','Lou','Hank','Walt','Howard','Norm','Buck','Lyle','Otis','Rocky','Doug','Cliff','Phil','Pete','Chuck','Curt','Ed','Jerry','Lance','Mel','Russ','Sid','Wally','Archie','Buddy','Calvin','Dave','Dick','Floyd','Fran','Greg','Ira','Jack','Leon','Marv','Nick','Ozzie','Randy','Ralph','Sam','Tony','Vern','Willis'];
-const FIRST_NAMES_90S = ['Brian','Eric','Chris','Matt','Ryan','Kevin','Jason','Brandon','Tyler','Sean','Drew','Jeff','Scott','Mark','Paul','Anthony','Justin','Adam','Nick','Aaron','Tony','Greg','Derek','Cameron','Cole','Dustin','Eddie','Garrett','Hunter','Ian','Jared','Kyle','Logan','Mason','Nathan','Owen','Preston','Quincy','Reggie','Shane','Trent','Wesley','Xavier','Zach','Antonio','Brett','Cedric','Damon','Emmett','Jeremiah','Lawrence','Maurice','Reginald','Terrance','Vernon'];
-const FIRST_NAMES_2020S = ['DeShawn','Javon','Christian','Kyler','Jalen','Tua','Patrick','Lamar','Trevor','Jaylen','Tariq','Jaxon','Khalil','Trey','Justin','Caleb','Bryce','Anthony','Marcus','Travis','Amari','Devonte','Marquise','Najee','Saquon','Tyreek','CeeDee','Aidan','Bijan','Brock','Calvin','Drake','Garrett','Isiah','Jameson','Keenan','Malik','Quinnen','Rashawn','Sauce','Tank','Will','Zaire','Donte','Kenny','Roquan','Tyler','Zay','Breece','Garrison'];
-const LAST_NAMES = ['Smith','Johnson','Williams','Brown','Miller','Davis','Wilson','Moore','Taylor','Anderson','Thomas','Jackson','White','Harris','Martin','Thompson','Garcia','Martinez','Robinson','Clark','Rodriguez','Lewis','Lee','Walker','Hall','Allen','Young','King','Wright','Scott','Green','Adams','Baker','Nelson','Carter','Mitchell','Roberts','Turner','Phillips','Campbell','Parker','Evans','Edwards','Collins','Stewart','Morris','Rogers','Reed','Cook','Bell','Murphy','Bailey','Cooper','Richardson','Cox','Howard','Ward','Peterson','Gray','James','Watson','Brooks','Kelly','Sanders','Price','Bennett','Wood','Barnes','Ross','Henderson','Coleman','Jenkins','Perry','Powell','Long','Patterson','Hughes','Foster','Bryant','Russell','Griffin','Hayes','Mason','Brock','Sullivan','Pierce','Hunter','Riley','Knight','Wells','Reeves','Webb','Ortega','Mendez','Fitzgerald','Owens','Reynolds','Fisher','Ellis','Harvey','Burns','Boone','Calloway','Drake','Easton','Fleming','Galloway','Holt','Ingram','Joyner','Krause','Landry','McCoy','Norwood','Pemberton','Rashad','Stallings','Tinsley','Underwood','Vasquez','Wadsworth','Yates','Abernathy','Beasley','Castillo','Faulkner','Gunderson','Hollister','Iverson','Jasper','Kingsley','Lockhart','Maddox','Nash','Oakley','Pacheco','Quintero','Rasmussen','Stamper','Tatum','Utley','Valentine','Whitlock','Zimmerman','Bouchard','Crenshaw','Diallo','Espinoza','Forsythe','Goodwin','Hartwell','Iglesias','Jeffries','Kowalski','Lansing','Mendoza','Okafor','Pendleton','Renteria','Solomon','Tremaine','Underhill','Vidal','Westmoreland'];
+// FIRST NAMES — three pools by era. The 2020s pool is heaviest (current/incoming rookies);
+// 90s pool covers veterans in their primes; 70s pool is the oldest vets and throwbacks.
+// The goal is several hundred unique names per era so no name feels overused.
+const FIRST_NAMES_70S = [
+  'John','Mike','David','Robert','James','Larry','Steve','Tom','Bill','Jim','Bob','Joe','Dan','Frank','Gary',
+  'Roger','Terry','Don','Ray','Ken','Bruce','Wayne','Carl','Glenn','Earl','Stan','Vince','Lou','Hank','Walt',
+  'Howard','Norm','Buck','Lyle','Otis','Rocky','Doug','Cliff','Phil','Pete','Chuck','Curt','Ed','Jerry','Lance',
+  'Mel','Russ','Sid','Wally','Archie','Buddy','Calvin','Dave','Dick','Floyd','Fran','Greg','Ira','Jack','Leon',
+  'Marv','Nick','Ozzie','Randy','Ralph','Sam','Tony','Vern','Willis','Alvin','Arnie','Bart','Ben','Bernie',
+  'Bo','Brad','Buster','Casey','Chad','Chip','Clyde','Conrad','Corey','Craig','Dale','Darrell','Dennis','Doc',
+  'Donny','Drew','Duane','Dusty','Ernie','Eugene','Fred','Gene','George','Gordon','Hal','Harvey','Henry','Herb',
+  'Hugh','Hugo','Ike','Irv','Jeff','Jesse','Jimmy','Johnny','Junior','Kent','Kirk','Lance','Leo','Lester',
+  'Lonnie','Manny','Max','Mickey','Milton','Monte','Murray','Nate','Neil','Ollie','Oscar','Paul','Percy','Reggie',
+  'Rex','Rich','Rick','Ronnie','Rudy','Sal','Saul','Scott','Seth','Sherman','Stu','Ted','Theo','Tim','Todd',
+  'Travis','Trent','Tyrone','Wade','Warren','Wendell','Wes','Wilbur','Woody','Zeke'
+];
+const FIRST_NAMES_90S = [
+  'Brian','Eric','Chris','Matt','Ryan','Kevin','Jason','Brandon','Tyler','Sean','Drew','Jeff','Scott','Mark','Paul',
+  'Anthony','Justin','Adam','Nick','Aaron','Tony','Greg','Derek','Cameron','Cole','Dustin','Eddie','Garrett','Hunter','Ian',
+  'Jared','Kyle','Logan','Mason','Nathan','Owen','Preston','Quincy','Reggie','Shane','Trent','Wesley','Xavier','Zach','Antonio',
+  'Brett','Cedric','Damon','Emmett','Jeremiah','Lawrence','Maurice','Reginald','Terrance','Vernon','Aaron','Alex','Andrew','Austin','Ben',
+  'Blake','Bradley','Brendan','Brock','Caleb','Carson','Chase','Clay','Connor','Corey','Curtis','Damien','Daniel','Darius','Demarcus',
+  'Devin','Devon','Dominic','Donovan','Dustin','Dwayne','Edgar','Ethan','Evan','Ezekiel','Frankie','Gabriel','Gavin','Grant','Hakeem',
+  'Harrison','Holden','Isaac','Isaiah','Jackson','Jacob','Jaden','Jamal','Jameel','Jamison','Jarrett','Jayson','Joaquin','Jonah','Jordan',
+  'Joshua','Julian','Karim','Keenan','Keith','Kendrick','Kenneth','Kerry','Korey','Kurt','Landon','Levi','Liam','Lincoln','Luke',
+  'Malcolm','Manuel','Marlon','Martin','Maximilian','Micah','Miguel','Mitchell','Morgan','Myles','Nelson','Nigel','Noah','Omar','Parker',
+  'Patrick','Pedro','Quinn','Rafael','Raheem','Raymond','Reuben','Ricardo','Riley','Roderick','Romeo','Ross','Russell','Sebastian','Sergio',
+  'Simon','Solomon','Spencer','Stephen','Sterling','Tariq','Tavon','Theo','Thomas','Tim','Timothy','Toby','Tracy','Trevon','Trey',
+  'Trevor','Troy','Tucker','Vance','Vincent','Vladimir','Walter','Warren','Weston','Wyatt','Yusuf'
+];
+const FIRST_NAMES_2020S = [
+  'DeShawn','Javon','Christian','Kyler','Jalen','Tua','Patrick','Lamar','Trevor','Jaylen','Tariq','Jaxon','Khalil','Trey','Justin',
+  'Caleb','Bryce','Anthony','Marcus','Travis','Amari','Devonte','Marquise','Najee','Saquon','Tyreek','CeeDee','Aidan','Bijan','Brock',
+  'Calvin','Drake','Garrett','Isiah','Jameson','Keenan','Malik','Quinnen','Rashawn','Sauce','Tank','Will','Zaire','Donte','Kenny',
+  'Roquan','Tyler','Zay','Breece','Garrison','Aaron','Adonai','Ahkello','Ameer','Amon-Ra','Anfernee','Antonio','Arden','Asante','Avonte',
+  'Bennett','Bo','Braxton','Brenton','Brevin','Cade','Cam','Carmello','CJ','Coby','Cooper','Daevon','Daiyan','Daxton','Demarcus',
+  'Demarius','Denzel','Deon','Dequan','Derrius','Devean','Devontae','Dezmon','DJ','Donovan','Dorian','Drez','Dylan','Earnest','Elijah',
+  'Emari','Emory','Equanimeous','Eric','Ezekiel','Foster','Frank','Gabriel','Gerald','Gus','Hassan','Henry','Hollywood','Iman','Isaiah',
+  'JaCorey','Jadeveon','Jahleel','Jaire','JaJuan','Jakeem','Jakobi','Jalen','Jamarius','Jameson','Jamir','Janoris','Jaquan','JaQuan','JaMarcus',
+  'Jaron','Javonte','Jayden','Jayson','JC','Jeremiah','Jerome','Jevon','JK','Jonathan','Jonnu','Juju','Julio','Kadarius','Kareem',
+  'Kassim','Keandre','Kearis','Kelvin','Kenyan','Kenyatta','Keon','Keondre','Khari','Khyiris','Kingsley','Kinnan','KJ','Korey','Kwity',
+  'Kyren','LaDarius','Ladd','Laviska','Lazarus','Leighton','Leonard','Levonta','Lonnie','Marcedes','Marqise','Marvin','Matavius','Maxx','Mecole',
+  'Michael','Miles','Milton','Mingo','MyCole','Myron','NaShon','Nakobe','Nasir','Nehemiah','Nile','Noah','Nykeim','Nyheim','Obi',
+  'Odafe','Odell','Odell','Oren','Orlando','Pacman','Parris','Penei','Phidarian','Pita','Pooka','Preston','Princely','Quandre','Quay',
+  'Quenton','Quincy','Quinnen','Quinton','Quinyon','Quinshon','Racey','Rakeem','Rashad','Rashawn','Rashid','Rasul','Rayshard','Rashod','Rico',
+  'Robbie','Rodney','Ronnie','Roshon','Roy','Russ','Sage','Salvon','Sammy','Sauce','Saquon','Savion','Shaquill','Shaquem','Sheldrick',
+  'Shilo','Sincere','Skyy','Stetson','Stevie','Sutton','Tahj','TaQuon','Tarheeb','Tashaun','TayDamon','Tayven','Tee','Tedarrell','Teddy',
+  'Tereshawn','Terrace','Terron','Thaddeus','Theo','Tijon','Tipa','Tory','Trace','Treylon','Treyveon','Trezmen','Tristen','TreyShaun','TyJae',
+  'Tyjae','Tyquan','Tyrann','Tyrod','Tyrone','Tytus','Velus','Vita','Wan\'Dale','Waddle','Watt','Wendell','Xavien','XaVier','Xzavier',
+  'Yahsyn','YaYa','Yetur','Yo','Zach','Zaay','Zaire','Zamir','Zavier','Zay','Zayne','Zay\'Quan','Zedrick','Zeke','Ziggy'
+];
+const LAST_NAMES = [
+  // Common American surnames — these read like real NFL rosters
+  'Smith','Johnson','Williams','Brown','Miller','Davis','Wilson','Moore','Taylor','Anderson','Thomas','Jackson','White','Harris','Martin',
+  'Thompson','Garcia','Martinez','Robinson','Clark','Rodriguez','Lewis','Lee','Walker','Hall','Allen','Young','King','Wright','Scott',
+  'Green','Adams','Baker','Nelson','Carter','Mitchell','Roberts','Turner','Phillips','Campbell','Parker','Evans','Edwards','Collins','Stewart',
+  'Morris','Rogers','Reed','Cook','Bell','Murphy','Bailey','Cooper','Richardson','Cox','Howard','Ward','Peterson','Gray','James',
+  'Watson','Brooks','Kelly','Sanders','Price','Bennett','Wood','Barnes','Ross','Henderson','Coleman','Jenkins','Perry','Powell','Long',
+  'Patterson','Hughes','Foster','Bryant','Russell','Griffin','Hayes','Mason','Brock','Sullivan','Pierce','Hunter','Riley','Knight','Wells',
+  'Reeves','Webb','Ortega','Mendez','Fitzgerald','Owens','Reynolds','Fisher','Ellis','Harvey','Burns','Boone','Calloway','Drake','Easton',
+  'Fleming','Galloway','Holt','Ingram','Joyner','Krause','Landry','McCoy','Norwood','Pemberton','Rashad','Stallings','Tinsley','Underwood','Vasquez',
+  'Wadsworth','Yates','Abernathy','Beasley','Castillo','Faulkner','Gunderson','Hollister','Iverson','Jasper','Kingsley','Lockhart','Maddox','Nash','Oakley',
+  'Pacheco','Quintero','Rasmussen','Stamper','Tatum','Utley','Valentine','Whitlock','Zimmerman','Bouchard','Crenshaw','Diallo','Espinoza','Forsythe','Goodwin',
+  'Hartwell','Iglesias','Jeffries','Kowalski','Lansing','Mendoza','Okafor','Pendleton','Renteria','Solomon','Tremaine','Underhill','Vidal','Westmoreland',
+  // Additional common surnames found on real NFL rosters — expanding diversity
+  'Aaron','Abdullah','Abram','Acker','Adams','Addai','Aikens','Akers','Alexander','Alford','Alleman','Allison','Alualu','Amos','Anderson',
+  'Anflick','Anzalone','Apple','Appleton','Archer','Armstrong','Arnett','Arnold','Arrington','Aupiu','Austin','Avery','Ayodele','Bachie','Backus',
+  'Badet','Badmus','Bagley','Bailey','Baker','Baldinger','Baldwin','Banks','Banta-Cain','Barber','Barksdale','Barlow','Barnett','Barr','Barrett',
+  'Barton','Bates','Battle','Bayless','Bean','Beason','Beasley','Beathard','Beck','Becton','Belcher','Bellinger','Bender','Benkert','Bentley',
+  'Berry','Bethea','Bettis','Beuerlein','Beverly','Bickford','Biegel','Bing','Birdsong','Bisaccia','Bishop','Black','Blackmon','Blackshear','Blair',
+  'Blake','Blanton','Blevins','Block','Blough','Blue','Bly','Bobo','Bohanon','Boldin','Bond','Bonner','Bontrager','Bopelu','Bortles',
+  'Bostic','Bouye','Bowden','Bowe','Bowles','Boykin','Boyle','Brackett','Brackins','Bradberry','Bradford','Bradley','Bradshaw','Brady','Branch',
+  'Brate','Bredeson','Breeland','Breida','Brendel','Brewer','Bridges','Briggs','Bringuel','Brinson','Brinton','Briscoe','Britton','Brockers','Brohm',
+  'Brohm','Bronston','Brooke','Brookshire','Broughton','Browning','Brunell','Bryan','Bryant','Buckner','Buford','Buffomante','Buggs','Bullard','Bullock',
+  'Burch','Burford','Burgess','Burke','Burleson','Burnett','Burns','Burroughs','Burrow','Burton','Bush','Bushrod','Busquets','Butler','Byard',
+  'Cabinda','Cain','Calhoun','Calitro','Callahan','Callaway','Calloway','Camara','Campanile','Campbell','Cannon','Cantrell','Carder','Cardona','Carpenter',
+  'Carradine','Carriker','Carson','Casey','Caserio','Cash','Cassel','Castro','Cavness','Centers','Champ','Chancey','Chandler','Chark','Charlton',
+  'Cheever','Chesson','Childs','Chinn','Chism','Chrebet','Christensen','Christian','Chubb','Chukwuma','Chung','Cisco','Clay','Clayton','Cleary',
+  'Clement','Clements','Cline','Cloud','Clowney','Clymer','Cobb','Cofield','Cohen','Colbert','Coley','Colquitt','Colvin','Combs','Compton',
+  'Conklin','Conley','Connor','Cook','Cooks','Corbett','Cornelius','Cornish','Costanzo','Cosell','Cothran','Cotton','Couch','Coutee','Covington',
+  'Cowart','Cowing','Cox','Crabtree','Craig','Crawford','Crawley','Creager','Cribbs','Crockett','Cromartie','Crosby','Crowder','Crowell','Cruise',
+  'Crump','Cushenberry','Cushing','Cutler','Daly','Damore\'ea','Daniels','Darby','Darden','Davenport','Davis','Dawes','Dawkins','Dawson','Dayes',
+  'Decker','DeCosta','Deguara','Delaney','Delpit','Delvecchio','Demovsky','Dempsey','Denmark','Dennard','Dennis','Diggs','DiGiacomo','Dillon','Dimukeje',
+  'Dixon','Dobbins','Dockery','Dodson','Dontrell','Dorsett','Dortch','Douglas','Dowdle','Doyle','Drago','Driskel','Druzbik','Duarte','Dubose',
+  'Duncan','Dungy','Dunlap','Dunn','Dye','Dyson','Eberflus','Eberle','Edmonds','Edmunds','Edoga','Edomwonyi','Edwards','Eifert','Eklund',
+  'Elam','Elder','Eldridge','Elflein','Eligwe','Elite','Elliott','Ellis','Ellison','Eluemunor','Emanuel','Emily','Engram','Ennis','Enunwa',
+  'Erickson','Ervin','Esiason','Estime','Etienne','Etling','Evans','Everett','Evero','Eyebag','Eyer','Ezukanma','Fabbiano','Fackrell','Fagan',
+  'Fairbairn','Falk','Fant','Fargas','Farley','Farmer','Faulk','Fearnow','Feeney','Felton','Ferentz','Ferguson','Fernandes','Ferrell','Fields',
+  'Finau','Findler','Findley','Fiore','Fitzpatrick','Flacco','Fleury','Flowers','Floyd','Flynn','Foles','Foley','Folorunso','Foreman','Forrest',
+  'Fort','Forte','Fortenberry','Fournette','Fowler','Frame','Francis','Franklin','Franks','Frazier','Free','Freeland','Freeman','Frelund','French',
+  'Frerotte','Freudig','Friedman','Frost','Fryar','Fuentes','Fuller','Fulton','Funchess','Furrey','Futrell','Gabriel','Gachkar','Gadsden','Gaffney',
+  'Gagliano','Gainer','Gainwell','Gaither','Gallman','Gandy-Golden','Gantt','Gardeck','Gardner','Garnett','Garoppolo','Garrett','Garrison','Garron','Garza',
+  'Gase','Gaskin','Gates','Gause','Gay','Gehrig','Gentry','George','Geronimo','Gesicki','Gettleman','Gibson','Gilbert','Gilmore','Gilyard',
+  'Gingerich','Gipson','Girard','Glanton','Glasgow','Glenn','Glover','Glowinski','Godfrey','Godwin','Goedert','Goff','Golladay','Goodwin','Gore',
+  'Goren','Gorham','Gostkowski','Gould','Graham','Granson','Grant','Graves','Greenard','Green-Beckham','Greenlaw','Gregg','Gregory','Grier','Griffin',
+  'Grigson','Grim','Grimaldi','Grimes','Gronkowski','Groves','Grubbs','Guice','Gunter','Gurley','Guyton','Hackenberg','Hackett','Hageman','Haggart',
+  'Hagy','Haines','Hairston','Hall','Hallisey','Hamler','Hamlin','Hamm','Hammer','Hampton','Handsome','Hankerson','Hankins','Hannah','Hanson',
+  'Harden','Hardman','Hardrick','Hardy','Hargrave','Hargreaves','Harlan','Harman','Harmon','Harris','Hart','Hartis','Hartline','Hartwig','Harvin',
+  'Hasselbeck','Hauschka','Hawkins','Haynes','Hayward','Headland','Heard','Heath','Hebert','Helfer','Helm','Hemingway','Henderson','Heneghan','Henne',
+  'Henry','Hentschel','Herbert','Herndon','Hester','Heuerman','Hewlett','Heyward','Hickey','Hicks','Higbee','Higgins','Hightower','Hill','Hilliard',
+  'Hilton','Hines','Hinton','Hirst','Hjalte','Hockenson','Hodgkins','Hogan','Hoge','Holcomb','Holder','Holland','Hollister','Hollywood','Holmes',
+  'Holt','Honey','Hooker','Hooper','Hopkins','Horn','Horton','Houston','Howe','Howell','Howison','Hoyer','Huber','Huddleston','Hudson',
+  'Huff','Huffman','Hufnagel','Humphrey','Humphries','Hundley','Hunt','Hurney','Hurns','Hurst','Hurts','Husted','Hutchings','Hutchinson','Hutson',
+  'Hyde','Idziak','Ifedi','Igwebuike','Iguodala','Ihedigbo','Imatorbhebhe','Incognito','Ingold','Ingram','Iorfa','Ireland','Irvin','Irving','Isaacs',
+  'Iupati','Ivory','Iworah','Jack','Jacobs','Jacoby','Jacquet','Jacquinot','James-Wallace','Jansen','Jeanty','Jefferson','Jeffery','Jeffries','Jenkins',
+  'Jenkins-Joiner','Jenner','Jeudy','Jewell','Johnson-Bademosi','Johnston','Jolly','Jonas','Jones-Drew','Jordan','Joseph','Judge','Judon','Juszczyk','Kadlec',
+  'Kalil','Kamara','Kareem','Karras','Kaufusi','Kearney','Kearse','Keenum','Keillor','Kelce','Kellen','Kelvin','Kemoeatu','Kendricks','Kennum',
+  'Kenny','Kessler','Khan','Kicklighter','Kiffin','Killebrew','Killens','Kim','King','Kinlaw','Kinnard','Kirko','Kirksey','Kirkwood','Kiser',
+  'Kitchens','Kittle','Klingelhoffer','Klemm','Klingsporn','Klob','Kluwe','Knapp','Knighton','Knox','Knutson','Kohler','Kolton','Konya','Koonce',
+  'Kouandjio','Kramer','Krenzel','Kromer','Krug','Kruger','Kupp','LaCanfora','LaCosse','Lacy','Ladler','Laduca','LaFell','LaFleur','Laing',
+  'Lake','Lamar','Lamothe','Lamp','Landers','Lane','Lang','Langford','Langi','Langsdorf','Lapham','LaPorta','LaSalle','Lassiter','Lastrange',
+  'Latham','Lattimore','Laurinaitis','Lavender','Lawrence','Lawson','Lazor','Leatherwood','LeBeau','Lecount','Lecure','Lee-Whitt','Leftwich','Lehigh','Leinart',
+  'Leister','LeMar','LeMere','Lemming','Lenoir','Lentini','Lepri','Lett','Letterman','Levenson','Levine','Levings','LeVoir','Lichtenfels','Lien',
+  'Likens','Liles','Lillis','Limegrover','Lindenberg','Lindley','Lindsay','Lipisko','Liriano','Little','Lloyd','Lockett','Lockwood','Logan','Lombardi',
+  'Long-Smith','Longstaff','Loomis','Lorimar','Lothery','Loudermilk','Love','Lovett','Lowe','Loyd','Luckmuller','Luckwaldt','Luczak','Luder','Luke',
+  'Lutsey','Lutz','Lyles','Lynch','Lynn','Lytle','Maccagnan','MacDonald','Mack','Macklin','Maddock','Madsen','Maglio','Mahomes','Mailata',
+  'Maitland-Niles','Majors','Maluia','Mancl','Mangold','Manuel','Mara','Marche','Mariota','Marker','Marrone','Marsh','Marvel','Mathias','Mathieu',
+  'Mathis','Matthias','Mauck','Maualuga','May','Maye','Mayfield','Mayowa','Maziar','McAllister','McAuley','McAvoy','McBride','McCabe','McCaffrey',
+  'McCain','McCardell','McCarron','McCarthy','McCartney','McCarville','McCaskill','McCloughan','McConkey','McCoughtry','McCourty','McCrane','McCrary','McCray','McCrea',
+  'McCutcheon','McDaniel','McDermott','McDevitt','McDougald','McDougle','McDowell','McElroy','McEntee','McEvoy','McFadden','McFarland','McGahee','McGee','McGill',
+  'McGinest','McGloin','McGlone','McGovern','McGowan','McIntosh','McIntyre','McIvor','McJenkin','McKay','McKelvin','McKenna','McKenzie','McKinley','McKinnon',
+  'McKissic','McKnight','McLaughlin','McLemore','McMahon','McManigal','McManus','McMichael','McNair','McNally','McNeill','McNown','McPhearson','McShane','McTyer',
+  'Meacham','Mead','Meadors','Means','Meeks','Melifonwu','Melton','Meneses','Mensah','Mercer','Mercilus','Meridith','Meriweather','Merlock','Merritt',
+  'Mertz','Messer','Messick','Metcalf','Metellus','Mettenberger','Meyers','Miano','Mickens','Middleton','Mihajlovic','Milano','Miley','Miller-Smith','Milligan',
+  'Millsap','Milroe','Mims','Mince','Mindlin','Minicozzi','Mingo','Minkah','Minkler','Misch','Misek','Mixon','Moala','Moats','Moeaki',
+  'Mohamoud','Mokofisi','Molden','Molhem','Mondeaux','Mondeaux','Monk','Mookie','Moon','Mooney','Moorehead','Morant','Mosert','Mosley','Mossis',
+  'Mostert','Mostowicz','Moten','Mucci','Mueller','Mullens','Mumphery','Mumphrey','Mundy','Munger','Munoz','Murchison','Murphy-Bunting','Murray','Musgrave',
+  'Muthuri','Myers','Myers-Smith','Nabers','Nacua','Nakamura','Najjar','Namaka','Napier','Nassib','Naughton','Naumoff','Naverette','Neabors','Neal',
+  'Neary','Necessary','Necheles','Nelms','Newcomb','Newhouse','Newman','Newsome','Newton','Ngakoue','Ngata','Ngwetuni','Nicholson','Nicole','Niemann',
+  'Niemczyk','Niles','Nishtala','Nitschke','Nixon','Noah','Nolen','Norman','Northcutt','Northern','Norton','Norton-Cuffy','Norvell','Novacek','Novak',
+  'Nsekhe','Nyemchek','O\'Brien','O\'Connell','O\'Donnell','O\'Hara','O\'Leary','O\'Neill','Oakman','Obi','Ochocinco','Oczypok','Odenigbo','Odom','Odoms',
+  'Odrick','Ogbah','Ogletree','Ogundeji','Ogunjobi','Ohrnberger','Ojulari','Okereke','Okiro','Okonkwo','Oliver-Phillips','Olsen','Olszewski','Omenihu','Omoregie',
+  'Onifade','Onuoha','Onwuasor','Orpik','Orta','Osemele','Osi','Osweiler','Otieno','Otomewo','Otton','Ouzts','Ovrebo','Oyenuga','Pace',
+  'Packerland','Padgett','Pagano','Paige','Palardy','Palmer','Pamphile','Panciotti','Pappoe','Pardue','Parham','Paris','Parise','Parnoff','Parry',
+  'Pascal','Paschal','Pasquale','Pate','Pati','Patmon','Patterson-Hill','Pavelich','Payne','Payton','Peake','Peart','Pees','Peko','Pelini',
+  'Pellegrino','Penny','Peppers','Perkins','Perreault','Perriman','Perryman','Petersen','Petitti','Pettigrew','Pettine','Pettis','Pharaoh','Phelps','Philon',
+  'Pickens','Pickerington','Pickett','Pierre-Louis','Pierre-Paul','Pioli','Piontek','Piscitelli','Pitts','Pittsburgh','Pleasant','Plowman','Plummer','Pocic','Polamalu',
+  'Pollack','Pollard','Polumbus','Polynice','Popovich','Porter','Portis','Posey','Pouncey','Powell-Pepper','Pownall','Pradel','Prescott','Presnell','Preston',
+  'Price-Brent','Prince','Pringle','Prioleau','Prowse','Puerifoy','Pugh','Punkin','Pupello','Quessenberry','Quigley','Quincy','Quinn','Rabb','Raconteur',
+  'Ragland','Rahim','Rainer','Rainsberger','Rams','Ramsey','Randall','Randle','Rapoport','Ratliff','Raye','Raymond','Raymondo','Rea','Rector',
+  'Redding','Redmond','Reece','Reek','Reider','Reiff','Reisner','Renck','Resor','Revis','Reyes-Doyle','Rhett','Rhetorical','Rhoads','Rhule',
+  'Rice','Richard','Richey','Ricketts','Riddick','Ridley','Rieff','Riley','Rines','Ringo','Risch','Riveron','Rivers','Roach','Robbins',
+  'Robert','Robey-Coleman','Robinson-Anderson','Roby','Rocker','Roden','Rodericks','Rodgers','Rodriguez-Anderson','Roehrich','Roesler','Roggeman','Romano','Romeo','Roof',
+  'Roosevelt','Roque','Rorhbach','Rosado','Rosas','Rose','Rosenberger','Rosenhaus','Rosenthal','Roser','Ross-Spang','Rouse','Rousseau','Rowe','Rowland',
+  'Rozier','Rubin','Rucker','Rudolph','Ruff','Ruffin','Rumph','Russakov','Russini','Rust','Rutgers','Rutland','Ryan','Saalim','Saban',
+  'Saffold','Sain','Salah','Salaminda','Salata','Saldanha','Sallows','Salt','Sambrailo','Sammis','Sams','Samuel','Sanchez','Sandidge','Sandifer',
+  'Sanguinetti','Sankey','Sann','Santana','Sapp','Sarkisian','Sarrazin','Satele','Saturday','Saubert','Sauter','Saxon','Scandrick','Schaefer','Schefter',
+  'Scheidt','Schein','Schluterman','Schmedding','Schmid','Schmitt','Schmitz','Schobel','Schofield','Schraeder','Schwartz','Scifres','Scoggins','Sealey','Seau',
+  'Sebastian','Seer','Seibold','Sellers','Semper','Serdarevic','Setser','Sewell','Seymour','Shaffer','Shanahan','Shanle','Shansky','Sharpe','Shauntel',
+  'Shazier','Sheahin','Sheard','Shelby','Shelton','Shepard','Shepherd','Sheppard','Sherels','Sheridan','Sherman-Knight','Sherrick','Shier','Shorts','Shotwell',
+  'Shower','Shurmur','Siemian','Silatolu','Silvers','Silvestro','Simmons','Simon','Sims','Singh','Singleton','Sirianni','Sites','Sitton','Skiver',
+  'Skowronek','Skrein','Skura','Slaten','Slay','Sligh','Smart','Smith-Schuster','Smithson','Smolka','Snead','Snyder','Soliai','Solomon','Soltis',
+  'Sommerville','Soto','Spadola','Spann','Spanos','Sparano','Sparks','Spavital','Spence','Spencer','Spielman','Spielmann','Spillane','Spillman','Spinrad',
+  'Squires','Stafford','Staley','Stamos','Stanley','Stanton','Staples','Stark','Starks','Staton','Stave','Steele','Steen','Steigauf','Steinbach',
+  'Steinkuhler','Stenavich','Stenglein','Stenum','Stepfan','Sterbinsky','Stergel','Sterk','Stern','Stetson','Stevenson','Steward','Stickler','Stidham','Stiklickas',
+  'Still','Stills','Stinkler','Stinnett','Stocker','Stoddard','Stoehr','Stokes','Stolzfus','Stone','Stork','Storz','Stoutland','Stover','Stowers',
+  'Strachan','Stratton','Streater','Strickland','Strieff','Stringer','Stripling','Strittmatter','Stroman','Stroup','Stroupe','Strzelczyk','Stryker','Stuckey','Stueber',
+  'Stupar','Stutts','Suh','Sukol','Suliman','Sumey','Summers','Sunnerville','Sutton','Swaim','Swann','Swearinger','Sweezy','Swisher','Swordsoul',
+  'Swoopes','Sylvester','Syracuse','Szczypek','Szott','Taamu','Tafralis','Tagovailoa','Talanoa','Talib','Talley','Tamba','Tamme','Tanart','Tanker',
+  'Tanner','Tannerhill','Tarczynski','Tashie','Tate','Tatupu','Tauiliili','Tavai','Tay','Taylor-Bynum','Teddy','Tedford','Tee','Teevens','Telesco',
+  'Telez','Telles','Tellinghuisen','Tenpenny','Tepper','Terrell','Terry','Tesoreiro','Tetting','Tezino','Thielen','Thiery','Thimm','Thomas-Pratt','Thomeer',
+  'Thompkins','Thornberry','Thornhill','Thornton','Thuney','Tibbs','Tice','Tickel','Tidwell','Tighe','Tilemma','Tillery','Tillman','Tirico','Tisch',
+  'Tiumalu','Toilolo','Toler','Tomar','Tomlinson','Toney','Toole','Toomer','Topia','Toppin','Tornquist','Toth','Touohy','Townsend','Tozer',
+  'Tracy','Trahan','Travisor','Treadwell','Tretter','Trezza','Triplett','Trotter','Trubisky','Trudeau','Trufant','Trump','Trunzo','Truss','Tryba',
+  'Tu\'ikolovatu','Tubbs','Tuchman','Tucker','Tuilagi','Tunsil','Turay','Turek','Turpin','Tuszka','Twohig','Twyman','Tyree','Tyrone','Tyus',
+  'Tyzcek','Ugbah','Uhlir','Ullman','Umenyiora','Umholtz','Underwood-Smith','Upchurch','Upshaw','Usry','Utech','Vaccaro','Vaitai','Valdes-Scantling','Valeika',
+  'Valoaga','Van Demark','Van Ginkel','Van Hooser','Van Noy','Van Pelt','Van Roten','Vanderdoes','Vanderlinden','Vannett','Varga','Varney','Vaughan','Vaughn','Vea',
+  'Vedral','Vela','Velazquez','Vellano','Verdon','Verhaeghe','Vermeil','Vernon','Verrett','Versen','Vest','Victor','Vigil','Viliamu','Villanueva',
+  'Vinatieri','Vincente','Vinovich','Visnaw','Vrabel','Vreeland','Vrentas','Vukcic','Vukoder','Wadgymar','Wadkins','Wadle','Waggoner','Wagner','Waiters',
+  'Walden','Waldenmyer','Waldron','Waldroup','Walford','Walker-Davis','Wallace','Walsh','Walthour','Waltz','Wantz','Ward-Burnett','Wardlaw','Ware','Warfield',
+  'Warford','Warner','Warren','Warrick','Washington-Adams','Watkins','Watney','Watson','Watt','Wattman','Watts','Weatherford','Weatherspoon','Weaver','Webb',
+  'Wedderburn','Weddington','Weddle','Weeden','Weems','Weiglein','Weingartner','Weinke','Weishuhn','Welborn','Welch','Welker','Wells-Sullivan','Wenstrom','Wenz',
+  'Wermers','Wernowsky','Wesseling','West','Westbrook','Westhoff','Wexell','Whaley','Wheaton','Wheeler','Whisenhunt','Whitaker','Whittaker','Whitcomb','Whited',
+  'Whitehead','Whitehurst','Whitener','Whitehurst','Whitfield','Whitlow','Whitney','Whittaker','Whittenburg','Whittingham','Whittlestone','Wickline','Widell','Wiegmann','Wieneke',
+  'Wienen','Wiggins','Wilcox','Wilder','Wilkening','Wilkerson','Wilkinson','Willard','Willhite','Willingham','Willis','Wilridge','Wilshere','Wimbley','Winders',
+  'Winegar','Winfield','Winn','Winston','Winters','Wisdom','Wisenhunt','Wisniewski','Witherspoon','Witten','Witten-Sapp','Wojcik','Woldu','Wolf','Wolfe',
+  'Womble','Wonsley','Woodall','Woodard','Woodhouse','Woodhead','Woods','Woods-Anderson','Woodson','Woodyard','Worilds','Worthy','Wozniak','Wright-Bradshaw','Wrotto',
+  'Wuerffel','Wujcik','Wulffsplitz','Wuthrich','Wyatt','Wylie','Wynn','Wynne','Wyrick','Wysocki','Yahudah','Yancey','Yankey','Yannik','Yarbrough',
+  'Yates-Holmes','Yauney','Yeager','Yeboah','Yebra','Yeldon','Yiadom','Yoder','Yorko','Younce','Young-Brown','Younghoe','Youngstown','Yowarski','Yuvaraj',
+  'Zaccheaus','Zackery','Zaleski','Zampino','Zappe','Zappolo','Zaratzian','Zardes','Zeitler','Zeleznik','Zembower','Zenner','Zettel','Zhubeshvili','Zibell',
+  'Zickrick','Ziegler','Zierlein','Ziettlow','Zimmerman-Brown','Zinter','Zipperer','Zirkle','Zobel','Zollman','Zorn','Zorzi','Zubaydah','Zuck','Zuerlein',
+  'Zumwalt','Zuttah','Zwerneman','Zylstra'
+];
+
+// CRAZY NAMES — for the easter egg. About 1 in every 250 generated players (roughly 1 every
+// 8 league-years given typical pool sizes) gets an absolutely unhinged name. They're not
+// guaranteed to be good or bad — pure chance.
+const CRAZY_FIRST_NAMES = [
+  'De\'Shegroni','Xzaviorius','Quasimodo','Equanimeous','Throneberry','Maximus','Zephyrus','Tytanius','Magnesium','Avocado',
+  'Sirroquan','Anaxagoras','Bartholomew','Cornelius','Demosthenes','Eustacius','Filibuster','Gargamel','Hippolytus','Imhotep',
+  'Jubilation','Killimanjaro','Lazarus','Mercutio','Nostradamus','Onomatopoeia','Phineas','Quintilius','Rapunzel','Spartacus',
+  'Theophrastus','Ulysses','Valerian','Wolfgang','Xerxes','Yggdrasil','Zarathustra','Cosmic','Galactic','Stellar',
+  'Trillium','Aquaman','Bartholo','Captainamerica','Dynamic','Excelsior','Fantastico','Gargantua','Herculean','Indomitable',
+  'Mercurial','Phantasmagoric','Quintessential','Mxyzptlk','Bjornsson','Razzmatazz','Pumpernickel','Pegasus','Belshazzar','Vladimirovich'
+];
+const CRAZY_LAST_NAMES = [
+  'Nonsequiter','Pumpernickelstein','Throckmorton-Beauregard','Featherbottom-Fitzwilliam','Quattlebaum','McSchmidlap','Worthington-Wadsworth','Picklesworth',
+  'Buttersnatch','Zhubeshvili-Throckmorton','Featherstonehaugh','Cholmondeley','Mxyzptlkovich','Featherwhistle','Slartibartfast','Cumberbatchington',
+  'Fitzpatrick-O\'Sullivan','Mortimer-Westmoreland','Pendleton-Beauregard','Wickersham','Vandersnoot','Snickerdoodle','Hufflepuff','Treebeardington',
+  'Bumblebrook','Cottonbottom','Drizzlepants','Effervescence','Flickerwicker','Glimmerspark','Hootenanny','Iconoclastorum',
+  'Jubilationsworth','Kerfufflestein','Lickety-Split','Moonshadow','Numbskullery','Oddington','Persnickety','Quizzlebottom',
+  'Rambunctious','Snickelfritz','Twiddledee','Underhoodwink','Verisimilitude','Whippersnapper','Xylophonius','Yodeller',
+  'Zigzaggington','Buttersworth','Codswallop','Dilly-Dally','Eggplantington','Furtherbottom','Goosebumps','Hodgepodge'
+];
+
 const SUFFIXES = ['Jr.','III','II'];
 
 const TEAM_DATA = [
@@ -1275,12 +1476,12 @@ let game = {
     const sidebar = document.getElementById('sidebar');
     if (sidebar) {
       sidebar.addEventListener('click', (e) => {
-        // Walk up to find the nearest .nav-item (handles clicks on inner spans/icons)
-        let target = e.target;
-        while (target && target !== sidebar && !target.classList.contains('nav-item')) {
-          target = target.parentElement;
-        }
-        if (!target || !target.classList.contains('nav-item')) return;
+        // Walk up from click target to find the nearest .nav-item. Handles clicks on inner
+        // spans/icons (nav items contain <span class="nav-icon"> + <span>label</span>).
+        // We use the more defensive `closest()` API which handles edge cases (text nodes,
+        // elements without classList, etc).
+        const target = e.target.closest ? e.target.closest('.nav-item') : null;
+        if (!target || !sidebar.contains(target)) return;
         if (this.state && this.state.draftActive) return;
         const view = target.dataset.view;
         if (!view) return;
@@ -2784,7 +2985,7 @@ let game = {
     return weighted[weighted.length - 1].school.abbr;
   },
 
-  generateProspect(yearInCollege, position, targetGrade) {
+  generateProspect(yearInCollege, position, targetGrade, legacy) {
     // Prospect grade 50-99 with one decimal place
     const grade = targetGrade !== undefined ? targetGrade : (50 + Math.random() * 49.99);
     // Roll injuryProneness first so it can adjust grade. Bell-shaped, centered at 55.
@@ -2800,9 +3001,14 @@ let game = {
     // Compact ID: per-state counter scales much smaller than full-entropy UUID-style strings.
     if (this.state.prospectIdCounter === undefined) this.state.prospectIdCounter = 0;
     this.state.prospectIdCounter++;
-    return {
+    // Name: if legacy info passed, use the dad's first+last names and append the right suffix.
+    // Otherwise, pick a random name from the general pool.
+    const name = legacy
+      ? this.generateName(this.state.year, { firstName: legacy.firstName, lastName: legacy.lastName, currentSuffix: legacy.currentSuffix })
+      : this.generateName(this.state.year);
+    const prospect = {
       id: 'cp_' + this.state.prospectIdCounter,
-      name: this.generateName(this.state.year),
+      name,
       school: this.pickSchoolWeightedByPrestige(grade),
       position,
       year: yearInCollege,
@@ -2811,6 +3017,15 @@ let game = {
       faceSeed: Math.floor(Math.random() * 1000000),
       classYear: this.state.year
     };
+    // Legacy linkage — store the father's player ID + name so the player card can render a link
+    if (legacy && legacy.parentId !== undefined) {
+      prospect.legacyOf = {
+        parentId: legacy.parentId,
+        parentName: legacy.parentName,
+        generation: legacy.generation || 2 // 2 = son of original; 3 = grandson; etc.
+      };
+    }
+    return prospect;
   },
   
   // Bell-shaped injuryProneness roll. Average of 4 uniform rolls → normal-ish distribution
@@ -3285,6 +3500,90 @@ let game = {
     }
   },
 
+  // LEGACY LINEAGE — once per offseason, scan retired stars and randomly link one of their
+  // future descendants (a freshman prospect) into the current college class. Real NFL families:
+  // Mannings, Watts, Bosas, McCaffreys, Longs, Matthews. Each star gets one shot per year for a son.
+  //
+  // Mechanics:
+  //   - Star must be retired (active stars can't spawn sons — too young still).
+  //   - peakOvr ≥ 85 (Pro Bowl level or better). The bar is high; mid-tier players don't.
+  //   - Star must not have already spawned a son (hasSpawnedSon flag).
+  //   - When triggered: pick a random recent-freshman prospect, patch their name to match dad's
+  //     (same first + last name + appropriate suffix) and tag legacyOf with the dad's player ID.
+  //   - 15% chance per eligible star per year, so over a ~10-year window a typical star has
+  //     a meaningful chance of eventually spawning a son. Multi-generation families happen
+  //     naturally — if the Jr. retires as a star, his III can spawn later.
+  linkLegacyProspects() {
+    if (!this.state.collegeProspects || this.state.collegeProspects.length === 0) return;
+    
+    // Find retired stars eligible to spawn a son this year
+    const eligibleStars = this.state.players.filter(p =>
+      p.retired &&
+      (p.peakOvr || p.rating) >= 85 &&
+      !p.hasSpawnedSon &&
+      // The dad must have been retired at least ~6 years so his son is now college-aged.
+      // Real NFL: most stars have kids during their playing years, so sons enter college ~5-20
+      // years after dad retires. We use a wide window so multiple eligible stars feed the pool.
+      this.state.year - (p.retiredYear || 0) >= 6 &&
+      this.state.year - (p.retiredYear || 0) <= 24
+    );
+    if (eligibleStars.length === 0) return;
+    
+    // Pool of freshman prospects who don't yet have legacy info — eligible to be retroactively patched
+    const freshmen = this.state.collegeProspects.filter(p =>
+      p.year === 'Freshman' && !p.legacyOf
+    );
+    if (freshmen.length === 0) return;
+    
+    // For each eligible star, 15% chance to spawn a son this year
+    eligibleStars.forEach(star => {
+      if (Math.random() > 0.15) return;
+      if (freshmen.length === 0) return;
+      // Grab a random freshman and patch their name + lineage. Splice out so the same prospect
+      // doesn't get patched twice this offseason.
+      const idx = Math.floor(Math.random() * freshmen.length);
+      const son = freshmen[idx];
+      freshmen.splice(idx, 1);
+      
+      // Parse star's name to get firstName + lastName + suffix.
+      // Names are stored as "First Last" or "First Last Jr." / "First Last III".
+      const parts = star.name.split(' ');
+      let suffix = null;
+      let lastIdx = parts.length - 1;
+      if (parts[lastIdx] === 'Jr.' || parts[lastIdx] === 'III' || parts[lastIdx] === 'II' || parts[lastIdx] === 'IV') {
+        suffix = parts[lastIdx];
+        lastIdx--;
+      }
+      const firstName = parts[0];
+      const lastName = parts.slice(1, lastIdx + 1).join(' ');
+      
+      // Build the son's name using the legacy path of generateName
+      son.name = this.generateName(this.state.year, {
+        firstName,
+        lastName,
+        currentSuffix: suffix
+      });
+      
+      // Determine generation: original star → gen 2 (Jr.); Jr. → gen 3 (III); III → gen 4 (IV)
+      let generation;
+      if (!suffix) generation = 2;
+      else if (suffix === 'Jr.' || suffix === 'II') generation = 3;
+      else if (suffix === 'III') generation = 4;
+      else generation = 2;
+      
+      son.legacyOf = {
+        parentId: star.id,
+        parentName: star.name,
+        parentPosition: star.position,
+        parentPeakOvr: star.peakOvr || star.rating,
+        generation
+      };
+      
+      // Mark the dad so he doesn't spawn another son next year
+      star.hasSpawnedSon = true;
+    });
+  },
+
   // Each offseason: age prospects, graduate seniors into draft, regenerate freshman class
   advanceCollegeSeason() {
     if (!this.state.collegeProspects) this.state.collegeProspects = [];
@@ -3338,6 +3637,24 @@ let game = {
     
     // Juniors: highly graded (≥85) may declare early. Higher grade = higher chance.
     juniorsForEarlyDecl.forEach(p => {
+      // USER PATH: if this junior is the user's player, defer the decision. We stash a
+      // "pending choice" flag and the user will see a popup prompting them to declare or
+      // come back for senior year. The actual graduate-or-stay decision happens when they
+      // pick. For now we just mark them as needing-a-choice and skip the auto-roll.
+      if (p.isUserControlled && p.prospectGrade >= 75) {
+        // Mark for user prompt — actual graduation handled in resolveUserDeclarationChoice()
+        if (!this.state.career) this.state.career = {};
+        this.state.career.pendingDeclarationChoice = {
+          prospectId: p.id,
+          prospectGrade: p.prospectGrade,
+          // Snapshot of what the user "could" become in their senior year if they stay
+          projectedSeniorGrade: this.applyCollegeProgression({ ...p }, 'Junior', 'Senior')
+        };
+        // For now, default to staying (will be resolved post-popup)
+        p.year = 'Senior';
+        p.prospectGrade = this.state.career.pendingDeclarationChoice.projectedSeniorGrade;
+        return;
+      }
       let declareChance = 0;
       if (p.prospectGrade >= 95) declareChance = 0.85; // top-5 picks almost always declare
       else if (p.prospectGrade >= 90) declareChance = 0.70;
@@ -3460,6 +3777,12 @@ let game = {
         this.state.collegeProspects.push(prospect);
       }
     }
+    
+    // LEGACY LINEAGE — link a small number of new freshman/junior prospects to retired stars
+    // as their "son". Real NFL has plenty of these: Manning, Bosa, Watt, Long, McCaffrey families.
+    // We trigger from ANY star (peakOvr ≥ 85 by retirement) — they each get one chance for a son.
+    // Sons inherit the dad's first AND last name + a suffix (Jr. for original; III for Jr.'s son).
+    this.linkLegacyProspects();
     
     // Stash graduates for the upcoming draft
     this.state.pendingDraftClass = graduates;
@@ -3653,43 +3976,67 @@ let game = {
     }
     
     // ===== SIM THE 12-TEAM BRACKET =====
-    const simMatchup = (a, b) => Math.random() < (a.strength / (a.strength + b.strength)) ? a : b;
-    const simMatchupWithScore = (a, b) => {
-      const winner = simMatchup(a, b);
-      const loser = winner === a ? b : a;
-      const ws = 21 + Math.floor(Math.random() * 24);
-      const ls = Math.max(10, ws - 3 - Math.floor(Math.random() * 20));
-      return { winner, loser, winnerScore: ws, loserScore: ls };
-    };
+    // If weekly sim already played the CFP (state.cfpBracket fully populated), use those results.
+    // This keeps the recap consistent with what the user saw week-by-week — no resimming.
+    let r1, qf, sf1, sf2, titleGame, champion, runnerUp;
+    const weeklyBracket = this.state.cfpBracket;
+    const haveWeeklyBracket = weeklyBracket && weeklyBracket.titleGame;
     
-    // First round (4 games): 5v12, 6v11, 7v10, 8v9. Top 4 seeds rest.
-    const r1 = [];
-    [[4, 11], [5, 10], [6, 9], [7, 8]].forEach(([hi, lo]) => {
-      const a = bracket[hi]; // 0-indexed: bracket[4] is seed 5
-      const b = bracket[lo];
-      const result = simMatchupWithScore(a, b);
-      // Determine which seed the winner was so the UI can render "#X Team beat #Y Team"
-      const winnerSeed = (result.winner === a) ? hi + 1 : lo + 1;
-      const loserSeed = (result.winner === a) ? lo + 1 : hi + 1;
-      r1.push({ ...result, hiSeed: hi + 1, loSeed: lo + 1, winnerSeed, loserSeed });
-    });
-    
-    // Quarterfinals: top 4 seeds host the winners. Seed 1 plays 8v9 winner, 2 plays 7v10 winner, etc.
-    // Pairings: 1 vs (8v9 winner), 4 vs (5v12 winner), 2 vs (7v10 winner), 3 vs (6v11 winner)
-    const qf = [];
-    qf.push(simMatchupWithScore(bracket[0], r1[3].winner)); // 1 vs 8/9 winner
-    qf.push(simMatchupWithScore(bracket[3], r1[0].winner)); // 4 vs 5/12 winner
-    qf.push(simMatchupWithScore(bracket[1], r1[2].winner)); // 2 vs 7/10 winner
-    qf.push(simMatchupWithScore(bracket[2], r1[1].winner)); // 3 vs 6/11 winner
-    
-    // Semifinals
-    const sf1 = simMatchupWithScore(qf[0].winner, qf[1].winner); // 1's path vs 4's path
-    const sf2 = simMatchupWithScore(qf[2].winner, qf[3].winner); // 2's path vs 3's path
-    
-    // National championship
-    const titleGame = simMatchupWithScore(sf1.winner, sf2.winner);
-    const champion = titleGame.winner;
-    const runnerUp = titleGame.loser;
+    if (haveWeeklyBracket) {
+      // Reuse the bracket games — already have winner/score/seed data
+      r1 = weeklyBracket.firstRound || [];
+      qf = (weeklyBracket.quarterfinals || []).map(g => ({
+        winner: { abbr: g.winnerAbbr, name: g.winnerName }, loser: { abbr: g.loserAbbr, name: g.loserName },
+        winnerScore: g.winnerScore, loserScore: g.loserScore
+      }));
+      const sfs = (weeklyBracket.semifinals || []).map(g => ({
+        winner: { abbr: g.winnerAbbr, name: g.winnerName }, loser: { abbr: g.loserAbbr, name: g.loserName },
+        winnerScore: g.winnerScore, loserScore: g.loserScore
+      }));
+      sf1 = sfs[0] || { winner: bracket[0], loser: bracket[1], winnerScore: 28, loserScore: 21 };
+      sf2 = sfs[1] || { winner: bracket[2], loser: bracket[3], winnerScore: 28, loserScore: 21 };
+      const tg = weeklyBracket.titleGame;
+      titleGame = {
+        winner: { abbr: tg.winnerAbbr, name: tg.winnerName }, loser: { abbr: tg.loserAbbr, name: tg.loserName },
+        winnerScore: tg.winnerScore, loserScore: tg.loserScore
+      };
+      champion = titleGame.winner;
+      runnerUp = titleGame.loser;
+    } else {
+      // Legacy path — sim the bracket inline (used for dynasty/coach modes without weekly sim)
+      const simMatchup = (a, b) => Math.random() < (a.strength / (a.strength + b.strength)) ? a : b;
+      const simMatchupWithScore = (a, b) => {
+        const winner = simMatchup(a, b);
+        const loser = winner === a ? b : a;
+        const ws = 21 + Math.floor(Math.random() * 24);
+        const ls = Math.max(10, ws - 3 - Math.floor(Math.random() * 20));
+        return { winner, loser, winnerScore: ws, loserScore: ls };
+      };
+      
+      // First round (4 games): 5v12, 6v11, 7v10, 8v9. Top 4 seeds rest.
+      r1 = [];
+      [[4, 11], [5, 10], [6, 9], [7, 8]].forEach(([hi, lo]) => {
+        const a = bracket[hi];
+        const b = bracket[lo];
+        const result = simMatchupWithScore(a, b);
+        const winnerSeed = (result.winner === a) ? hi + 1 : lo + 1;
+        const loserSeed = (result.winner === a) ? lo + 1 : hi + 1;
+        r1.push({ ...result, hiSeed: hi + 1, loSeed: lo + 1, winnerSeed, loserSeed });
+      });
+      
+      qf = [];
+      qf.push(simMatchupWithScore(bracket[0], r1[3].winner));
+      qf.push(simMatchupWithScore(bracket[3], r1[0].winner));
+      qf.push(simMatchupWithScore(bracket[1], r1[2].winner));
+      qf.push(simMatchupWithScore(bracket[2], r1[1].winner));
+      
+      sf1 = simMatchupWithScore(qf[0].winner, qf[1].winner);
+      sf2 = simMatchupWithScore(qf[2].winner, qf[3].winner);
+      
+      titleGame = simMatchupWithScore(sf1.winner, sf2.winner);
+      champion = titleGame.winner;
+      runnerUp = titleGame.loser;
+    }
     
     // Heisman / awards
     // Use the running Heisman race when available — winner is the leader after the regular season.
@@ -3757,12 +4104,24 @@ let game = {
       cfpBracket: bracket.map((b, i) => ({
         seed: i + 1, abbr: b.abbr, name: b.name, record: b.wins + '-' + b.losses, bidType: b.bidType, conference: b.conference
       })),
-      cfpFirstRound: r1.map(g => ({
-        hiSeed: g.hiSeed, loSeed: g.loSeed,
-        winnerSeed: g.winnerSeed, loserSeed: g.loserSeed,
-        winnerAbbr: g.winner.abbr, winnerName: g.winner.name, winnerScore: g.winnerScore,
-        loserAbbr: g.loser.abbr, loserName: g.loser.name, loserScore: g.loserScore
-      })),
+      cfpFirstRound: r1.map(g => {
+        // r1 can be in two formats: flat (from weekly sim — already has winnerAbbr/winnerName)
+        // or nested (from legacy sim — has g.winner.abbr). Handle both.
+        if (g.winnerAbbr !== undefined) {
+          return {
+            hiSeed: g.hiSeed, loSeed: g.loSeed,
+            winnerSeed: g.winnerSeed, loserSeed: g.loserSeed,
+            winnerAbbr: g.winnerAbbr, winnerName: g.winnerName, winnerScore: g.winnerScore,
+            loserAbbr: g.loserAbbr, loserName: g.loserName, loserScore: g.loserScore
+          };
+        }
+        return {
+          hiSeed: g.hiSeed, loSeed: g.loSeed,
+          winnerSeed: g.winnerSeed, loserSeed: g.loserSeed,
+          winnerAbbr: g.winner.abbr, winnerName: g.winner.name, winnerScore: g.winnerScore,
+          loserAbbr: g.loser.abbr, loserName: g.loser.name, loserScore: g.loserScore
+        };
+      }),
       cfpQuarterfinals: qf.map(g => ({
         winnerAbbr: g.winner.abbr, winnerName: g.winner.name, winnerScore: g.winnerScore,
         loserAbbr: g.loser.abbr, loserName: g.loser.name, loserScore: g.loserScore
@@ -3841,8 +4200,11 @@ let game = {
       this.state.collegeWeek = 0;
       this.state.collegeStandings = null;
       this.state.apPoll = null;
+      this.state.cfpBracket = null;
       return;
     }
+    // Clear any CFP bracket from last season — fresh one builds at week 13 of new season
+    this.state.cfpBracket = null;
     const schedule = []; // array of { week, home, away, played, homeScore, awayScore, topPerformers }
     const schools = COLLEGE_SCHOOLS;
     const byConference = {};
@@ -3932,11 +4294,189 @@ let game = {
     this.state.apPoll = null;
   },
 
+  // CFP BRACKET BUILDER — runs once at end of college regular season (week 12 → 13 transition).
+  // Top 12 teams by W-L record (with prestige tiebreaker) get bracket slots. Seeds 1-4 get
+  // first-round byes. Seeds 5-12 play in the first round (5v12, 6v11, 7v10, 8v9). Winners
+  // advance to quarterfinals against the 1-4 seeds. Then semifinals, then title.
+  _buildCFPBracket() {
+    const prestigeMap = this.state.collegePrestige || {};
+    const standings = this.state.collegeStandings || {};
+    
+    // Build a ranked list of teams by W-L record (with prestige + point diff as tiebreaker)
+    const ranked = COLLEGE_SCHOOLS.map(s => {
+      const st = standings[s.abbr] || { wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0 };
+      const currentPrestige = prestigeMap[s.abbr] !== undefined ? prestigeMap[s.abbr] : s.prestige;
+      const pointDiff = (st.pointsFor || 0) - (st.pointsAgainst || 0);
+      return {
+        abbr: s.abbr, name: s.name, primary: s.primary,
+        conference: s.conference,
+        wins: st.wins || 0, losses: st.losses || 0,
+        prestige: currentPrestige,
+        strength: currentPrestige + pointDiff * 0.05,
+        pointDiff
+      };
+    }).sort((a, b) => {
+      if (a.wins !== b.wins) return b.wins - a.wins;
+      return b.strength - a.strength;
+    }).slice(0, 12);
+    
+    // Tag seeds and bid types (champ vs at-large vs G5 access)
+    const seeds = ranked.map((t, i) => ({
+      ...t,
+      seed: i + 1,
+      bidType: i < 4 ? 'BYE' : i < 8 ? 'AT-LARGE' : 'AT-LARGE'
+    }));
+    
+    this.state.cfpBracket = {
+      seeds, // length 12
+      firstRound: null, // populated week 13
+      quarterfinals: null, // populated week 14
+      semifinals: null, // populated week 15
+      titleGame: null // populated week 16
+    };
+    
+    // Headline announcing the bracket
+    this.addHeadline({
+      type: 'champ',
+      title: this.state.year + ' College Football Playoff bracket announced',
+      body: '12 teams. #1 ' + seeds[0].name + ', #2 ' + seeds[1].name + ', #3 ' + seeds[2].name + ', #4 ' + seeds[3].name + ' get first-round byes. First-round games begin next week.'
+    });
+  },
+  
+  // CFP ROUND SIM — plays one round of the bracket each week 13-16.
+  //   Week 13: First Round (4 games)
+  //   Week 14: Quarterfinals (4 games)
+  //   Week 15: Semifinals (2 games)
+  //   Week 16: National Title Game (1 game)
+  _simCFPRound(week) {
+    const bracket = this.state.cfpBracket;
+    if (!bracket) return;
+    
+    // Game simulator helper — picks a winner with score, weighted by team strength.
+    const playGame = (a, b) => {
+      const aStr = a.strength + (Math.random() - 0.5) * 12;
+      const bStr = b.strength + (Math.random() - 0.5) * 12;
+      const strDiff = aStr - bStr;
+      let aScore = Math.max(10, Math.min(56, 27 + Math.floor(strDiff * 0.45) + Math.floor(Math.random() * 14)));
+      let bScore = Math.max(10, Math.min(56, 27 - Math.floor(strDiff * 0.45) + Math.floor(Math.random() * 14)));
+      aScore = this.roundToCollegeScore(aScore);
+      bScore = this.roundToCollegeScore(bScore);
+      if (aScore === bScore) { if (aStr >= bStr) aScore += 3; else bScore += 3; }
+      const winner = aScore > bScore ? a : b;
+      const loser = aScore > bScore ? b : a;
+      const winnerScore = aScore > bScore ? aScore : bScore;
+      const loserScore = aScore > bScore ? bScore : aScore;
+      // Mutate winner.strength slightly so a hot team carries momentum (small bonus)
+      winner.strength += 0.5;
+      return { winner, loser, winnerScore, loserScore };
+    };
+    
+    if (week === 13) {
+      // First Round — seeds 5v12, 6v11, 7v10, 8v9
+      const seeds = bracket.seeds;
+      const r1Games = [
+        { hi: seeds[4], lo: seeds[11] }, // 5 vs 12
+        { hi: seeds[5], lo: seeds[10] }, // 6 vs 11
+        { hi: seeds[6], lo: seeds[9] },  // 7 vs 10
+        { hi: seeds[7], lo: seeds[8] }   // 8 vs 9
+      ];
+      bracket.firstRound = r1Games.map(({ hi, lo }) => {
+        const r = playGame(hi, lo);
+        return {
+          hiSeed: hi.seed, loSeed: lo.seed,
+          winnerSeed: r.winner.seed, loserSeed: r.loser.seed,
+          winnerAbbr: r.winner.abbr, winnerName: r.winner.name, winnerScore: r.winnerScore,
+          loserAbbr: r.loser.abbr, loserName: r.loser.name, loserScore: r.loserScore,
+          winnerObj: r.winner // keep ref for next round
+        };
+      });
+      this.addHeadline({
+        type: 'champ',
+        title: 'CFP First Round complete',
+        body: bracket.firstRound.map(g => '#' + g.winnerSeed + ' ' + g.winnerName + ' ' + g.winnerScore + ', #' + g.loserSeed + ' ' + g.loserName + ' ' + g.loserScore).join(' · ')
+      });
+    } else if (week === 14) {
+      // Quarterfinals — top 4 seeds vs first-round winners
+      // Standard bracket: 1 vs lowest remaining seed, 2 vs next, etc.
+      if (!bracket.firstRound) return;
+      const r1Winners = [...bracket.firstRound].sort((a, b) => a.winnerSeed - b.winnerSeed).map(g => g.winnerObj);
+      const seeds = bracket.seeds;
+      // Pair: 1 plays highest-seeded R1 winner; 4 plays lowest. (Reseed: 1v8/9 winner, etc.)
+      const sortedByLowestSeedFirst = [...r1Winners].sort((a, b) => b.seed - a.seed); // lowest = highest # = weakest
+      const qfGames = [
+        { hi: seeds[0], lo: sortedByLowestSeedFirst[0] }, // 1 vs lowest seed winner
+        { hi: seeds[1], lo: sortedByLowestSeedFirst[1] },
+        { hi: seeds[2], lo: sortedByLowestSeedFirst[2] },
+        { hi: seeds[3], lo: sortedByLowestSeedFirst[3] }
+      ];
+      bracket.quarterfinals = qfGames.map(({ hi, lo }) => {
+        const r = playGame(hi, lo);
+        return {
+          hiSeed: hi.seed, loSeed: lo.seed,
+          winnerSeed: r.winner.seed, loserSeed: r.loser.seed,
+          winnerAbbr: r.winner.abbr, winnerName: r.winner.name, winnerScore: r.winnerScore,
+          loserAbbr: r.loser.abbr, loserName: r.loser.name, loserScore: r.loserScore,
+          winnerObj: r.winner
+        };
+      });
+      this.addHeadline({
+        type: 'champ',
+        title: 'CFP Quarterfinals complete',
+        body: bracket.quarterfinals.map(g => '#' + g.winnerSeed + ' ' + g.winnerName + ' ' + g.winnerScore + ' over #' + g.loserSeed + ' ' + g.loserName + ' ' + g.loserScore).join(' · ')
+      });
+    } else if (week === 15) {
+      // Semifinals — 2 games. Pair highest seed vs lowest, second vs third.
+      if (!bracket.quarterfinals) return;
+      const qfWinners = bracket.quarterfinals.map(g => g.winnerObj).sort((a, b) => a.seed - b.seed);
+      const sfGames = [
+        { a: qfWinners[0], b: qfWinners[3] },
+        { a: qfWinners[1], b: qfWinners[2] }
+      ];
+      bracket.semifinals = sfGames.map(({ a, b }) => {
+        const r = playGame(a, b);
+        return {
+          winnerSeed: r.winner.seed, loserSeed: r.loser.seed,
+          winnerAbbr: r.winner.abbr, winnerName: r.winner.name, winnerScore: r.winnerScore,
+          loserAbbr: r.loser.abbr, loserName: r.loser.name, loserScore: r.loserScore,
+          winnerObj: r.winner
+        };
+      });
+      this.addHeadline({
+        type: 'champ',
+        title: 'CFP Semifinals complete',
+        body: bracket.semifinals.map(g => g.winnerName + ' ' + g.winnerScore + ' over ' + g.loserName + ' ' + g.loserScore).join(' · ')
+      });
+    } else if (week === 16) {
+      // National Title Game
+      if (!bracket.semifinals || bracket.semifinals.length < 2) return;
+      const finalists = bracket.semifinals.map(g => g.winnerObj);
+      const r = playGame(finalists[0], finalists[1]);
+      bracket.titleGame = {
+        winnerSeed: r.winner.seed, loserSeed: r.loser.seed,
+        winnerAbbr: r.winner.abbr, winnerName: r.winner.name, winnerScore: r.winnerScore,
+        loserAbbr: r.loser.abbr, loserName: r.loser.name, loserScore: r.loserScore
+      };
+      // Prestige bump for the champion
+      const prestigeMap = this.state.collegePrestige || {};
+      prestigeMap[r.winner.abbr] = Math.min(100, (prestigeMap[r.winner.abbr] || 70) + 3);
+      this.state.collegePrestige = prestigeMap;
+      this.addHeadline({
+        type: 'champ',
+        title: r.winner.name + ' wins the ' + this.state.year + ' National Championship',
+        body: r.winner.name + ' ' + r.winnerScore + ', ' + r.loser.name + ' ' + r.loserScore + '. Champions hoist the trophy.'
+      });
+    }
+  },
+  
   // Sim one college week. Called from the main simWeek() so college and NFL stay in sync.
   // Returns the list of games played this week.
   simCollegeWeek() {
     if (!this.state.collegeSchedule) return [];
-    if (this.state.collegeWeek >= this.COLLEGE_SEASON_WEEKS) return [];
+    // College now runs 16 weeks total: weeks 1-12 are regular season, weeks 13-16 are CFP.
+    // Each CFP round (First/QF/SF/Title) plays out in its own week so the user sees the
+    // bracket advance live alongside the NFL season instead of resolving all at once.
+    if (this.state.collegeWeek >= 16) return [];
+    
     // At the very start of a season (week 0 → 1), zero out per-player Heisman stats so the
     // running leaderboard tracks THIS year only. Also reset the user's per-game log.
     if (this.state.collegeWeek === 0) {
@@ -3947,6 +4487,21 @@ let game = {
     }
     this.state.collegeWeek++;
     const week = this.state.collegeWeek;
+    
+    // CFP weeks 13-16 — bracket is built lazily at week 13 if not already, then each week
+    // plays the next round.
+    if (week >= 13) {
+      // Build bracket on first CFP week
+      if (!this.state.cfpBracket && week === 13) {
+        this._buildCFPBracket();
+      }
+      if (this.state.cfpBracket) {
+        this._simCFPRound(week);
+      }
+      return [];
+    }
+    
+    // Regular season game sim (weeks 1-12)
     const games = this.state.collegeSchedule.filter(g => g.week === week && !g.played);
     games.forEach(g => this.simCollegeGame(g));
     // Recompute the AP poll based on accumulated records
@@ -4076,6 +4631,12 @@ let game = {
     const updateHeismanStats = (player, statLine) => {
       // Accumulate per-prospect season totals on a `_heismanStats` field.
       // We use a single weekly call so the totals build through the 12-game season.
+      //
+      // CRITICAL: skip the user-controlled player here. simCollegeGame separately accumulates
+      // the user's true per-game stats from their actual performance object. Double-counting
+      // them here would inflate the user's Heisman line to 2x — which was the bug in screenshot 2
+      // (user "Greg Ross" showed 24 games when teams only play 12).
+      if (player.isUserControlled) return;
       if (!player._heismanStats) {
         player._heismanStats = { passYds: 0, passTDs: 0, ints: 0, rushYds: 0, rushTDs: 0, recYds: 0, recTDs: 0, receptions: 0, games: 0, lastTeamScore: 0 };
       }
@@ -4409,7 +4970,39 @@ let game = {
     this.state.collegeHOF = this.state.collegeHOF.slice(0, 25);
   },
 
-  generateName(year) {
+  // Generate a random player name. Picks from one of three era-based first-name pools (2020s
+  // weighted heaviest, 70s rare) plus the large surname pool. Adds a suffix (Jr./II/III) at 6%.
+  //
+  // Easter egg: about 1 in every 250 names rolled is completely unhinged — pulled from
+  // CRAZY_FIRST_NAMES + CRAZY_LAST_NAMES. Skill is unaffected (pure chance whether they're
+  // good or terrible).
+  //
+  // Legacy parameter (optional): when generating a player who is the SON of an existing star,
+  // pass `legacy = { firstName, lastName, currentSuffix }` to force a matching surname and
+  // append the appropriate next suffix (no suffix → Jr.; Jr. → III). The dad's first name is
+  // reused (the son shares both names; the suffix differentiates them).
+  generateName(year, legacy) {
+    // Legacy path — explicit family name override for sons of stars
+    if (legacy && legacy.firstName && legacy.lastName) {
+      let suffix;
+      if (!legacy.currentSuffix) suffix = ' Jr.';
+      else if (legacy.currentSuffix === 'Jr.') suffix = ' III';
+      else if (legacy.currentSuffix === 'III') suffix = ' IV';
+      else suffix = ' Jr.';
+      return legacy.firstName + ' ' + legacy.lastName + suffix;
+    }
+    
+    // Easter egg: ~0.2% chance of an absolutely unhinged name. Pure chance — they could be a
+    // generational talent or a 60 OVR scrub. Just having them on a roster is the fun part.
+    // With a typical NFL+college pool of ~6,000 active players, expect roughly 10-12 unhinged
+    // names sprinkled across the league at any time — rare enough to be a delight when spotted.
+    if (Math.random() < 0.002) {
+      const wildFirst = CRAZY_FIRST_NAMES[Math.floor(Math.random() * CRAZY_FIRST_NAMES.length)];
+      const wildLast = CRAZY_LAST_NAMES[Math.floor(Math.random() * CRAZY_LAST_NAMES.length)];
+      return wildFirst + ' ' + wildLast;
+    }
+    
+    // Normal path — three-pool era weighting
     const r = Math.random();
     let firstNames;
     if (r < 0.65) firstNames = FIRST_NAMES_2020S;
@@ -4800,6 +5393,17 @@ let game = {
       // Remove the pick from ownership (it's been used)
       this.state.draftPicksOwned = this.state.draftPicksOwned.filter(p => p.id !== orderInfo.pickId);
     }
+    // DRAFT NIGHT CELEBRATION — if the user player just got picked, stash the moment for a
+    // dedicated celebration popup. Fires once when render() runs after the draft finishes.
+    if (player.isUserControlled) {
+      this._pendingUserDraftCelebration = {
+        playerId: player.id,
+        overall: this.state.draftCurrentIdx + 1,
+        round: orderInfo.round,
+        teamId,
+        prospectGrade: player.prospectGrade || player.collegeGrade
+      };
+    }
   },
 
   userPick(playerId) {
@@ -4987,7 +5591,9 @@ let game = {
         draftYear: this.state.year, contract: null,
         collegeSchool: prospect.school,
         collegeGrade: prospect.prospectGrade,
-        declaredEarly: !!prospect.declaredEarly
+        declaredEarly: !!prospect.declaredEarly,
+        // Legacy info: carries forward from prospect so the player card can show "son of X"
+        legacyOf: prospect.legacyOf || null
       };
       this.state.players.push(newPlayer);
       this.updateCollegeHOF(prospect, newPlayer.id);
@@ -5550,9 +6156,9 @@ let game = {
     this.state.week++;
     const weekGames = this.state.schedule.filter(g => g.week === this.state.week && !g.played);
     weekGames.forEach(g => this.simGame(g));
-    // Sim parallel college week if college schedule exists. College runs 12 weeks vs NFL's 18,
-    // so college season finishes earlier in the year — that's fine, it just sits idle after week 12.
-    if (this.state.collegeSchedule && this.state.collegeWeek < this.COLLEGE_SEASON_WEEKS) {
+    // Sim parallel college week if college schedule exists. College now runs 16 weeks total
+    // (12 regular season + 4 CFP rounds), wrapping up around NFL week 16.
+    if (this.state.collegeSchedule && this.state.collegeWeek < 16) {
       this.simCollegeWeek();
     }
     // CPU trade market — runs each week during the regular season. Volume scales toward the
@@ -8437,7 +9043,8 @@ let game = {
           draftYear: this.state.year, contract: null,
           collegeSchool: prospect.school,
           collegeGrade: prospect.prospectGrade,
-          declaredEarly: !!prospect.declaredEarly
+          declaredEarly: !!prospect.declaredEarly,
+          legacyOf: prospect.legacyOf || null
         };
         this.state.players.push(newPlayer);
         graduateRookies.push(newPlayer);
@@ -8699,6 +9306,19 @@ let game = {
       const perf = this._pendingUserNflGamePopup;
       this._pendingUserNflGamePopup = null;
       try { this.showUserGamePopup(perf); } catch (e) { /* defensive */ }
+    }
+    // Junior declaration choice popup — fires once when the user's junior season ends and
+    // their prospect grade is high enough to consider declaring early for the NFL Draft.
+    if (this.state && this.state.career && this.state.career.pendingDeclarationChoice && !this._declChoiceShown) {
+      this._declChoiceShown = true;
+      try { this.showDeclarationChoicePopup(); } catch (e) { /* defensive */ }
+    }
+    // Draft night celebration — fires when the user's player is selected. Stays open until
+    // they dismiss. Includes confetti emojis, team welcome, and a draft-position breakdown.
+    if (this._pendingUserDraftCelebration) {
+      const celebration = this._pendingUserDraftCelebration;
+      this._pendingUserDraftCelebration = null;
+      try { this.showDraftCelebration(celebration); } catch (e) { /* defensive */ }
     }
   },
   
@@ -11886,7 +12506,21 @@ let game = {
       '<span class="muted">' + p.year + ' · age ~' + age + '</span>' +
       '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + p.school + '\')">' + schoolName + '</span>' +
       (p.declaredEarly ? '<span class="muted" style="font-size:11px">Declared early</span>' : '') +
-      '</div></div></div>';
+      '</div>';
+    
+    // Legacy line — link to the dad if this prospect is the son of a former star
+    if (p.legacyOf && p.legacyOf.parentId !== undefined && p.legacyOf.parentId !== null) {
+      const parent = this.state.players[p.legacyOf.parentId];
+      const parentLabel = p.legacyOf.generation === 4 ? 'Great-grandson of'
+        : p.legacyOf.generation === 3 ? 'Grandson of'
+        : 'Son of';
+      const parentLink = parent
+        ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + parent.id + ')">' + parent.name + '</span>'
+        : (p.legacyOf.parentName || 'Unknown');
+      html += '<div style="margin-top:4px;font-size:11px;color:var(--accent);font-weight:600">★ ' + parentLabel + ' ' + parentLink + '</div>';
+    }
+    
+    html += '</div></div>';
     
     html += '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)">' +
       '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Prospect grade</div><div style="font-size:24px;font-weight:600;font-family:var(--font-mono)"><span class="rating ' + rc + '">' + p.prospectGrade.toFixed(1) + '</span></div></div>' +
@@ -12079,6 +12713,24 @@ let game = {
       const weeksLabel = p.injury.severity === 'season-ending' ? 'Out for season' : p.injury.weeksRemaining + ' week' + (p.injury.weeksRemaining > 1 ? 's' : '') + ' remaining';
       injuryRow = '<tr><td>Injury</td><td><span style="color:' + sevColor + ';font-weight:600">' + p.injury.type.toUpperCase() + '</span> <span class="muted" style="font-size:11px">· ' + weeksLabel + '</span></td></tr>';
     }
+    // Legacy link — if this player is the son (or grandson) of an existing player in the league.
+    // We show the dad's name as a clickable link to their card. Generation count drives the label
+    // ("Son of" for gen 2, "Grandson of" for gen 3, "Great-grandson of" for gen 4).
+    let legacyRow = '';
+    if (p.legacyOf && p.legacyOf.parentId !== undefined && p.legacyOf.parentId !== null) {
+      const parent = this.state.players[p.legacyOf.parentId];
+      const parentLabel = p.legacyOf.generation === 4 ? 'Great-grandson of'
+        : p.legacyOf.generation === 3 ? 'Grandson of'
+        : 'Son of';
+      const parentLink = parent
+        ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + parent.id + ')">' + parent.name + '</span>'
+        : (p.legacyOf.parentName || 'Unknown');
+      const parentMeta = p.legacyOf.parentPosition && p.legacyOf.parentPeakOvr
+        ? ' <span class="muted" style="font-size:11px">(' + p.legacyOf.parentPosition + ', peak OVR ' + p.legacyOf.parentPeakOvr + ')</span>'
+        : '';
+      legacyRow = '<tr><td>Legacy</td><td>' + parentLabel + ' ' + parentLink + parentMeta + '</td></tr>';
+    }
+    
     html += '<div class="section-label">Profile</div><table class="stat-table">' +
       '<tr><td>Position</td><td>' + p.position + '</td></tr>' +
       '<tr><td>Archetype</td><td>' + (p.archetype || '—') + '</td></tr>' +
@@ -12086,6 +12738,7 @@ let game = {
       '<tr><td>Years in league</td><td>' + p.yearsInLeague + '</td></tr>' +
       '<tr><td>Draft year</td><td>' + p.draftYear + '</td></tr>' +
       collegeRow +
+      legacyRow +
       durabilityRow +
       injuryRow +
       (p.potential ? '<tr><td>Potential</td><td>' + p.potential + (p.potential > p.rating ? ' <span style="color:var(--success);font-size:11px">(+' + (p.potential - p.rating) + ')</span>' : '') + '</td></tr>' : '') +
@@ -13700,7 +14353,348 @@ let game = {
     html += '<div class="card"><div class="card-header"><div class="card-title">Scout takeaways</div></div>' +
       '<div style="padding:16px;font-size:13px;line-height:1.7">' + cr.narrative + '</div></div>';
     
+    // TEAM INTERVIEWS — generate a list of teams interested in interviewing the prospect.
+    // Each team has questions the user can answer; answer quality affects the team's interest level
+    // and may slightly adjust draft stock.
+    if (!userPlayer.teamInterviews) {
+      userPlayer.teamInterviews = this.generateTeamInterviews(userPlayer);
+    }
+    const interviews = userPlayer.teamInterviews;
+    if (interviews && interviews.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Team interviews</div>' +
+        '<div class="card-meta">Meet with NFL teams · Answer questions to shape your draft stock</div></div>' +
+        '<div style="padding:8px 0">';
+      interviews.forEach((interview, idx) => {
+        const team = this.state.teams[interview.teamId];
+        if (!team) return;
+        let statusText, statusColor;
+        if (interview.completed) {
+          const interest = interview.finalInterest;
+          if (interest >= 80) { statusText = 'HIGH INTEREST'; statusColor = 'var(--success)'; }
+          else if (interest >= 60) { statusText = 'INTERESTED'; statusColor = 'var(--accent)'; }
+          else if (interest >= 40) { statusText = 'NEUTRAL'; statusColor = 'var(--warning)'; }
+          else { statusText = 'COOLED OFF'; statusColor = 'var(--danger)'; }
+        } else {
+          statusText = 'SCHEDULED';
+          statusColor = 'var(--text-muted)';
+        }
+        html += '<div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:12px">' +
+          '<div style="display:flex;align-items:center;gap:10px;flex:1">' +
+          '<div style="width:4px;height:32px;background:' + team.primary + '"></div>' +
+          '<div><div style="font-weight:600">' + team.city + ' ' + team.name + '</div>' +
+          '<div class="muted" style="font-size:11px">' + (interview.completed ? (interview.questions.length + ' questions answered') : (interview.questions.length + ' questions') + ' · Pre-draft visit') + '</div></div></div>' +
+          '<div style="display:flex;align-items:center;gap:10px">' +
+          '<span style="font-size:10px;letter-spacing:0.5px;font-weight:600;color:' + statusColor + '">' + statusText + '</span>' +
+          (interview.completed
+            ? '<button class="btn btn-sm" disabled style="opacity:0.5">Completed</button>'
+            : '<button class="btn btn-sm btn-success" onclick="game.startInterview(' + idx + ')">Begin interview</button>') +
+          '</div>' +
+          '</div>';
+      });
+      html += '</div></div>';
+    }
+    
     document.getElementById('content').innerHTML = html;
+  },
+  
+  // Generate a list of NFL teams interested in interviewing the prospect, with questions.
+  // Teams are picked based on (a) position need, (b) draft pick position relative to grade,
+  // (c) some randomness. Higher-graded prospects attract more interviews.
+  generateTeamInterviews(player) {
+    const grade = player.prospectGrade || player.rating || 70;
+    // Number of interviews scales with grade: top picks meet with ~10 teams, mid-round with ~4.
+    let numInterviews;
+    if (grade >= 90) numInterviews = 10;
+    else if (grade >= 85) numInterviews = 8;
+    else if (grade >= 78) numInterviews = 6;
+    else if (grade >= 70) numInterviews = 4;
+    else numInterviews = 2;
+    
+    // Pick teams: prefer those with position need OR top draft slots.
+    const teams = [...this.state.teams];
+    // Score each team's interest in this player
+    const scored = teams.map(t => {
+      const needs = this.calculateTeamNeeds ? this.calculateTeamNeeds(t) : {};
+      const posNeed = (needs[player.position] || 0);
+      // Tanking teams (worst record last year) draft early — they need everyone
+      const priorWins = t.priorYearWins !== undefined ? t.priorYearWins : 8;
+      const draftSlot = 17 - priorWins; // rough — worse teams pick earlier
+      const draftFit = Math.max(0, 30 - Math.abs(draftSlot - this._gradeToDraftSlot(grade)));
+      const interest = posNeed * 2 + draftFit * 0.5 + Math.random() * 8;
+      return { team: t, interest };
+    });
+    scored.sort((a, b) => b.interest - a.interest);
+    const picked = scored.slice(0, numInterviews);
+    
+    // Question banks by position. Mix of football-specific and character questions.
+    const questionBank = this._buildInterviewQuestionBank(player.position);
+    
+    return picked.map(({ team }) => ({
+      teamId: team.id,
+      // Pick 3 random questions from the bank
+      questions: this._shuffleArray([...questionBank]).slice(0, 3).map(q => ({
+        prompt: q.prompt,
+        options: q.options
+      })),
+      answers: [],
+      completed: false,
+      finalInterest: 50 // baseline; updated when interview completes
+    }));
+  },
+  
+  // Helper: convert a prospect grade to an approximate draft slot (1-224)
+  _gradeToDraftSlot(grade) {
+    if (grade >= 95) return 3;
+    if (grade >= 90) return 10;
+    if (grade >= 85) return 20;
+    if (grade >= 80) return 50;
+    if (grade >= 75) return 100;
+    if (grade >= 70) return 150;
+    return 200;
+  },
+  
+  // Helper: shuffle array in place
+  _shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  },
+  
+  // INTERVIEW QUESTION BANK — pool of questions an NFL team might ask a prospect. Each question
+  // has 3 possible answers tagged with an effect: GOOD (+interest), NEUTRAL (no change), BAD (-).
+  // Questions mix football-specific (position dependent) and character/leadership.
+  _buildInterviewQuestionBank(position) {
+    // Universal questions
+    const universal = [
+      {
+        prompt: 'A teammate is publicly criticizing the coaching staff in the locker room. What do you do?',
+        options: [
+          { text: 'Pull him aside privately and tell him to keep team disputes in-house.', effect: 'GOOD' },
+          { text: 'Stay out of it — not my business.', effect: 'NEUTRAL' },
+          { text: 'Agree with him publicly if I think he\'s right.', effect: 'BAD' }
+        ]
+      },
+      {
+        prompt: 'Walk me through what you\'d do if I drafted you and asked you to back up our starter for a year.',
+        options: [
+          { text: 'Use it to learn the playbook and prove I belong when my chance comes.', effect: 'GOOD' },
+          { text: 'I\'d be disappointed but I\'d compete every day in practice.', effect: 'NEUTRAL' },
+          { text: 'I came here to start. I\'d want a trade.', effect: 'BAD' }
+        ]
+      },
+      {
+        prompt: 'What\'s the biggest mistake you made last season, and how did you respond?',
+        options: [
+          { text: 'I have specific examples I studied on film and worked to fix.', effect: 'GOOD' },
+          { text: 'I had a few — I\'m always working on details.', effect: 'NEUTRAL' },
+          { text: 'I don\'t really make many mistakes.', effect: 'BAD' }
+        ]
+      },
+      {
+        prompt: 'How do you handle losing?',
+        options: [
+          { text: 'I let it sting, study the tape, then move on by Tuesday.', effect: 'GOOD' },
+          { text: 'I move on quickly — can\'t dwell on it.', effect: 'NEUTRAL' },
+          { text: 'I don\'t really lose much.', effect: 'BAD' }
+        ]
+      },
+      {
+        prompt: 'Why should our franchise pick you over the next guy on the board?',
+        options: [
+          { text: 'I\'ll outwork everyone in your building. Production will follow.', effect: 'GOOD' },
+          { text: 'My tape speaks for itself.', effect: 'NEUTRAL' },
+          { text: 'I\'m the best player available, period.', effect: 'BAD' }
+        ]
+      },
+      {
+        prompt: 'What does your pre-game routine look like?',
+        options: [
+          { text: 'Specific film study Friday, mental walkthrough Saturday, music + stretch Sunday morning.', effect: 'GOOD' },
+          { text: 'Get my body right, get my mind right.', effect: 'NEUTRAL' },
+          { text: 'I just show up and play.', effect: 'BAD' }
+        ]
+      }
+    ];
+    
+    // Position-specific questions
+    const positional = {
+      QB: [
+        {
+          prompt: 'It\'s 3rd-and-7. Defense shows Cover 2. You called a deep cross. What\'s your read?',
+          options: [
+            { text: 'Hot-route the slot to the seam — Cover 2 vulnerable between the safeties.', effect: 'GOOD' },
+            { text: 'Take the safe checkdown and live to fight on 4th down.', effect: 'NEUTRAL' },
+            { text: 'Run the original play — trust my arm.', effect: 'BAD' }
+          ]
+        },
+        {
+          prompt: 'How do you read defenses pre-snap?',
+          options: [
+            { text: 'I start with the safeties, then check the corners\' depth and the MIKE\'s alignment.', effect: 'GOOD' },
+            { text: 'Look at the safeties.', effect: 'NEUTRAL' },
+            { text: 'My coach tells me what to look for.', effect: 'BAD' }
+          ]
+        }
+      ],
+      RB: [
+        {
+          prompt: 'Pass pro: you\'ve got the will linebacker on a blitz, but the slot is opening for a hot. What do you do?',
+          options: [
+            { text: 'Stay in to chip the LB so my QB stays clean — the hot is the QB\'s read.', effect: 'GOOD' },
+            { text: 'Release immediately to the hot route.', effect: 'NEUTRAL' },
+            { text: 'Whatever the play call says.', effect: 'BAD' }
+          ]
+        }
+      ],
+      WR: [
+        {
+          prompt: 'You\'re running a slant and the corner jams you off-line. How do you react?',
+          options: [
+            { text: 'Use my hands to swim off, get back to the stem, keep the timing.', effect: 'GOOD' },
+            { text: 'Push through and run the route slower.', effect: 'NEUTRAL' },
+            { text: 'Complain to the ref about the contact.', effect: 'BAD' }
+          ]
+        }
+      ],
+      EDGE: [
+        {
+          prompt: 'You\'re getting chipped by the TE every play. How do you adjust?',
+          options: [
+            { text: 'Counter with an inside move, force them to choose who to help.', effect: 'GOOD' },
+            { text: 'Power through the chip.', effect: 'NEUTRAL' },
+            { text: 'Ask my coach for a stunt.', effect: 'BAD' }
+          ]
+        }
+      ],
+      CB: [
+        {
+          prompt: 'You\'re in press man on a vertical route. The receiver gets a step. How do you recover?',
+          options: [
+            { text: 'Find the receiver\'s hands when the ball arrives — play the catch, not the man.', effect: 'GOOD' },
+            { text: 'Try to push him out of bounds.', effect: 'NEUTRAL' },
+            { text: 'Tackle him before the ball gets there.', effect: 'BAD' }
+          ]
+        }
+      ]
+    };
+    
+    return [...universal, ...(positional[position] || [])];
+  },
+  
+  // INTERVIEW UI — render the modal with the questions for one team. The user picks answers,
+  // and at the end the team's interest level is calculated.
+  startInterview(interviewIdx) {
+    const userPlayer = this.getUserPlayer();
+    if (!userPlayer || !userPlayer.teamInterviews) return;
+    const interview = userPlayer.teamInterviews[interviewIdx];
+    if (!interview || interview.completed) return;
+    
+    // We render the interview as a multi-step modal — show one question at a time.
+    this._activeInterview = { idx: interviewIdx, questionIdx: 0, answers: [] };
+    this._renderInterviewQuestion();
+  },
+  
+  _renderInterviewQuestion() {
+    const ai = this._activeInterview;
+    if (!ai) return;
+    const userPlayer = this.getUserPlayer();
+    const interview = userPlayer.teamInterviews[ai.idx];
+    const team = this.state.teams[interview.teamId];
+    const q = interview.questions[ai.questionIdx];
+    if (!q) {
+      // Done with all questions — score the interview
+      this._completeInterview();
+      return;
+    }
+    
+    let body = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:12px;border-left:3px solid ' + team.primary + '">' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">QUESTION ' + (ai.questionIdx + 1) + ' OF ' + interview.questions.length + '</div>' +
+      '<div style="margin-top:6px;font-size:14px;line-height:1.5">' + q.prompt + '</div>' +
+      '</div>';
+    
+    body += '<div style="display:flex;flex-direction:column;gap:8px">';
+    q.options.forEach((opt, i) => {
+      body += '<button class="btn" style="text-align:left;padding:12px 14px;justify-content:flex-start;line-height:1.4;height:auto;white-space:normal" onclick="game._answerInterviewQuestion(' + i + ')">' + opt.text + '</button>';
+    });
+    body += '</div>';
+    
+    this.showModal('Interview · ' + team.city + ' ' + team.name, body);
+  },
+  
+  _answerInterviewQuestion(optionIdx) {
+    const ai = this._activeInterview;
+    if (!ai) return;
+    const userPlayer = this.getUserPlayer();
+    const interview = userPlayer.teamInterviews[ai.idx];
+    const q = interview.questions[ai.questionIdx];
+    const opt = q.options[optionIdx];
+    ai.answers.push({ questionIdx: ai.questionIdx, optionIdx, effect: opt.effect });
+    ai.questionIdx++;
+    this._renderInterviewQuestion();
+  },
+  
+  _completeInterview() {
+    const ai = this._activeInterview;
+    if (!ai) return;
+    const userPlayer = this.getUserPlayer();
+    const interview = userPlayer.teamInterviews[ai.idx];
+    const team = this.state.teams[interview.teamId];
+    
+    // Score: each GOOD = +12, NEUTRAL = 0, BAD = -10. Base 50 interest.
+    let interest = 50;
+    ai.answers.forEach(a => {
+      if (a.effect === 'GOOD') interest += 12;
+      else if (a.effect === 'BAD') interest -= 10;
+    });
+    interest = Math.max(10, Math.min(95, interest));
+    interview.answers = ai.answers;
+    interview.completed = true;
+    interview.finalInterest = interest;
+    
+    // Tiny grade nudge — sum across all completed interviews affects prospectGrade by ±2 total
+    const totalCompleted = userPlayer.teamInterviews.filter(i => i.completed);
+    const avgInterest = totalCompleted.reduce((s, i) => s + i.finalInterest, 0) / Math.max(1, totalCompleted.length);
+    const gradeBump = ((avgInterest - 50) / 50) * 1.5; // ±1.5 max
+    if (userPlayer._interviewBump !== undefined) {
+      userPlayer.prospectGrade -= userPlayer._interviewBump; // undo previous bump
+    }
+    userPlayer._interviewBump = gradeBump;
+    userPlayer.prospectGrade = Math.max(40, Math.min(99, userPlayer.prospectGrade + gradeBump));
+    
+    // Show outcome modal
+    let outcomeText, outcomeColor;
+    if (interest >= 80) { outcomeText = 'STRONG IMPRESSION'; outcomeColor = 'var(--success)'; }
+    else if (interest >= 60) { outcomeText = 'POSITIVE'; outcomeColor = 'var(--accent)'; }
+    else if (interest >= 40) { outcomeText = 'NEUTRAL'; outcomeColor = 'var(--warning)'; }
+    else { outcomeText = 'NEGATIVE'; outcomeColor = 'var(--danger)'; }
+    
+    const goodCount = ai.answers.filter(a => a.effect === 'GOOD').length;
+    const badCount = ai.answers.filter(a => a.effect === 'BAD').length;
+    
+    let body = '<div style="background:var(--surface);padding:18px;margin-bottom:14px;text-align:center">' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600">INTERVIEW RESULT</div>' +
+      '<div style="font-size:24px;font-weight:700;margin-top:8px;color:' + outcomeColor + '">' + outcomeText + '</div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-top:6px">' + team.city + ' ' + team.name + ' · Interest level: ' + interest + '%</div>' +
+      '</div>';
+    
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;text-align:center">' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">STRONG ANSWERS</div>' +
+      '<div style="font-size:22px;font-weight:700;color:var(--success)">' + goodCount + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">NEUTRAL</div>' +
+      '<div style="font-size:22px;font-weight:700">' + (ai.answers.length - goodCount - badCount) + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">WEAK</div>' +
+      '<div style="font-size:22px;font-weight:700;color:var(--danger)">' + badCount + '</div></div>' +
+      '</div></div>';
+    
+    body += '<div class="muted" style="font-size:12px;text-align:center;margin-bottom:14px">Your overall draft stock is now ' + userPlayer.prospectGrade.toFixed(1) + ' (' + (gradeBump > 0 ? '+' : '') + gradeBump.toFixed(2) + ' from interviews so far).</div>';
+    body += '<button class="btn btn-success" style="width:100%" onclick="closeModal();game.render()">Continue</button>';
+    
+    this.showModal('Interview complete · ' + team.city + ' ' + team.name, body);
+    this._activeInterview = null;
+    this.saveGame();
   },
 
   // Generate combine drill results from a player's abilities. Returns an object with drill scores,
@@ -14022,6 +15016,214 @@ let game = {
         '<div class="headline-body">' + (h.body || '') + '</div></div>';
     });
     news.innerHTML = html;
+  },
+
+  // DECLARATION CHOICE POPUP — pops after the user's junior season concludes. The user can
+  // either (a) declare early for the NFL Draft now, or (b) come back for senior year with a
+  // projected grade improvement. Real college football: top-50 graded juniors face this exact
+  // decision every January. We surface the trade-off explicitly so the user can weigh stock.
+  showDeclarationChoicePopup() {
+    const choice = this.state.career && this.state.career.pendingDeclarationChoice;
+    if (!choice) return;
+    const userPlayer = this.getUserPlayer();
+    if (!userPlayer) return;
+    
+    const currentGrade = choice.prospectGrade;
+    const projectedGrade = choice.projectedSeniorGrade;
+    const projectionDelta = projectedGrade - currentGrade;
+    
+    // Draft projection text helper
+    const projText = (grade) => {
+      if (grade >= 95) return 'Top 5 pick';
+      if (grade >= 90) return 'Top 15 pick';
+      if (grade >= 85) return 'Round 1';
+      if (grade >= 78) return 'Rounds 1-2';
+      if (grade >= 72) return 'Rounds 2-3';
+      if (grade >= 65) return 'Rounds 3-5';
+      if (grade >= 58) return 'Rounds 5-7';
+      return 'UDFA';
+    };
+    
+    const projDeltaText = projectionDelta > 0
+      ? '<span style="color:var(--success);font-weight:600">+' + projectionDelta.toFixed(1) + '</span>'
+      : projectionDelta < 0
+      ? '<span style="color:var(--danger);font-weight:600">' + projectionDelta.toFixed(1) + '</span>'
+      : '<span class="muted">no change</span>';
+    
+    let body = '<div style="background:var(--surface);padding:18px;margin-bottom:14px;border-left:3px solid var(--accent)">' +
+      '<div style="font-weight:600;font-size:13px;margin-bottom:6px">Junior year is over. Time to decide your future.</div>' +
+      '<div class="muted" style="font-size:12px">You\'ve completed your third year of college eligibility. You have a choice: enter the NFL Draft now, or come back for one more year and try to climb the boards.</div>' +
+      '</div>';
+    
+    // OPTION A: Declare now
+    body += '<div style="background:var(--surface);padding:16px;margin-bottom:12px">' +
+      '<div style="font-weight:700;font-size:14px;margin-bottom:8px;color:var(--accent)">Option A: Declare for the NFL Draft</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:10px">' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">CURRENT GRADE</div>' +
+      '<div style="font-size:22px;font-weight:700">' + currentGrade.toFixed(1) + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">PROJECTION</div>' +
+      '<div style="font-size:14px;font-weight:600;margin-top:4px">' + projText(currentGrade) + '</div></div>' +
+      '</div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:10px">Skip the senior season. Begin the pre-draft process: combine, interviews, draft night. Your stock is locked at today\'s grade.</div>' +
+      '<button class="btn btn-success" style="width:100%" onclick="game.resolveUserDeclarationChoice(true)">Declare for the NFL Draft</button>' +
+      '</div>';
+    
+    // OPTION B: Return for senior year
+    body += '<div style="background:var(--surface);padding:16px;margin-bottom:12px">' +
+      '<div style="font-weight:700;font-size:14px;margin-bottom:8px">Option B: Return for senior year</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:10px">' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">PROJECTED GRADE</div>' +
+      '<div style="font-size:22px;font-weight:700">' + projectedGrade.toFixed(1) + ' ' + projDeltaText + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">PROJECTION</div>' +
+      '<div style="font-size:14px;font-weight:600;margin-top:4px">' + projText(projectedGrade) + '</div></div>' +
+      '</div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:10px">Play one more college season. Most juniors who return see modest gains, but the wrong injury or a down year can hurt your stock. Senior leadership and another year of tape matter to NFL teams.</div>' +
+      '<button class="btn" style="width:100%" onclick="game.resolveUserDeclarationChoice(false)">Return for senior year</button>' +
+      '</div>';
+    
+    this.showModal('Decision time · End of Junior year', body);
+  },
+  
+  // Handle the user's declaration choice — declare or return for senior year.
+  // Called from the popup buttons. Updates the user player's prospect state accordingly.
+  resolveUserDeclarationChoice(declare) {
+    const choice = this.state.career && this.state.career.pendingDeclarationChoice;
+    if (!choice) { closeModal(); return; }
+    const userPlayer = this.getUserPlayer();
+    if (!userPlayer) { closeModal(); return; }
+    
+    if (declare) {
+      // Declare: the user becomes part of this year's draft pool. We need to:
+      // 1. Move them from collegeProspects → pendingDraftClass as a graduate
+      // 2. Mark declaredEarly = true
+      // 3. Restore their prospectGrade to the JUNIOR-year grade (no senior bump)
+      userPlayer.declaredEarly = true;
+      userPlayer.prospectGrade = choice.prospectGrade;
+      userPlayer.year = 'Junior';
+      // Push into pendingDraftClass and remove from collegeProspects.
+      if (!this.state.pendingDraftClass) this.state.pendingDraftClass = [];
+      this.state.pendingDraftClass.push(userPlayer);
+      this.state.collegeProspects = this.state.collegeProspects.filter(p => p.id !== userPlayer.id);
+      this.addHeadline({
+        type: 'champ',
+        title: userPlayer.name + ' declares for the NFL Draft',
+        body: 'Forgoes senior eligibility. Projected: ' + (
+          choice.prospectGrade >= 95 ? 'Top 5 pick' :
+          choice.prospectGrade >= 90 ? 'Top 15 pick' :
+          choice.prospectGrade >= 85 ? 'Round 1' :
+          choice.prospectGrade >= 78 ? 'Rounds 1-2' :
+          choice.prospectGrade >= 72 ? 'Rounds 2-3' : 'Day 3'
+        ) + '.'
+      });
+    } else {
+      // Return — they already got the senior bump in advanceCollegeSeason. Nothing else to do.
+      this.addHeadline({
+        title: userPlayer.name + ' will return for senior year',
+        body: 'Forgoes early NFL Draft entry. Projected senior-year grade: ' + choice.projectedSeniorGrade.toFixed(1) + '.'
+      });
+    }
+    
+    // Clear the pending choice
+    this.state.career.pendingDeclarationChoice = null;
+    this._declChoiceShown = false;
+    closeModal();
+    this.render();
+    this.saveGame();
+  },
+
+  // DRAFT NIGHT CELEBRATION — fires when the user player is selected in the NFL Draft.
+  // Big celebratory modal with confetti emojis, team welcome message, draft slot, contract
+  // details, and a "Welcome to the NFL" stat box. Real NFL: this is the most memorable
+  // moment of a young player's career — should feel like a moment.
+  showDraftCelebration(celebration) {
+    const player = this.state.players[celebration.playerId];
+    if (!player) return;
+    const team = this.state.teams[celebration.teamId];
+    if (!team) return;
+    
+    const overall = celebration.overall;
+    const round = celebration.round;
+    const pickInRound = ((overall - 1) % 32) + 1;
+    
+    // Round-specific celebration vibe
+    let headline, subline, vibe;
+    if (overall === 1) {
+      headline = '🎉 FIRST OVERALL PICK 🎉';
+      subline = 'A franchise-altering moment.';
+      vibe = 'GENERATIONAL';
+    } else if (overall <= 5) {
+      headline = '🎉 TOP 5 PICK 🎉';
+      subline = 'A star is born.';
+      vibe = 'ELITE PROSPECT';
+    } else if (overall <= 15) {
+      headline = '🎉 TOP 15 PICK 🎉';
+      subline = 'Day-one starter.';
+      vibe = 'ROUND 1 LOCK';
+    } else if (overall <= 32) {
+      headline = '🎉 FIRST ROUND 🎉';
+      subline = 'Welcome to Round 1.';
+      vibe = 'ROUND 1';
+    } else if (round === 2) {
+      headline = '🎯 SECOND ROUND PICK';
+      subline = 'Day 2 — high-value selection.';
+      vibe = 'DAY 2';
+    } else if (round === 3) {
+      headline = '🎯 THIRD ROUND PICK';
+      subline = 'Strong opportunity to contribute.';
+      vibe = 'DAY 2';
+    } else if (round <= 5) {
+      headline = '🏈 ROUND ' + round;
+      subline = 'A chance to prove yourself.';
+      vibe = 'DAY 3';
+    } else {
+      headline = '🏈 ROUND ' + round;
+      subline = 'Make the roster, change the story.';
+      vibe = 'DEEP DAY 3';
+    }
+    
+    const contract = player.contract;
+    const contractStr = contract
+      ? contract.years + '-year, ' + formatMoney(contract.totalValue) + ' (' + formatMoney(contract.aav) + '/yr)'
+      : 'Contract pending';
+    
+    // The big celebration banner
+    let body = '<div style="background:linear-gradient(135deg, ' + team.primary + ' 0%, ' + team.primary + 'DD 100%);padding:32px 24px;text-align:center;color:#fff;margin-bottom:18px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">' + vibe + '</div>' +
+      '<div style="font-size:28px;font-weight:800;margin-top:10px;letter-spacing:0.5px">' + headline + '</div>' +
+      '<div style="font-size:14px;margin-top:6px;opacity:0.9">' + subline + '</div>' +
+      '<div style="margin-top:18px;font-size:16px;font-weight:600">With the <span style="font-size:22px">#' + overall + '</span> overall pick</div>' +
+      '<div style="margin-top:6px;font-size:18px;font-weight:700">the ' + team.city + ' ' + team.name + '</div>' +
+      '<div style="margin-top:4px;font-size:14px;opacity:0.9">select</div>' +
+      '<div style="margin-top:8px;font-size:24px;font-weight:800;letter-spacing:0.5px">' + player.name + '</div>' +
+      '<div style="margin-top:4px;font-size:13px;opacity:0.9">' + player.position + ' · ' + (player.collegeSchool || 'College') + '</div>' +
+      '</div>';
+    
+    // Stats panel
+    body += '<div style="background:var(--surface);padding:16px;margin-bottom:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px;text-align:center">' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">OVERALL</div>' +
+      '<div style="font-size:24px;font-weight:700">#' + overall + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">ROUND</div>' +
+      '<div style="font-size:24px;font-weight:700">' + round + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">PICK IN ROUND</div>' +
+      '<div style="font-size:24px;font-weight:700">' + pickInRound + '</div></div>' +
+      '</div>';
+    
+    // Contract panel
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">ROOKIE CONTRACT</div>' +
+      '<div style="font-size:15px;font-weight:600;margin-top:4px">' + contractStr + '</div>' +
+      '</div>';
+    
+    // Welcome to the NFL message
+    const hc = this.getTeamHC ? this.getTeamHC(team) : null;
+    const welcomeMsg = hc
+      ? '"' + player.name + '? Welcome to the ' + team.name + '. We picked you because we believe in you. Now go earn it." — HC ' + hc.name
+      : 'Welcome to the NFL. Your career starts now.';
+    body += '<div style="background:var(--surface-2);padding:14px 16px;margin-bottom:14px;font-size:12px;font-style:italic;color:var(--text-muted);line-height:1.6;border-left:2px solid var(--accent)">' + welcomeMsg + '</div>';
+    
+    body += '<button class="btn btn-success" style="width:100%" onclick="closeModal();game.render()">Begin NFL career →</button>';
+    
+    this.showModal('Draft Night · You\'re going pro!', body);
   },
 
   // POST-GAME PLAYER CARD — pops after the user's game each week (college OR NFL).
@@ -14412,15 +15614,15 @@ let game = {
     const top25 = live.slice(0, 25);
     let html = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
       '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:10px">TOP 25 · AFTER WEEK ' + (this.state.collegeWeek || 0) + '</div>' +
-      '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:2px 18px;font-size:11px">';
+      '<div style="font-size:11px">';
     top25.forEach((t, i) => {
       const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
       const primary = meta ? meta.primary : '#888';
-      html += '<div style="display:flex;align-items:baseline;gap:6px;padding:2px 0">' +
-        '<span style="opacity:0.5;width:18px;text-align:right;font-family:var(--font-mono)">' + (i + 1) + '</span>' +
-        '<span style="width:3px;height:11px;background:' + primary + ';display:inline-block"></span>' +
-        '<span style="cursor:pointer;text-decoration:underline" onclick="closeModal();game.showCollegeCard(\'' + t.abbr + '\')">' + (meta ? meta.name : t.name) + '</span>' +
-        '<span class="muted" style="font-family:var(--font-mono);margin-left:auto">' + t.record + '</span>' +
+      html += '<div style="display:flex;align-items:baseline;gap:8px;padding:3px 0">' +
+        '<span style="opacity:0.5;width:22px;text-align:right;font-family:var(--font-mono);font-size:11px">' + (i + 1) + '</span>' +
+        '<span style="width:3px;height:11px;background:' + primary + ';display:inline-block;flex-shrink:0"></span>' +
+        '<span style="cursor:pointer;text-decoration:underline;flex:1">' + (meta ? meta.name : t.name) + '</span>' +
+        '<span class="muted" style="font-family:var(--font-mono);font-size:11px">' + t.record + '</span>' +
         '</div>';
     });
     html += '</div></div>';
