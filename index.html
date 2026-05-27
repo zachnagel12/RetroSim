@@ -35,6 +35,8 @@ main { display: grid; grid-template-columns: 200px 1fr 320px; overflow: hidden; 
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 16px 0; overflow-y: auto; }
 .nav-section { margin-bottom: 20px; }
 .nav-title { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; padding: 0 20px 8px; font-weight: 600; }
+.nav-subtitle { font-size: 9.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.7px; padding: 10px 20px 4px; font-weight: 600; opacity: 0.7; }
+.nav-subtitle:first-child { padding-top: 4px; }
 .nav-item { padding: 7px 20px; cursor: pointer; font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 10px; border-left: 2px solid transparent; }
 .nav-item:hover { background: var(--surface-2); }
 .nav-item.active { background: var(--surface-2); border-left-color: var(--text); font-weight: 500; }
@@ -44,7 +46,15 @@ main { display: grid; grid-template-columns: 200px 1fr 320px; overflow: hidden; 
 .nav-item.playoffs-nav.active { border-left-color: var(--accent); }
 .nav-icon { width: 16px; display: inline-flex; justify-content: center; opacity: 0.6; }
 .nav-item.active .nav-icon { opacity: 1; }
-/* Accordion groups: parent header is clickable, children slide in below */
+/* NFL / College top-level tab strip — pill-style buttons, sticky-looking near top of sidebar */
+.nav-tab-strip { display: flex; gap: 0; padding: 6px 14px 12px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.nav-tab { flex: 1; background: transparent; border: 1px solid var(--border-strong); padding: 7px 0; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--text-muted); cursor: pointer; letter-spacing: 0.5px; transition: background 0.1s, color 0.1s; }
+.nav-tab:first-child { border-right: 0; }
+.nav-tab.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+.nav-tab:hover:not(.active) { color: var(--text); background: var(--surface-2); }
+.nav-pane .nav-item { padding-left: 26px; font-size: 12.5px; }
+.nav-pane .nav-subtitle { padding-left: 22px; }
+/* Accordion groups: parent header is clickable, children slide in below (legacy, kept for compat) */
 .nav-group { margin-bottom: 4px; }
 .nav-group-header { padding: 8px 16px 8px 20px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text); display: flex; align-items: center; justify-content: space-between; letter-spacing: 0.3px; user-select: none; }
 .nav-group-header:hover { background: var(--surface-2); }
@@ -377,57 +387,48 @@ select { font-family: inherit; }
         <div class="nav-title">Postseason</div>
         <div class="nav-item playoffs-nav" data-view="playoffs"><span class="nav-icon">◆</span><span>Playoffs</span></div>
       </div>
-      <div class="nav-section">
-        <div class="nav-group expanded" data-group="league">
-          <div class="nav-group-header" onclick="game.toggleNavGroup('league')">
-            <div class="nav-group-header-left"><span class="nav-icon">▦</span><span>League</span></div>
-            <span class="nav-group-chevron">▶</span>
-          </div>
-          <div class="nav-group-items">
-            <div class="nav-item active" data-view="schedule"><span>Schedule</span></div>
-            <div class="nav-item" data-view="standings"><span>Standings</span></div>
-            <div class="nav-item" data-view="teams"><span>Teams</span></div>
-            <div class="nav-item" data-view="players"><span>Players</span></div>
-            <div class="nav-item" data-view="freeagents"><span>Free Agents</span></div>
-            <div class="nav-item" data-view="playoffpicture"><span>Playoff Picture</span></div>
-            <div class="nav-item user-team-item" data-view="trades" id="navTrades" style="display:none"><span>Trades</span></div>
-          </div>
-        </div>
-        <div class="nav-group" data-group="insights">
-          <div class="nav-group-header" onclick="game.toggleNavGroup('insights')">
-            <div class="nav-group-header-left"><span class="nav-icon">∑</span><span>Insights</span></div>
-            <span class="nav-group-chevron">▶</span>
-          </div>
-          <div class="nav-group-items">
-            <div class="nav-item" data-view="statistics"><span>Statistics</span></div>
-            <div class="nav-item" data-view="awards"><span>Awards</span></div>
-          </div>
-        </div>
-        <div class="nav-group" data-group="history">
-          <div class="nav-group-header" onclick="game.toggleNavGroup('history')">
-            <div class="nav-group-header-left"><span class="nav-icon">★</span><span>History</span></div>
-            <span class="nav-group-chevron">▶</span>
-          </div>
-          <div class="nav-group-items">
-            <div class="nav-item" data-view="records"><span>Record Book</span></div>
-            <div class="nav-item" data-view="champions"><span>Champions</span></div>
-            <div class="nav-item" data-view="hof"><span>Hall of Fame</span></div>
-            <div class="nav-item" data-view="teamhistory"><span>Team History</span></div>
-          </div>
-        </div>
-        <div class="nav-group" data-group="college">
-          <div class="nav-group-header" onclick="game.toggleNavGroup('college')">
-            <div class="nav-group-header-left"><span class="nav-icon">▲</span><span>College</span></div>
-            <span class="nav-group-chevron">▶</span>
-          </div>
-          <div class="nav-group-items">
-            <div class="nav-item" data-view="collegetop25"><span>Top 25 Teams</span></div>
-            <div class="nav-item" data-view="prospects"><span>Top 100 Prospects</span></div>
-            <div class="nav-item" data-view="collegehistory"><span>College History</span></div>
-            <div class="nav-item" data-view="collegehof"><span>College HOF</span></div>
-          </div>
-        </div>
+      
+      <!-- NFL / College top-level tabs -->
+      <div class="nav-tab-strip">
+        <button class="nav-tab active" data-tab="nfl" onclick="game.setNavTab('nfl')">NFL</button>
+        <button class="nav-tab" data-tab="college" onclick="game.setNavTab('college')">College</button>
       </div>
+      
+      <!-- NFL pane -->
+      <div class="nav-section nav-pane" id="navPaneNFL">
+        <div class="nav-subtitle">Current</div>
+        <div class="nav-item active" data-view="schedule"><span>Schedule</span></div>
+        <div class="nav-item" data-view="standings"><span>Standings</span></div>
+        <div class="nav-item" data-view="teams"><span>Teams</span></div>
+        <div class="nav-item" data-view="players"><span>Players</span></div>
+        <div class="nav-item" data-view="freeagents"><span>Free Agents</span></div>
+        <div class="nav-item" data-view="playoffpicture"><span>Playoff Picture</span></div>
+        <div class="nav-item user-team-item" data-view="trades" id="navTrades" style="display:none"><span>Trades</span></div>
+        
+        <div class="nav-subtitle">Insights</div>
+        <div class="nav-item" data-view="statistics"><span>Statistics</span></div>
+        <div class="nav-item" data-view="awards"><span>Awards</span></div>
+        
+        <div class="nav-subtitle">History</div>
+        <div class="nav-item" data-view="records"><span>Record Book</span></div>
+        <div class="nav-item" data-view="champions"><span>Champions</span></div>
+        <div class="nav-item" data-view="hof"><span>Hall of Fame</span></div>
+        <div class="nav-item" data-view="teamhistory"><span>Team History</span></div>
+      </div>
+      
+      <!-- College pane -->
+      <div class="nav-section nav-pane" id="navPaneCollege" style="display:none">
+        <div class="nav-subtitle">Current</div>
+        <div class="nav-item" data-view="collegetop25"><span>Top 25 Teams</span></div>
+        <div class="nav-item" data-view="prospects"><span>Top 100 Prospects</span></div>
+        <div class="nav-item" data-view="heismanrace"><span>Heisman Race</span></div>
+        <div class="nav-item" data-view="collegeplayoffs"><span>Playoff Picture</span></div>
+        
+        <div class="nav-subtitle">History</div>
+        <div class="nav-item" data-view="collegehistory"><span>College History</span></div>
+        <div class="nav-item" data-view="collegehof"><span>College HOF</span></div>
+      </div>
+      
       <div class="nav-section">
         <div class="nav-title">Settings</div>
         <div class="nav-item" data-view="about"><span class="nav-icon">◌</span><span>About</span></div>
@@ -1204,6 +1205,8 @@ let game = {
   statsTab: 'season',
 
   init() {
+    // Default top-level sidebar tab. Auto-switches based on the view the user navigates to.
+    this.navTab = 'nfl';
     // Show the slot picker — user can resume an existing slot or start a new game in any slot.
     // Previously this auto-loaded a single save; now we present 5 slots so the user can have
     // multiple parallel leagues (dynasty + coach career + player career, etc.).
@@ -1220,9 +1223,40 @@ let game = {
     });
   },
   
-  // Make sure the parent group of the active nav-item is expanded.
-  // Called after render() so the visible group reflects the current view.
+  // Switch between NFL and College top-level sidebar tabs. View itself is unchanged — this only
+  // controls which list of links is visible. If the user has navigated to a view that lives under
+  // the OTHER tab, syncNavGroupForActive will auto-switch tabs to keep state visually consistent.
+  setNavTab(tab) {
+    this.navTab = tab;
+    document.querySelectorAll('.nav-tab').forEach(t => {
+      if (t.dataset.tab === tab) t.classList.add('active');
+      else t.classList.remove('active');
+    });
+    const nflPane = document.getElementById('navPaneNFL');
+    const collegePane = document.getElementById('navPaneCollege');
+    if (nflPane) nflPane.style.display = tab === 'nfl' ? '' : 'none';
+    if (collegePane) collegePane.style.display = tab === 'college' ? '' : 'none';
+  },
+  
+  // Which top-level tab does a given view live under? Used for auto-switching.
+  _viewBelongsToTab(view) {
+    const collegeViews = new Set([
+      'collegetop25', 'prospects', 'heismanrace', 'collegeplayoffs',
+      'collegehistory', 'collegehof', 'college',
+      'myschool', 'myschoolschedule', 'myschoolstandings', 'collegeboxscore'
+    ]);
+    return collegeViews.has(view) ? 'college' : 'nfl';
+  },
+  
+  // Make sure the visible sidebar reflects the current view. Auto-switches NFL/College tab
+  // when the current view lives under the other tab.
   syncNavGroupForActive() {
+    // 1) Auto-switch NFL/College tab if the current view requires the other one
+    if (this.currentView) {
+      const targetTab = this._viewBelongsToTab(this.currentView);
+      if (this.navTab !== targetTab) this.setNavTab(targetTab);
+    }
+    // 2) Legacy nav-group accordion behavior — kept in case any other code still uses it
     const activeItem = document.querySelector('.nav-item.active');
     if (!activeItem) return;
     const parent = activeItem.closest('.nav-group');
@@ -1326,6 +1360,7 @@ let game = {
             '<div class="nav-item" data-view="myschool"><span class="nav-icon">▲</span><span>My School</span></div>' +
             '<div class="nav-item" data-view="myschoolschedule"><span class="nav-icon">▣</span><span>Schedule</span></div>' +
             '<div class="nav-item" data-view="myschoolstandings"><span class="nav-icon">≡</span><span>Standings</span></div>' +
+            '<div class="nav-item" data-view="heismanrace"><span class="nav-icon">◇</span><span>Heisman Race</span></div>' +
             '<div class="nav-item" data-view="collegeplayoffs"><span class="nav-icon">◆</span><span>Playoff Picture</span></div>';
         } else if (userPlayer && stage === 'declared') {
           playerCareerNav.innerHTML =
@@ -1460,43 +1495,207 @@ let game = {
   showPlayerCreation() {
     const namePool = () => this.generateName(2026);
     const suggestedName = namePool();
-    // School options grouped by tier for guided picking
-    const schools = COLLEGE_SCHOOLS.slice().sort((a, b) => b.prestige - a.prestige);
-    let schoolOpts = '';
-    schools.forEach(s => {
-      const tier = s.prestige >= 92 ? 'Blue Blood' : s.prestige >= 85 ? 'Elite' : s.prestige >= 78 ? 'Strong' : s.prestige >= 72 ? 'Mid-tier' : s.prestige >= 68 ? 'Solid' : 'Mid-major';
-      schoolOpts += '<option value="' + s.abbr + '">' + s.name + ' · ' + tier + '</option>';
-    });
     const positions = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
     let posOpts = '';
     positions.forEach(p => { posOpts += '<option value="' + p + '">' + p + '</option>'; });
     
-    document.getElementById('content').innerHTML = '<div class="welcome" style="max-width:560px">' +
+    // Build star-rating buttons. Each star tier maps to a recruit grade range matching real CFB recruiting.
+    // 5★ = 90-99 grade (elite), 4★ = 82-89, 3★ = 72-81, 2★ = 62-71, 1★ = 52-61, 0★ = walk-on 40-51.
+    const starInfo = [
+      { stars: 5, label: '★★★★★', range: '90-99 grade', desc: 'National recruit. Every program in the country wants you.' },
+      { stars: 4, label: '★★★★☆', range: '82-89 grade', desc: 'Top-tier prospect. Most major programs want you.' },
+      { stars: 3, label: '★★★☆☆', range: '72-81 grade', desc: 'Solid recruit. Many P5 + most G5 programs offer.' },
+      { stars: 2, label: '★★☆☆☆', range: '62-71 grade', desc: 'Mid-major caliber. Smaller schools recruit you.' },
+      { stars: 1, label: '★☆☆☆☆', range: '52-61 grade', desc: 'Sleeper. Only a few programs offer.' },
+      { stars: 0, label: '☆☆☆☆☆', range: '40-51 grade · walk-on', desc: 'Unranked. You may need to walk on.' }
+    ];
+    let starButtons = '<div style="display:flex;flex-direction:column;gap:6px">';
+    starInfo.forEach(s => {
+      starButtons +=
+        '<button class="star-rating-btn" data-stars="' + s.stars + '" onclick="game.selectStarRating(' + s.stars + ')" ' +
+        'style="text-align:left;padding:10px 14px;background:var(--bg);border:1px solid var(--border-strong);cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:14px">' +
+        '<span style="font-size:18px;color:#d4a017;letter-spacing:2px;min-width:120px">' + s.label + '</span>' +
+        '<span style="flex:1">' +
+        '<span style="font-size:13px;font-weight:600">' + s.range + '</span>' +
+        '<span style="display:block;font-size:11px;color:var(--text-muted);margin-top:2px">' + s.desc + '</span>' +
+        '</span></button>';
+    });
+    starButtons += '</div>';
+    
+    document.getElementById('content').innerHTML = '<div class="welcome" style="max-width:620px">' +
       '<h1 class="welcome-title">Create your prospect</h1>' +
-      '<p class="welcome-subtitle">Stage 2 · build your college prospect and start your football career</p>' +
+      '<p class="welcome-subtitle">Stage 2 · build your recruit, then pick a school from your offers</p>' +
       '<div style="background:var(--surface);border:1px solid var(--border);padding:20px;text-align:left;margin-top:16px">' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Your name</label>' +
       '<input id="playerNameInput" type="text" value="' + suggestedName + '" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"></div>' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Position</label>' +
       '<select id="playerPositionInput" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' + posOpts + '</select></div>' +
-      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">College</label>' +
-      '<select id="playerSchoolInput" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' + schoolOpts + '</select><div style="font-size:11px;color:var(--text-muted);margin-top:4px">Higher-prestige schools have stronger teammates and better visibility for NFL scouts.</div></div>' +
-      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Starting prospect grade</label>' +
-      '<input id="playerGradeInput" type="number" value="68" min="50" max="85" step="0.5" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"><div style="font-size:11px;color:var(--text-muted);margin-top:4px">60-75 is realistic for a freshman recruit. Your grade grows with each college season based on performance.</div></div>' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Star rating</label>' +
+      starButtons + '</div>' +
       '</div>' +
-      '<div style="margin-top:20px;display:flex;gap:8px;justify-content:center"><button class="btn" onclick="game.showModeChoice()">← Back</button>' +
-      '<button class="btn btn-primary" onclick="game.startPlayerCareer()">Start Career →</button></div>' +
+      '<div style="margin-top:20px;display:flex;gap:8px;justify-content:center">' +
+      '<button class="btn" onclick="game.showModeChoice()">← Back</button>' +
+      '</div></div>';
+  },
+  
+  // After the user clicks a star rating, generate scholarship offers and show them the offer list.
+  // The school they pick becomes their college home. Higher star ratings unlock more (and better) offers.
+  selectStarRating(stars) {
+    const name = document.getElementById('playerNameInput').value.trim() || this.generateName(2026);
+    const position = document.getElementById('playerPositionInput').value;
+    
+    // Map star tier → grade range
+    let grade;
+    if (stars === 5) grade = 90 + Math.random() * 9;
+    else if (stars === 4) grade = 82 + Math.random() * 7;
+    else if (stars === 3) grade = 72 + Math.random() * 9;
+    else if (stars === 2) grade = 62 + Math.random() * 9;
+    else if (stars === 1) grade = 52 + Math.random() * 9;
+    else grade = 40 + Math.random() * 11; // walk-on
+    grade = Math.round(grade * 10) / 10;
+    
+    // Generate offers. Number of offers + which schools depends on star tier.
+    // Real CFB recruiting: 5★ get 30+ offers, 4★ get 20-30, 3★ get 10-20, 2★ get 3-8, 1★ get 1-3, 0★ walk-on.
+    // We sort all schools by prestige descending. Top schools require higher stars to offer.
+    const schoolsByPrestige = COLLEGE_SCHOOLS.slice().sort((a, b) => b.prestige - a.prestige);
+    const offers = [];
+    
+    schoolsByPrestige.forEach((school, rankIdx) => {
+      // The TOP-15 schools (blue bloods + elite) only offer 4★+ recruits.
+      // Top 30 schools offer 3★+. Top 60 offer 2★+. Everyone offers 1★+.
+      const schoolTier = rankIdx < 15 ? 'top15' : rankIdx < 30 ? 'top30' : rankIdx < 60 ? 'top60' : 'rest';
+      let offerChance = 0;
+      if (stars === 5) {
+        // 5★ gets offers from essentially everyone
+        offerChance = schoolTier === 'top15' ? 0.95 : schoolTier === 'top30' ? 0.92 : schoolTier === 'top60' ? 0.85 : 0.70;
+      } else if (stars === 4) {
+        // 4★ gets most major offers but not all blue bloods
+        offerChance = schoolTier === 'top15' ? 0.55 : schoolTier === 'top30' ? 0.80 : schoolTier === 'top60' ? 0.75 : 0.50;
+      } else if (stars === 3) {
+        // 3★ gets a lot of offers, but NOT from the top 10-15 blue bloods.
+        // Top-15 explicitly excluded (zero chance) per user spec.
+        offerChance = schoolTier === 'top15' ? 0.0 : schoolTier === 'top30' ? 0.40 : schoolTier === 'top60' ? 0.60 : 0.50;
+      } else if (stars === 2) {
+        // 2★ — mostly mid-major and G5 offers
+        offerChance = schoolTier === 'top15' ? 0.0 : schoolTier === 'top30' ? 0.04 : schoolTier === 'top60' ? 0.18 : 0.32;
+      } else if (stars === 1) {
+        // 1★ — only G5 + lowest tier
+        offerChance = schoolTier === 'top15' ? 0.0 : schoolTier === 'top30' ? 0.0 : schoolTier === 'top60' ? 0.03 : 0.15;
+      } else {
+        // 0★ walk-on — handful of low-tier offers
+        offerChance = schoolTier === 'top15' ? 0.0 : schoolTier === 'top30' ? 0.0 : schoolTier === 'top60' ? 0.01 : 0.06;
+      }
+      if (Math.random() < offerChance) offers.push(school);
+    });
+    
+    // Guarantee at least 1 offer for 1★+ so the user always has a choice, and at least
+    // a walk-on slot for 0★ (we offer them the LOWEST prestige school as a walk-on option).
+    if (offers.length === 0) {
+      if (stars >= 1) {
+        // Pick a random G5 school as a fallback
+        const fallback = schoolsByPrestige[schoolsByPrestige.length - 1 - Math.floor(Math.random() * 5)];
+        offers.push(fallback);
+      } else {
+        // 0★ walk-on — give them ONE low-prestige walk-on offer
+        offers.push(schoolsByPrestige[schoolsByPrestige.length - 1]);
+      }
+    }
+    
+    // Stash the pending recruit info; the offer page will use it when the user picks a school
+    this.pendingRecruit = { name, position, stars, grade, offers: offers.map(s => s.abbr) };
+    this.renderOffersPage();
+  },
+  
+  // Render the offer-list page. User clicks a school card to commit.
+  renderOffersPage() {
+    const r = this.pendingRecruit;
+    if (!r) {
+      this.showPlayerCreation();
+      return;
+    }
+    const starLabel = '★'.repeat(r.stars) + '☆'.repeat(5 - r.stars);
+    let html = '<div class="welcome" style="max-width:780px">' +
+      '<h1 class="welcome-title">Your scholarship offers</h1>' +
+      '<p class="welcome-subtitle">' + r.name + ' · ' + r.position + ' · ' +
+      '<span style="color:#d4a017;letter-spacing:2px">' + starLabel + '</span> · ' +
+      'prospect grade ' + r.grade.toFixed(1) + '</p>' +
+      '<div style="margin-top:8px;font-size:12px;color:var(--text-muted)">' +
+      r.offers.length + ' school' + (r.offers.length === 1 ? '' : 's') + ' offering · click a school to commit' +
       '</div>';
+    
+    if (r.offers.length === 0) {
+      html += '<div class="empty-state" style="margin-top:20px">No offers. Try a different star rating.</div>';
+    } else {
+      // Sort offers by prestige descending so best is at top
+      const offerList = r.offers.map(abbr => COLLEGE_SCHOOLS.find(s => s.abbr === abbr)).filter(Boolean);
+      offerList.sort((a, b) => b.prestige - a.prestige);
+      
+      // Group offers by tier for visual grouping
+      const blueBloods = offerList.filter(s => s.prestige >= 92);
+      const elite = offerList.filter(s => s.prestige >= 85 && s.prestige < 92);
+      const strong = offerList.filter(s => s.prestige >= 78 && s.prestige < 85);
+      const mid = offerList.filter(s => s.prestige >= 72 && s.prestige < 78);
+      const solid = offerList.filter(s => s.prestige >= 68 && s.prestige < 72);
+      const midMajor = offerList.filter(s => s.prestige < 68);
+      
+      const renderSection = (label, schools) => {
+        if (schools.length === 0) return '';
+        let s = '<div style="margin-top:18px"><div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:8px">' + label + ' · ' + schools.length + '</div>';
+        s += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">';
+        schools.forEach(school => {
+          const conf = COLLEGE_CONFERENCES[school.conference] ? COLLEGE_CONFERENCES[school.conference].name : school.conference;
+          s += '<div onclick="game.commitToSchool(\'' + school.abbr + '\')" style="background:var(--bg);border:1px solid var(--border-strong);padding:12px;cursor:pointer;transition:background 0.1s" onmouseover="this.style.background=\'var(--surface-2)\'" onmouseout="this.style.background=\'var(--bg)\'">' +
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">' +
+            '<div style="width:4px;height:32px;background:' + school.primary + '"></div>' +
+            '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + school.name + '</div>' +
+            '<div style="font-size:10px;color:var(--text-muted);margin-top:2px">' + conf + '</div>' +
+            '</div></div>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px">' +
+            '<span style="color:var(--text-muted)">Prestige</span>' +
+            '<span style="font-family:var(--font-mono);font-weight:600">' + school.prestige + '</span>' +
+            '</div>' +
+            '</div>';
+        });
+        s += '</div></div>';
+        return s;
+      };
+      
+      html += renderSection('Blue bloods', blueBloods);
+      html += renderSection('Elite programs', elite);
+      html += renderSection('Strong programs', strong);
+      html += renderSection('Mid-tier', mid);
+      html += renderSection('Solid', solid);
+      html += renderSection('Mid-major', midMajor);
+    }
+    
+    html += '<div style="margin-top:24px;display:flex;gap:8px;justify-content:center">' +
+      '<button class="btn" onclick="game.showPlayerCreation()">← Change rating</button>' +
+      '</div></div>';
+    
+    document.getElementById('content').innerHTML = html;
+  },
+  
+  // User clicked a school card — commit to that school and start the career.
+  commitToSchool(schoolAbbr) {
+    const r = this.pendingRecruit;
+    if (!r) {
+      this.showPlayerCreation();
+      return;
+    }
+    if (!r.offers.includes(schoolAbbr)) {
+      alert('That school didn\'t offer you a scholarship.');
+      return;
+    }
+    this.playerCareerParams = { name: r.name, position: r.position, school: schoolAbbr, grade: r.grade, stars: r.stars };
+    this.pendingMode = 'default';
+    this.pendingRecruit = null;
+    this.startLeague(null);
   },
 
   startPlayerCareer() {
-    const name = document.getElementById('playerNameInput').value.trim() || this.generateName(2026);
-    const position = document.getElementById('playerPositionInput').value;
-    const school = document.getElementById('playerSchoolInput').value;
-    const grade = Math.max(50, Math.min(85, parseFloat(document.getElementById('playerGradeInput').value) || 68));
-    this.playerCareerParams = { name, position, school, grade };
-    this.pendingMode = 'default';
-    this.startLeague(null); // user isn't a GM; they're a college freshman
+    // Legacy fallback — kept in case any old UI still calls this. Routes to the new flow.
+    this.showPlayerCreation();
   },
 
   chooseMode(mode) {
@@ -1918,7 +2117,7 @@ let game = {
   },
 
   // Install user's prospect into the college pool. They start as a Freshman at the chosen school.
-  installUserPlayer({ name, position, school, grade }) {
+  installUserPlayer({ name, position, school, grade, stars }) {
     if (!this.state.collegeProspects) this.state.collegeProspects = [];
     const prospect = {
       id: 'user_prospect_' + Math.random().toString(36).slice(2, 10),
@@ -1929,7 +2128,8 @@ let game = {
       prospectGrade: Math.round(grade * 10) / 10,
       faceSeed: Math.floor(Math.random() * 1000000),
       classYear: this.state.year,
-      isUserControlled: true
+      isUserControlled: true,
+      recruitStars: stars !== undefined ? stars : null // 0-5 star recruit rating
     };
     this.state.collegeProspects.push(prospect);
     
@@ -1940,9 +2140,12 @@ let game = {
     
     const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === school);
     const schoolName = schoolInfo ? schoolInfo.name : school;
+    const starTag = (stars !== undefined && stars !== null)
+      ? (stars > 0 ? stars + '★ recruit · ' : 'Walk-on · ')
+      : '';
     this.addHeadline({
       title: name + ' enrolls at ' + schoolName,
-      body: 'Freshman ' + position + ' begins their college career. Initial scout grade: ' + prospect.prospectGrade.toFixed(1) + '.'
+      body: starTag + 'Freshman ' + position + ' begins their college career. Initial scout grade: ' + prospect.prospectGrade.toFixed(1) + '.'
     });
   },
 
@@ -2613,6 +2816,354 @@ let game = {
     return Math.round(25 + roll * 65); // 25-90 range
   },
 
+  // Realistic year-over-year prospect development. Models how college players actually progress:
+  // - Most see modest improvement (+0 to +4)
+  // - Some have breakout years (+5 to +8) — about 12%
+  // - A few regress (-1 to -3) due to injuries, coaching changes, etc. — about 10%
+  // - Position matters: QBs develop slower (peak as juniors/seniors), RBs star early
+  // - Star recruits (high prospect grade) plateau faster — already near ceiling
+  // Returns new prospectGrade, clamped to 40-99.9.
+  applyCollegeProgression(p, fromYear, toYear) {
+    const current = p.prospectGrade;
+    const position = p.position;
+    
+    // Base progression by year transition. Most growth happens early (Fr → So, So → Jr).
+    // Sr year is more of a "filling out" — small bump unless breakout.
+    let baseAvg, baseStdev;
+    if (fromYear === 'Freshman') {
+      baseAvg = 2.5; baseStdev = 2.2; // big developmental year
+    } else if (fromYear === 'Sophomore') {
+      baseAvg = 2.0; baseStdev = 2.0;
+    } else if (fromYear === 'Junior') {
+      baseAvg = 1.2; baseStdev = 1.8; // smaller bump in senior year
+    } else {
+      baseAvg = 0; baseStdev = 1.0;
+    }
+    
+    // Position-specific adjustments
+    let posMod = 0;
+    if (position === 'QB') {
+      // QBs need development time — extra bump as soph/jr
+      if (fromYear === 'Freshman' || fromYear === 'Sophomore') posMod = 0.8;
+      else if (fromYear === 'Junior') posMod = 0.4;
+    } else if (position === 'RB' || position === 'WR') {
+      // Skill positions star earlier — smaller bumps later
+      if (fromYear === 'Junior') posMod = -0.5;
+    } else if (position === 'OT' || position === 'OG' || position === 'C' || position === 'DT' || position === 'EDGE') {
+      // Trenches develop steadily — bigger bumps as upperclassmen (physical maturity)
+      if (fromYear === 'Sophomore' || fromYear === 'Junior') posMod = 0.6;
+    }
+    
+    // Ceiling effect: high-graded players plateau faster (near their max).
+    // A 92-grade player has less room to grow than a 75-grade player.
+    let ceilingMod = 0;
+    if (current >= 92) ceilingMod = -1.5;
+    else if (current >= 86) ceilingMod = -0.8;
+    else if (current >= 78) ceilingMod = -0.3;
+    else if (current < 60) ceilingMod = 0.4; // bigger upside for lower-graded players
+    
+    // Floor effect: very low-graded players sometimes wash out (no progress or regression).
+    let floorMod = 0;
+    if (current < 55) floorMod = -0.3;
+    
+    const expectedDelta = baseAvg + posMod + ceilingMod + floorMod;
+    
+    // Roll a normally-distributed delta. ~10% chance of regression, ~12% chance of breakout.
+    const roll = Math.random();
+    let delta;
+    if (roll < 0.10) {
+      // Regression: -1 to -3 (rare but happens)
+      delta = -1 - Math.random() * 2;
+    } else if (roll < 0.22) {
+      // Breakout: +5 to +9
+      delta = 5 + Math.random() * 4;
+    } else {
+      // Normal: bell-curve around expected
+      // Use sum of two uniforms for a triangle distribution (cheap approximation of normal)
+      const noise = (Math.random() + Math.random() - 1) * baseStdev * 1.4;
+      delta = expectedDelta + noise;
+    }
+    
+    let newGrade = current + delta;
+    newGrade = Math.max(40, Math.min(99.9, newGrade));
+    return Math.round(newGrade * 10) / 10;
+  },
+
+  // TRANSFER PORTAL — runs each offseason after aging, before freshman refill.
+  // Real CFB transfer portal sees thousands of moves annually. We model two motivations:
+  //   (1) GOOD PLAYER ON BAD TEAM: a high-grade player on a mid/low prestige school transfers UP
+  //       to a higher-prestige program for more visibility, playoff opportunity, NFL exposure.
+  //   (2) BURIED ON DEPTH CHART: a backup at a top school stuck behind better prospects transfers
+  //       DOWN to a lower-prestige school where they can start.
+  // Some realism rules:
+  //   - User's own player NEVER transfers (we don't move them without permission)
+  //   - Seniors don't transfer (one year left, not worth)
+  //   - Walk-ons / very low grades (<55) rarely transfer (no offers anyway)
+  //   - Transfer pool is bounded: ~5-8% of eligible non-senior college players transfer
+  simTransferPortal() {
+    const prestigeMap = this.state.collegePrestige || {};
+    const pool = this.state.collegeProspects || [];
+    if (pool.length === 0) return;
+    
+    // Build current per-school per-position depth so we know who's buried
+    const depthByPosBySchool = {}; // school → pos → [players sorted desc]
+    pool.forEach(p => {
+      if (!depthByPosBySchool[p.school]) depthByPosBySchool[p.school] = {};
+      if (!depthByPosBySchool[p.school][p.position]) depthByPosBySchool[p.school][p.position] = [];
+      depthByPosBySchool[p.school][p.position].push(p);
+    });
+    Object.values(depthByPosBySchool).forEach(byPos => {
+      Object.values(byPos).forEach(arr => arr.sort((a, b) => b.prospectGrade - a.prospectGrade));
+    });
+    
+    // Schools sorted by prestige descending (used to find transfer destinations)
+    const schoolsByPrestige = COLLEGE_SCHOOLS.slice().sort((a, b) => {
+      const ap = prestigeMap[a.abbr] !== undefined ? prestigeMap[a.abbr] : a.prestige;
+      const bp = prestigeMap[b.abbr] !== undefined ? prestigeMap[b.abbr] : b.prestige;
+      return bp - ap;
+    });
+    
+    const transferLog = []; // for headline summary
+    
+    // ===== HEAD COACH MOVEMENT (PRE-PASS) =====
+    // Real CFB: ~10-15 P5 head coaches change jobs each offseason. When a HC leaves school A
+    // for a better job at school B, some of A's younger/talented players follow them.
+    // Since we don't model college head coaches explicitly, we generate 3-5 "coaching change"
+    // events per offseason — each event pairs a "departing" school (loses HC) with a "landing"
+    // school (gains HC, presumably an upgrade for the coach).
+    const COACHING_CHANGES_PER_YEAR = 3 + Math.floor(Math.random() * 3); // 3-5 changes
+    const coachingChanges = []; // array of { fromAbbr, toAbbr }
+    
+    // Pool of candidate "departing" schools: lower-prestige programs (mid-tier or below) — these are
+    // where coaches with rising rep tend to leave for bigger jobs.
+    // Pool of candidate "landing" schools: higher-prestige programs where coaches tend to land.
+    const departingPool = schoolsByPrestige.slice(40); // bottom-60 schools
+    const landingPool = schoolsByPrestige.slice(0, 30); // top-30 schools
+    const usedDeparting = new Set();
+    const usedLanding = new Set();
+    
+    for (let i = 0; i < COACHING_CHANGES_PER_YEAR; i++) {
+      // Pick a random departing school not already used
+      let attempts = 0;
+      let fromSchool = null;
+      while (attempts++ < 20) {
+        const cand = departingPool[Math.floor(Math.random() * departingPool.length)];
+        if (!usedDeparting.has(cand.abbr)) { fromSchool = cand; break; }
+      }
+      if (!fromSchool) break;
+      usedDeparting.add(fromSchool.abbr);
+      
+      // Pick a landing school not already used. Must be higher prestige than departing.
+      let toSchool = null;
+      attempts = 0;
+      const fromPrestige = prestigeMap[fromSchool.abbr] !== undefined ? prestigeMap[fromSchool.abbr] : fromSchool.prestige;
+      while (attempts++ < 20) {
+        const cand = landingPool[Math.floor(Math.random() * landingPool.length)];
+        if (usedLanding.has(cand.abbr)) continue;
+        const candPrestige = prestigeMap[cand.abbr] !== undefined ? prestigeMap[cand.abbr] : cand.prestige;
+        if (candPrestige > fromPrestige) { toSchool = cand; break; }
+      }
+      if (!toSchool) continue;
+      usedLanding.add(toSchool.abbr);
+      
+      coachingChanges.push({ fromAbbr: fromSchool.abbr, toAbbr: toSchool.abbr });
+    }
+    
+    // Execute follow-the-coach transfers. For each coaching change, 1-4 players from the departing
+    // school may follow. Selection prefers: younger players (more years left), better grades, and
+    // those buried on depth chart (looking for new opportunity). Skips seniors and user player.
+    const coachingChangeMoves = []; // for headline
+    coachingChanges.forEach(change => {
+      const candidates = pool.filter(p =>
+        p.school === change.fromAbbr &&
+        !p.isUserControlled &&
+        p.year !== 'Senior' &&
+        p.prospectGrade >= 60 // decent players only
+      );
+      if (candidates.length === 0) return;
+      // Score each candidate by their likelihood to follow:
+      //   - Younger players more likely (more years to gain from new coach)
+      //   - Higher grade more likely (better opportunities at new school)
+      //   - Buried-on-depth more likely (looking for fresh start)
+      const scored = candidates.map(p => {
+        const yearBonus = p.year === 'Freshman' ? 1.0 : p.year === 'Sophomore' ? 0.7 : 0.4; // jr lower
+        const gradeBonus = (p.prospectGrade - 60) / 40; // 0 at 60, 1 at 100
+        const posDepth = (depthByPosBySchool[p.school] && depthByPosBySchool[p.school][p.position]) || [];
+        const depthIdx = posDepth.findIndex(x => x.id === p.id);
+        const buriedBonus = depthIdx >= 2 ? 0.5 : 0;
+        return { player: p, score: yearBonus + gradeBonus + buriedBonus + Math.random() * 0.5 };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      // Take top 1-4 candidates with a probabilistic threshold
+      const numToFollow = 1 + Math.floor(Math.random() * 4);
+      scored.slice(0, numToFollow).forEach(s => {
+        // Final coin flip per candidate — about 40% take the offer
+        if (Math.random() > 0.4) return;
+        const p = s.player;
+        const oldSchool = p.school;
+        p.school = change.toAbbr;
+        p._transferredThisOffseason = true;
+        p._followedCoach = true; // marker
+        // Update depth lookup
+        if (depthByPosBySchool[oldSchool] && depthByPosBySchool[oldSchool][p.position]) {
+          depthByPosBySchool[oldSchool][p.position] = depthByPosBySchool[oldSchool][p.position].filter(x => x.id !== p.id);
+        }
+        if (!depthByPosBySchool[change.toAbbr]) depthByPosBySchool[change.toAbbr] = {};
+        if (!depthByPosBySchool[change.toAbbr][p.position]) depthByPosBySchool[change.toAbbr][p.position] = [];
+        depthByPosBySchool[change.toAbbr][p.position].push(p);
+        depthByPosBySchool[change.toAbbr][p.position].sort((a, b) => b.prospectGrade - a.prospectGrade);
+        coachingChangeMoves.push({
+          name: p.name, position: p.position, grade: p.prospectGrade,
+          fromAbbr: oldSchool, toAbbr: change.toAbbr, type: 'follow'
+        });
+        transferLog.push({
+          name: p.name, position: p.position, grade: p.prospectGrade,
+          fromAbbr: oldSchool, toAbbr: change.toAbbr, type: 'follow'
+        });
+      });
+    });
+    
+    // Emit a separate headline for the coaching carousel + player follows, if any happened
+    if (coachingChanges.length > 0) {
+      const summary = coachingChanges.map(c => {
+        const fromName = (COLLEGE_SCHOOLS.find(s => s.abbr === c.fromAbbr) || {}).name || c.fromAbbr;
+        const toName = (COLLEGE_SCHOOLS.find(s => s.abbr === c.toAbbr) || {}).name || c.toAbbr;
+        return fromName + ' → ' + toName;
+      }).slice(0, 3);
+      const followCount = coachingChangeMoves.length;
+      this.addHeadline({
+        type: 'college',
+        title: 'Coaching carousel: ' + coachingChanges.length + ' HCs change schools',
+        body: 'Notable moves: ' + summary.join(', ') + '.' + (followCount > 0 ? ' ' + followCount + ' players followed their coaches.' : '')
+      });
+    }
+    
+    // ===== INDIVIDUAL TRANSFER DECISIONS =====
+    // Iterate through eligible players. Use a shuffled copy so we don't always process in pool order.
+    const candidates = pool.slice().sort(() => Math.random() - 0.5);
+    
+    candidates.forEach(p => {
+      // Skip ineligible: user player, seniors, very low grade (no market), already transferred this offseason
+      if (p.isUserControlled) return;
+      if (p.year === 'Senior') return;
+      if (p.prospectGrade < 55) return;
+      if (p._transferredThisOffseason) return;
+      
+      const currentSchool = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+      if (!currentSchool) return;
+      const currentPrestige = prestigeMap[p.school] !== undefined ? prestigeMap[p.school] : currentSchool.prestige;
+      
+      // Determine the player's current depth-chart slot at their position
+      const posDepth = (depthByPosBySchool[p.school] && depthByPosBySchool[p.school][p.position]) || [];
+      const depthIdx = posDepth.findIndex(x => x.id === p.id);
+      
+      // ===== MOTIVATION 1: Good player on bad team wants to move UP =====
+      // Trigger: player grade significantly higher than school prestige (5+ point gap), and player is a starter or near-starter.
+      // Real-world: a 90-grade WR at a 70-prestige school will get poached.
+      const isOverqualified = (p.prospectGrade - currentPrestige) >= 5 && depthIdx <= 2;
+      
+      // ===== MOTIVATION 2: Buried on depth chart wants to move DOWN =====
+      // Trigger: at a top program with 2+ players ahead at same position, and player is decent.
+      const isBuried = depthIdx >= 2 && currentPrestige >= 80 && p.prospectGrade >= 65;
+      
+      let wantsToTransfer = false;
+      let transferType = null;
+      // Roll chances:
+      // - Overqualified: 35% chance to enter portal (a meaningful pull but not certain)
+      // - Buried: 20% chance (less common — many stay and develop)
+      if (isOverqualified && Math.random() < 0.35) { wantsToTransfer = true; transferType = 'up'; }
+      else if (isBuried && Math.random() < 0.20) { wantsToTransfer = true; transferType = 'down'; }
+      
+      if (!wantsToTransfer) return;
+      
+      // Find a destination school. Different logic for up vs down.
+      let destination = null;
+      if (transferType === 'up') {
+        // Look for schools with HIGHER prestige than current, where player would crack the rotation.
+        // Search top-down through schools by prestige.
+        for (let i = 0; i < schoolsByPrestige.length; i++) {
+          const candidate = schoolsByPrestige[i];
+          if (candidate.abbr === p.school) continue;
+          const candPrestige = prestigeMap[candidate.abbr] !== undefined ? prestigeMap[candidate.abbr] : candidate.prestige;
+          if (candPrestige <= currentPrestige) break; // no higher options
+          // Would the player at this candidate school be starter or top 2 at their position?
+          const candDepth = (depthByPosBySchool[candidate.abbr] && depthByPosBySchool[candidate.abbr][p.position]) || [];
+          const projectedSlot = candDepth.findIndex(x => p.prospectGrade > x.prospectGrade);
+          if (projectedSlot === -1) continue; // wouldn't crack the depth chart
+          if (projectedSlot > 2) continue; // too buried at destination
+          // Top schools (90+ prestige) only accept overqualified transfers if they'd be 1st/2nd
+          if (candPrestige >= 90 && projectedSlot > 1) continue;
+          // Probability of pick = inverse rank (top schools more likely to be chosen)
+          // Just pick the first viable option weighted toward higher prestige.
+          if (Math.random() < 0.6) { destination = candidate; break; }
+        }
+      } else {
+        // transferType === 'down': find a school where player would START.
+        // Search bottom-up so we find the highest-prestige school where they'd still start.
+        // Don't go below half their current prestige (too big a step down).
+        const minAcceptablePrestige = currentPrestige * 0.65;
+        for (let i = schoolsByPrestige.length - 1; i >= 0; i--) {
+          const candidate = schoolsByPrestige[i];
+          if (candidate.abbr === p.school) continue;
+          const candPrestige = prestigeMap[candidate.abbr] !== undefined ? prestigeMap[candidate.abbr] : candidate.prestige;
+          if (candPrestige < minAcceptablePrestige) continue;
+          if (candPrestige >= currentPrestige) continue; // shouldn't go lateral or up here
+          const candDepth = (depthByPosBySchool[candidate.abbr] && depthByPosBySchool[candidate.abbr][p.position]) || [];
+          const projectedSlot = candDepth.findIndex(x => p.prospectGrade > x.prospectGrade);
+          // Need to start (slot 0) at the new school
+          if (projectedSlot !== 0) continue;
+          if (Math.random() < 0.7) { destination = candidate; break; }
+        }
+      }
+      
+      if (!destination) return;
+      
+      // Execute the transfer
+      const oldSchool = p.school;
+      p.school = destination.abbr;
+      p._transferredThisOffseason = true;
+      
+      // Remove from old school depth lookup, add to new (keeps subsequent iterations accurate)
+      if (depthByPosBySchool[oldSchool] && depthByPosBySchool[oldSchool][p.position]) {
+        depthByPosBySchool[oldSchool][p.position] = depthByPosBySchool[oldSchool][p.position].filter(x => x.id !== p.id);
+      }
+      if (!depthByPosBySchool[destination.abbr]) depthByPosBySchool[destination.abbr] = {};
+      if (!depthByPosBySchool[destination.abbr][p.position]) depthByPosBySchool[destination.abbr][p.position] = [];
+      depthByPosBySchool[destination.abbr][p.position].push(p);
+      depthByPosBySchool[destination.abbr][p.position].sort((a, b) => b.prospectGrade - a.prospectGrade);
+      
+      transferLog.push({
+        name: p.name,
+        position: p.position,
+        grade: p.prospectGrade,
+        fromAbbr: oldSchool,
+        toAbbr: destination.abbr,
+        type: transferType
+      });
+    });
+    
+    // Clear the per-offseason flag for next year
+    pool.forEach(p => { delete p._transferredThisOffseason; });
+    
+    // Emit a headline summarizing transfer activity, with a few highlights
+    if (transferLog.length > 0) {
+      // Sort by grade descending — biggest names first
+      transferLog.sort((a, b) => b.grade - a.grade);
+      const topMoves = transferLog.slice(0, 3).map(t => {
+        const fromName = (COLLEGE_SCHOOLS.find(s => s.abbr === t.fromAbbr) || {}).name || t.fromAbbr;
+        const toName = (COLLEGE_SCHOOLS.find(s => s.abbr === t.toAbbr) || {}).name || t.toAbbr;
+        return t.name + ' (' + t.position + ', ' + t.grade.toFixed(1) + ') ' + fromName + ' → ' + toName;
+      });
+      this.addHeadline({
+        type: 'college',
+        title: 'Transfer portal: ' + transferLog.length + ' moves',
+        body: 'Top moves: ' + topMoves.join('; ') + '.'
+      });
+      // Also stash for any UI that wants to display the full list
+      this.state.latestTransferActivity = transferLog;
+    }
+  },
+
   // Per-school roster composition (matches NFL — easier for analytics & UI consistency)
   COLLEGE_ROSTER_COMPOSITION: {
     QB: 3, RB: 4, WR: 7, TE: 3,
@@ -2621,56 +3172,113 @@ let game = {
     K: 1, P: 1
   },
 
-  // Seed initial college player pool: every school gets a 53-player roster (102 × 53 ≈ 5,400 players).
-  // Each school's players are graded relative to school prestige — top schools have higher-grade rosters.
-  // This replaces the old 120-player random pool with full per-school depth.
+  // Seed initial college player pool.
+  // - Player career mode: full 5,400 players (102 schools × 53) for immersive college experience.
+  // - Dynasty/coach mode: stripped to ~250 prospects (juniors/seniors only at top schools) — these
+  //   modes don't simulate college weekly, so we only need draft-eligible talent for scouting/draft.
   generateCollegeProspectPool() {
     if (!this.state.collegeProspects) this.state.collegeProspects = [];
     const composition = this.COLLEGE_ROSTER_COMPOSITION;
+    const isPlayerMode = this.state.career && this.state.career.mode === 'player';
     
-    COLLEGE_SCHOOLS.forEach(school => {
-      const prestige = school.prestige; // 50-95 range
-      
-      // Build a 53-player roster for this school
-      Object.entries(composition).forEach(([position, count]) => {
-        for (let i = 0; i < count; i++) {
-          // Class year — roughly 25% freshman, 25% sophomore, 25% junior, 25% senior
-          // Slight bias toward upperclassmen for starters (i < 2 in depth chart)
-          let year;
-          const yearRoll = Math.random();
-          if (i < 1) {
-            // Starter — bias toward jr/sr (more experienced)
-            year = yearRoll < 0.40 ? 'Senior' : yearRoll < 0.75 ? 'Junior' : yearRoll < 0.90 ? 'Sophomore' : 'Freshman';
-          } else if (i < count / 2) {
-            // Mid-depth — balanced
-            year = COLLEGE_YEARS[Math.floor(Math.random() * 4)];
-          } else {
-            // Depth — bias toward freshman/sophomore
-            year = yearRoll < 0.40 ? 'Freshman' : yearRoll < 0.75 ? 'Sophomore' : yearRoll < 0.90 ? 'Junior' : 'Senior';
+    if (isPlayerMode) {
+      // FULL POOL: every school gets a 53-player roster, all 4 class years
+      COLLEGE_SCHOOLS.forEach(school => {
+        const prestige = school.prestige;
+        Object.entries(composition).forEach(([position, count]) => {
+          for (let i = 0; i < count; i++) {
+            let year;
+            const yearRoll = Math.random();
+            if (i < 1) {
+              year = yearRoll < 0.40 ? 'Senior' : yearRoll < 0.75 ? 'Junior' : yearRoll < 0.90 ? 'Sophomore' : 'Freshman';
+            } else if (i < count / 2) {
+              year = COLLEGE_YEARS[Math.floor(Math.random() * 4)];
+            } else {
+              year = yearRoll < 0.40 ? 'Freshman' : yearRoll < 0.75 ? 'Sophomore' : yearRoll < 0.90 ? 'Junior' : 'Senior';
+            }
+            const depthPenalty = i * 2.5;
+            const noise = (Math.random() - 0.5) * 14;
+            let grade = prestige + noise - depthPenalty;
+            if (year === 'Senior') grade += 2;
+            else if (year === 'Junior') grade += 0.5;
+            else if (year === 'Freshman') grade -= 2.5;
+            grade = Math.max(40, Math.min(99, grade));
+            // Same global rarity cap as dynasty/coach mode — keep elite tier rare.
+            // Without this, every blue-blood roster has starters at 95+, which inflates the NFL OVR curve.
+            if (grade >= 95 && Math.random() < 0.92) {
+              grade = 85 + Math.random() * 7;
+            } else if (grade >= 90 && Math.random() < 0.70) {
+              grade = 82 + Math.random() * 7;
+            } else if (grade >= 85 && Math.random() < 0.40) {
+              grade = 78 + Math.random() * 6;
+            }
+            grade = Math.round(grade * 10) / 10;
+            const prospect = this.generateProspect(year, position, grade);
+            prospect.school = school.abbr;
+            this.state.collegeProspects.push(prospect);
           }
-          
-          // Grade: anchored to school prestige with depth-chart penalty
-          // Starter (i === 0): prestige ± 8. Each step down depth chart loses 2-3 grade points.
-          // This produces rosters where top schools have ~90 starters and ~75 backups,
-          // and lower-tier schools have ~70 starters and ~50 backups.
-          const depthPenalty = i * 2.5;
-          const noise = (Math.random() - 0.5) * 14; // ±7 random variance
-          let grade = prestige + noise - depthPenalty;
-          
-          // Class-year adjustment — seniors are slightly more developed, freshmen less so
-          if (year === 'Senior') grade += 2;
-          else if (year === 'Junior') grade += 0.5;
-          else if (year === 'Freshman') grade -= 2.5;
-          
-          // Clamp to realistic college range
-          grade = Math.max(40, Math.min(99, grade));
-          
-          const prospect = this.generateProspect(year, position, grade);
-          prospect.school = school.abbr; // override the prestige-weighted picker — we want THIS school
-          this.state.collegeProspects.push(prospect);
-        }
+        });
       });
-    });
+    } else {
+      // STRIPPED POOL: ~250 prospects, only juniors/seniors (draft-eligible), top schools weighted.
+      // Distribution: 60% from top-25 schools, 30% from rest of P5 (~50 schools), 10% from G5.
+      // Each prospect tied to a school (so cards still work), but rosters aren't filled.
+      const TARGET_POOL_SIZE = 250;
+      const positions = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
+      const positionWeights = { QB: 12, RB: 14, WR: 22, TE: 10, OT: 12, OG: 10, C: 6, EDGE: 14, DT: 10, LB: 18, CB: 16, S: 12, K: 3, P: 3 };
+      const totalWeight = Object.values(positionWeights).reduce((s, w) => s + w, 0);
+      
+      // Sort schools by prestige descending
+      const schoolsByPrestige = COLLEGE_SCHOOLS.slice().sort((a, b) => b.prestige - a.prestige);
+      const tier1 = schoolsByPrestige.slice(0, 25);  // blue bloods + elite
+      const tier2 = schoolsByPrestige.slice(25, 70); // strong + mid-tier
+      const tier3 = schoolsByPrestige.slice(70);    // solid + below
+      
+      for (let i = 0; i < TARGET_POOL_SIZE; i++) {
+        // Pick tier with weighted bias toward top schools
+        const tierRoll = Math.random();
+        let pool;
+        if (tierRoll < 0.60) pool = tier1;
+        else if (tierRoll < 0.90) pool = tier2;
+        else pool = tier3;
+        const school = pool[Math.floor(Math.random() * pool.length)];
+        
+        // Pick position weighted by realistic NFL draft distribution
+        const posRoll = Math.random() * totalWeight;
+        let pos = positions[0];
+        let acc = 0;
+        for (const p of positions) {
+          acc += positionWeights[p];
+          if (posRoll < acc) { pos = p; break; }
+        }
+        
+        // Junior or senior (draft-eligible). 65% senior, 35% junior.
+        const year = Math.random() < 0.65 ? 'Senior' : 'Junior';
+        
+        // Grade tied to school prestige with noise. Top schools have more elite prospects.
+        const noise = (Math.random() - 0.5) * 16;
+        let grade = school.prestige + noise + (year === 'Senior' ? 2 : 0);
+        grade = Math.max(50, Math.min(99, grade));
+        // RARITY CAP: real CFB has very few "elite" prospects per draft class. About 5-8 in the 90+
+        // range and only 1-2 in the 95+ generational tier. Apply a tier-roll to enforce this even
+        // for top-prestige schools — most of their players are good, not elite.
+        // - Grade ≥ 95: 92% roll-down to 85-92 range. Only 8% stay at 95+.
+        // - Grade 90-94: 70% roll-down to 82-89. Only 30% keep elite ceiling.
+        // - Grade 85-89: 40% roll-down to 78-84. (Inflates the 85-89 a bit but realistic.)
+        if (grade >= 95 && Math.random() < 0.92) {
+          grade = 85 + Math.random() * 7;
+        } else if (grade >= 90 && Math.random() < 0.70) {
+          grade = 82 + Math.random() * 7;
+        } else if (grade >= 85 && Math.random() < 0.40) {
+          grade = 78 + Math.random() * 6;
+        }
+        grade = Math.round(grade * 10) / 10;
+        
+        const prospect = this.generateProspect(year, pos, grade);
+        prospect.school = school.abbr;
+        this.state.collegeProspects.push(prospect);
+      }
+    }
   },
 
   // Each offseason: age prospects, graduate seniors into draft, regenerate freshman class
@@ -2736,63 +3344,118 @@ let game = {
         p.declaredEarly = true;
         graduates.push(p);
       } else {
-        // Stay another year: bump to senior, slight grade adjustment
+        // Stay another year: bump to senior with realistic progression
         p.year = 'Senior';
-        p.prospectGrade += (Math.random() * 6) - 1;
-        p.prospectGrade = Math.max(40, Math.min(99.9, Math.round(p.prospectGrade * 10) / 10));
+        p.prospectGrade = this.applyCollegeProgression(p, 'Junior', 'Senior');
       }
     });
     
     // Sophomores → Juniors
     sophomores.forEach(p => {
       p.year = 'Junior';
-      p.prospectGrade += (Math.random() * 5);
-      p.prospectGrade = Math.max(40, Math.min(99.9, Math.round(p.prospectGrade * 10) / 10));
+      p.prospectGrade = this.applyCollegeProgression(p, 'Sophomore', 'Junior');
     });
     
     // Freshmen → Sophomores
     freshmen.forEach(p => {
       p.year = 'Sophomore';
-      p.prospectGrade += (Math.random() * 4);
-      p.prospectGrade = Math.max(40, Math.min(99.9, Math.round(p.prospectGrade * 10) / 10));
+      p.prospectGrade = this.applyCollegeProgression(p, 'Freshman', 'Sophomore');
     });
     
     // Remove graduates from college pool
     const gradIds = new Set(graduates.map(g => g.id));
     this.state.collegeProspects = this.state.collegeProspects.filter(p => !gradIds.has(p.id));
     
-    // ===== NEW FRESHMAN CLASS — refill each school back toward 53-player roster =====
-    // After graduation, each school is short ~13-16 players. Add new freshmen of matching
-    // positions to bring each roster back to ~53. Freshman grade is anchored to school prestige
-    // (top schools recruit better — same logic as initial pool generation).
-    const composition = this.COLLEGE_ROSTER_COMPOSITION;
-    COLLEGE_SCHOOLS.forEach(school => {
-      const prestige = (this.state.collegePrestige && this.state.collegePrestige[school.abbr] !== undefined)
-        ? this.state.collegePrestige[school.abbr]
-        : school.prestige;
-      // Per-position count currently at this school
-      const currentByPos = {};
-      this.state.collegeProspects.filter(p => p.school === school.abbr).forEach(p => {
-        currentByPos[p.position] = (currentByPos[p.position] || 0) + 1;
+    // ===== TRANSFER PORTAL =====
+    // Real CFB: each offseason, hundreds of players transfer schools via the portal.
+    // We model two main motivations:
+    //   1) GOOD PLAYER ON BAD TEAM: a high-grade player wants better visibility / playoff team
+    //   2) BURIED ON DEPTH CHART: a backup wants to start somewhere else
+    // Player-mode only (dynasty/coach don't track full rosters)
+    if (this.state.career && this.state.career.mode === 'player') {
+      this.simTransferPortal();
+    }
+    
+    // ===== NEW FRESHMAN CLASS — refill differently based on game mode =====
+    const isPlayerMode = this.state.career && this.state.career.mode === 'player';
+    if (isPlayerMode) {
+      // FULL REFILL: each school regenerates its 53-player roster
+      const composition = this.COLLEGE_ROSTER_COMPOSITION;
+      COLLEGE_SCHOOLS.forEach(school => {
+        const prestige = (this.state.collegePrestige && this.state.collegePrestige[school.abbr] !== undefined)
+          ? this.state.collegePrestige[school.abbr]
+          : school.prestige;
+        const currentByPos = {};
+        this.state.collegeProspects.filter(p => p.school === school.abbr).forEach(p => {
+          currentByPos[p.position] = (currentByPos[p.position] || 0) + 1;
+        });
+        Object.entries(composition).forEach(([position, target]) => {
+          const have = currentByPos[position] || 0;
+          const need = Math.max(0, target - have);
+          for (let i = 0; i < need; i++) {
+            const noise = (Math.random() - 0.5) * 14;
+            const depthPenalty = (have + i) * 1.5;
+            let grade = prestige + noise - depthPenalty - 2.5;
+            grade = Math.max(40, Math.min(99, grade));
+            // Same global rarity cap — keep elite tier rare
+            if (grade >= 95 && Math.random() < 0.92) {
+              grade = 85 + Math.random() * 7;
+            } else if (grade >= 90 && Math.random() < 0.70) {
+              grade = 82 + Math.random() * 7;
+            } else if (grade >= 85 && Math.random() < 0.40) {
+              grade = 78 + Math.random() * 6;
+            }
+            grade = Math.round(grade * 10) / 10;
+            const fresh = this.generateProspect('Freshman', position, grade);
+            fresh.school = school.abbr;
+            this.state.collegeProspects.push(fresh);
+          }
+        });
       });
-      // Fill any position deficit with freshmen
-      Object.entries(composition).forEach(([position, target]) => {
-        const have = currentByPos[position] || 0;
-        const need = Math.max(0, target - have);
-        for (let i = 0; i < need; i++) {
-          // Freshman grade: school prestige ± 8, with a depth penalty
-          // The "depth slot" they're filling matters less for freshmen — they're at the bottom
-          // by default, so apply a depth penalty similar to the bottom of the roster.
-          const noise = (Math.random() - 0.5) * 14;
-          const depthPenalty = (have + i) * 1.5;
-          let grade = prestige + noise - depthPenalty - 2.5; // -2.5 for being a freshman
-          grade = Math.max(40, Math.min(99, grade));
-          const fresh = this.generateProspect('Freshman', position, grade);
-          fresh.school = school.abbr;
-          this.state.collegeProspects.push(fresh);
+    } else {
+      // STRIPPED REFILL: top up the prospect pool to ~250 with new juniors/seniors.
+      // Dynasty/coach modes only need a draft-class-sized pool. The user never sees a college season.
+      const TARGET_POOL_SIZE = 250;
+      const positions = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
+      const positionWeights = { QB: 12, RB: 14, WR: 22, TE: 10, OT: 12, OG: 10, C: 6, EDGE: 14, DT: 10, LB: 18, CB: 16, S: 12, K: 3, P: 3 };
+      const totalWeight = Object.values(positionWeights).reduce((s, w) => s + w, 0);
+      const schoolsByPrestige = COLLEGE_SCHOOLS.slice().sort((a, b) => b.prestige - a.prestige);
+      const tier1 = schoolsByPrestige.slice(0, 25);
+      const tier2 = schoolsByPrestige.slice(25, 70);
+      const tier3 = schoolsByPrestige.slice(70);
+      const need = Math.max(0, TARGET_POOL_SIZE - this.state.collegeProspects.length);
+      for (let i = 0; i < need; i++) {
+        const tierRoll = Math.random();
+        let pool;
+        if (tierRoll < 0.60) pool = tier1;
+        else if (tierRoll < 0.90) pool = tier2;
+        else pool = tier3;
+        const school = pool[Math.floor(Math.random() * pool.length)];
+        const posRoll = Math.random() * totalWeight;
+        let pos = positions[0];
+        let acc = 0;
+        for (const p of positions) {
+          acc += positionWeights[p];
+          if (posRoll < acc) { pos = p; break; }
         }
-      });
-    });
+        const year = Math.random() < 0.65 ? 'Senior' : 'Junior';
+        const noise = (Math.random() - 0.5) * 16;
+        let grade = school.prestige + noise + (year === 'Senior' ? 2 : 0);
+        grade = Math.max(50, Math.min(99, grade));
+        // Same rarity cap as initial pool gen — see comment in generateCollegeProspectPool
+        if (grade >= 95 && Math.random() < 0.92) {
+          grade = 85 + Math.random() * 7;
+        } else if (grade >= 90 && Math.random() < 0.70) {
+          grade = 82 + Math.random() * 7;
+        } else if (grade >= 85 && Math.random() < 0.40) {
+          grade = 78 + Math.random() * 6;
+        }
+        grade = Math.round(grade * 10) / 10;
+        const prospect = this.generateProspect(year, pos, grade);
+        prospect.school = school.abbr;
+        this.state.collegeProspects.push(prospect);
+      }
+    }
     
     // Stash graduates for the upcoming draft
     this.state.pendingDraftClass = graduates;
@@ -2852,16 +3515,199 @@ let game = {
     }
     schools.sort((a, b) => b.wins - a.wins || b.strength - a.strength);
     
-    const top4 = schools.slice(0, 4);
+    // ===== CONFERENCE CHAMPIONSHIPS (week 13) =====
+    // Each P5 conference + AAC/MW play a championship game between their top 2 by conference record.
+    // Standalone (Notre Dame, etc.) don't have one. Champion gets a prestige bump and an auto-bid slot.
+    const confChamps = {}; // confKey → winning school object
+    const confChampGames = []; // for headline
+    const playoffEligibleConfs = ['SEC', 'B10', 'ACC', 'B12', 'AAC', 'MW', 'SBC', 'MAC', 'CUSA'];
+    playoffEligibleConfs.forEach(confKey => {
+      const confMembers = schools.filter(s => {
+        const meta = COLLEGE_SCHOOLS.find(x => x.abbr === s.abbr);
+        return meta && meta.conference === confKey;
+      });
+      if (confMembers.length < 2) return;
+      // Top 2 by overall record (we already sorted by wins). Use strength as tiebreaker.
+      const sorted = confMembers.slice().sort((a, b) => b.wins - a.wins || b.strength - a.strength);
+      const a = sorted[0];
+      const b = sorted[1];
+      // Sim the matchup
+      const winner = Math.random() < (a.strength / (a.strength + b.strength)) ? a : b;
+      const loser = winner === a ? b : a;
+      // Score for the championship
+      const winnerScore = 20 + Math.floor(Math.random() * 21);
+      const loserScore = Math.max(7, winnerScore - 3 - Math.floor(Math.random() * 20));
+      confChamps[confKey] = winner;
+      confChampGames.push({
+        confKey,
+        confName: COLLEGE_CONFERENCES[confKey] ? COLLEGE_CONFERENCES[confKey].name : confKey,
+        winner: winner.abbr,
+        winnerName: winner.name,
+        winnerScore,
+        loser: loser.abbr,
+        loserName: loser.name,
+        loserScore
+      });
+      // Conference champion gets a small prestige bump (volatility)
+      if (this.state.collegePrestige[winner.abbr] !== undefined) {
+        this.state.collegePrestige[winner.abbr] = Math.min(99, this.state.collegePrestige[winner.abbr] + 0.5);
+      }
+    });
+    
+    // ===== CFP 12-TEAM BRACKET =====
+    // Modern CFP format: 5 conference champ auto-bids (P5: SEC, B10, ACC, B12, plus highest-ranked G5)
+    // + 7 at-large bids. Top 4 seeds get first-round bye.
+    // Notre Dame and independents are eligible for at-large only.
+    const apRanked = schools.slice(0, 30); // pool from top-30 — bracket comes from here
+    const inBracket = new Set();
+    const bracket = []; // ordered by seeding (will be filled then re-seeded by rank)
+    
+    // 1. Auto-bid each P5 conference champ
+    ['SEC','B10','ACC','B12'].forEach(conf => {
+      const champ = confChamps[conf];
+      if (champ && !inBracket.has(champ.abbr)) {
+        bracket.push({ ...champ, bidType: 'P5_CHAMP', conference: conf });
+        inBracket.add(champ.abbr);
+      }
+    });
+    
+    // 2. Highest-ranked G5 champion (from AAC, MW, SBC, MAC, CUSA — pick the AP-highest among their champs)
+    let g5Bid = null;
+    ['AAC','MW','SBC','MAC','CUSA'].forEach(conf => {
+      const champ = confChamps[conf];
+      if (champ && !inBracket.has(champ.abbr)) {
+        if (!g5Bid || champ.strength > g5Bid.strength) g5Bid = { ...champ, bidType: 'G5_CHAMP', conference: conf };
+      }
+    });
+    if (g5Bid) {
+      bracket.push(g5Bid);
+      inBracket.add(g5Bid.abbr);
+    }
+    
+    // 3. Fill remaining slots (target 12 total) with at-large bids from the AP ranking
+    for (const s of apRanked) {
+      if (bracket.length >= 12) break;
+      if (inBracket.has(s.abbr)) continue;
+      // Don't take teams with sub-.500 records
+      if (s.wins < s.losses) continue;
+      const meta = COLLEGE_SCHOOLS.find(x => x.abbr === s.abbr);
+      bracket.push({ ...s, bidType: 'AT_LARGE', conference: meta ? meta.conference : '?' });
+      inBracket.add(s.abbr);
+    }
+    
+    // Reseed bracket 1-12 by team strength (proxy for AP rank since we sorted schools earlier)
+    bracket.sort((a, b) => b.strength - a.strength);
+    // If we couldn't fill 12 slots (rare), pad with the next available teams
+    let padIdx = 0;
+    while (bracket.length < 12 && padIdx < schools.length) {
+      const s = schools[padIdx++];
+      if (!inBracket.has(s.abbr)) {
+        const meta = COLLEGE_SCHOOLS.find(x => x.abbr === s.abbr);
+        bracket.push({ ...s, bidType: 'AT_LARGE', conference: meta ? meta.conference : '?' });
+        inBracket.add(s.abbr);
+      }
+    }
+    
+    // ===== BOWL GAMES =====
+    // Non-playoff teams with 6+ wins are "bowl eligible." We pair them up into bowl matchups,
+    // matching adjacent ranks where possible (so #13 vs #14, #15 vs #16, etc.). Each bowl gets
+    // a generic name like "Holiday Bowl," "Citrus Bowl" — drawn from a small pool of classic bowl names.
+    // Bowl winners get a small prestige bump; storyline only, no playoff impact.
+    const BOWL_NAMES = [
+      'Citrus Bowl', 'Sun Bowl', 'Holiday Bowl', 'Music City Bowl', 'Liberty Bowl',
+      'Gator Bowl', 'Outback Bowl', 'Pinstripe Bowl', 'Fiesta Bowl', 'Cotton Bowl',
+      'Peach Bowl', 'Las Vegas Bowl', 'Texas Bowl', 'Independence Bowl', 'Cure Bowl',
+      'Bahamas Bowl', 'Boca Raton Bowl', 'Quick Lane Bowl', 'Camellia Bowl', 'New Mexico Bowl',
+      'Hawaii Bowl', 'Birmingham Bowl', 'Frisco Bowl', 'Famous Idaho Potato Bowl',
+      'Armed Forces Bowl', 'New Orleans Bowl', 'First Responder Bowl', 'Cheez-It Bowl',
+      'Military Bowl', 'Pop-Tarts Bowl', 'Reliaquest Bowl', 'Duke\'s Mayo Bowl'
+    ];
+    // Eligible: 6+ wins AND not already in the playoff bracket
+    const bowlEligible = schools.filter(s => s.wins >= 6 && !inBracket.has(s.abbr));
+    // Sort by strength desc — high-ranked bowl-eligibles get the marquee bowls
+    bowlEligible.sort((a, b) => b.strength - a.strength);
+    const bowlGames = [];
+    // Pair them off: 1st vs 2nd, 3rd vs 4th, etc. Real CFB does conference-tie-ins but we'll
+    // keep it simple. Use adjacent pairings so matchups are competitive.
+    for (let i = 0; i + 1 < bowlEligible.length && bowlGames.length < BOWL_NAMES.length; i += 2) {
+      const a = bowlEligible[i];
+      const b = bowlEligible[i + 1];
+      // Sim the matchup with a score
+      const winner = Math.random() < (a.strength / (a.strength + b.strength)) ? a : b;
+      const loser = winner === a ? b : a;
+      const ws = 17 + Math.floor(Math.random() * 28);
+      const ls = Math.max(7, ws - 1 - Math.floor(Math.random() * 22));
+      bowlGames.push({
+        bowlName: BOWL_NAMES[bowlGames.length],
+        winnerAbbr: winner.abbr, winnerName: winner.name, winnerScore: ws,
+        loserAbbr: loser.abbr, loserName: loser.name, loserScore: ls
+      });
+      // Small prestige bump for the winner
+      if (this.state.collegePrestige[winner.abbr] !== undefined) {
+        this.state.collegePrestige[winner.abbr] = Math.min(99, this.state.collegePrestige[winner.abbr] + 0.25);
+      }
+    }
+    
+    // ===== SIM THE 12-TEAM BRACKET =====
     const simMatchup = (a, b) => Math.random() < (a.strength / (a.strength + b.strength)) ? a : b;
-    const semi1 = simMatchup(top4[0], top4[3]);
-    const semi2 = simMatchup(top4[1], top4[2]);
-    const champion = simMatchup(semi1, semi2);
-    const runnerUp = champion === semi1 ? semi2 : semi1;
+    const simMatchupWithScore = (a, b) => {
+      const winner = simMatchup(a, b);
+      const loser = winner === a ? b : a;
+      const ws = 21 + Math.floor(Math.random() * 24);
+      const ls = Math.max(10, ws - 3 - Math.floor(Math.random() * 20));
+      return { winner, loser, winnerScore: ws, loserScore: ls };
+    };
+    
+    // First round (4 games): 5v12, 6v11, 7v10, 8v9. Top 4 seeds rest.
+    const r1 = [];
+    [[4, 11], [5, 10], [6, 9], [7, 8]].forEach(([hi, lo]) => {
+      const a = bracket[hi]; // 0-indexed: bracket[4] is seed 5
+      const b = bracket[lo];
+      const result = simMatchupWithScore(a, b);
+      // Determine which seed the winner was so the UI can render "#X Team beat #Y Team"
+      const winnerSeed = (result.winner === a) ? hi + 1 : lo + 1;
+      const loserSeed = (result.winner === a) ? lo + 1 : hi + 1;
+      r1.push({ ...result, hiSeed: hi + 1, loSeed: lo + 1, winnerSeed, loserSeed });
+    });
+    
+    // Quarterfinals: top 4 seeds host the winners. Seed 1 plays 8v9 winner, 2 plays 7v10 winner, etc.
+    // Pairings: 1 vs (8v9 winner), 4 vs (5v12 winner), 2 vs (7v10 winner), 3 vs (6v11 winner)
+    const qf = [];
+    qf.push(simMatchupWithScore(bracket[0], r1[3].winner)); // 1 vs 8/9 winner
+    qf.push(simMatchupWithScore(bracket[3], r1[0].winner)); // 4 vs 5/12 winner
+    qf.push(simMatchupWithScore(bracket[1], r1[2].winner)); // 2 vs 7/10 winner
+    qf.push(simMatchupWithScore(bracket[2], r1[1].winner)); // 3 vs 6/11 winner
+    
+    // Semifinals
+    const sf1 = simMatchupWithScore(qf[0].winner, qf[1].winner); // 1's path vs 4's path
+    const sf2 = simMatchupWithScore(qf[2].winner, qf[3].winner); // 2's path vs 3's path
+    
+    // National championship
+    const titleGame = simMatchupWithScore(sf1.winner, sf2.winner);
+    const champion = titleGame.winner;
+    const runnerUp = titleGame.loser;
     
     // Heisman / awards
-    const heisman = this.pickCollegeAward(champion);
-    const maxwell = this.pickCollegeAward(top4[Math.floor(Math.random() * top4.length)]);
+    // Use the running Heisman race when available — winner is the leader after the regular season.
+    // (Postseason production is captured separately and could be added to score later if desired.)
+    const heismanRace = this.getHeismanRace(5);
+    let heisman;
+    if (heismanRace.length > 0) {
+      const top = heismanRace[0].player;
+      heisman = { name: top.name, school: top.school, position: top.position, prospectId: top.id };
+    } else {
+      // Fallback to old method if no weekly stats accumulated (shouldn't happen in player mode)
+      heisman = this.pickCollegeAward(champion);
+    }
+    const maxwell = this.pickCollegeAward(bracket[Math.floor(Math.random() * 4)]);
+    // Snapshot the final top-5 Heisman race so the recap can display "Finalists"
+    const heismanFinalists = heismanRace.slice(0, 5).map(e => ({
+      name: e.player.name,
+      position: e.player.position,
+      school: e.player.school,
+      score: Math.round(e.score),
+      stats: { ...e.stats }
+    }));
     
     // Storylines (3 random)
     const storylines = [];
@@ -2881,6 +3727,12 @@ let game = {
       storylines.unshift('Virginia continues their meteoric rise, finishing #' + (uvaIdx + 1) + ' in the AP Poll.');
       storylines.length = 3;
     }
+    // CFP playoff storylines: title game + biggest upset
+    const playoffStorylines = [
+      'CFP TITLE: ' + champion.name + ' defeats ' + runnerUp.name + ', ' + titleGame.winnerScore + '-' + titleGame.loserScore + '.',
+      'Semifinal: ' + sf1.winner.name + ' over ' + sf1.loser.name + ' ' + sf1.winnerScore + '-' + sf1.loserScore + '. ' +
+      sf2.winner.name + ' over ' + sf2.loser.name + ' ' + sf2.winnerScore + '-' + sf2.loserScore + '.'
+    ];
     
     const recap = {
       year: this.state.year,
@@ -2888,6 +3740,7 @@ let game = {
       championAbbr: champion.abbr,
       championRecord: champion.wins + '-' + champion.losses,
       runnerUp: runnerUp.name,
+      runnerUpAbbr: runnerUp.abbr,
       heismanName: heisman.name,
       heismanSchool: heisman.school,
       heismanPosition: heisman.position,
@@ -2895,7 +3748,32 @@ let game = {
       maxwellSchool: maxwell.school,
       maxwellPosition: maxwell.position,
       storylines,
-      finalRankings: schools.slice(0, 25).map(s => ({ abbr: s.abbr, name: s.name, record: s.wins + '-' + s.losses, prestige: Math.round(s.prestige) }))
+      finalRankings: schools.slice(0, 25).map(s => ({ abbr: s.abbr, name: s.name, record: s.wins + '-' + s.losses, prestige: Math.round(s.prestige) })),
+      // CFP detail
+      cfpBracket: bracket.map((b, i) => ({
+        seed: i + 1, abbr: b.abbr, name: b.name, record: b.wins + '-' + b.losses, bidType: b.bidType, conference: b.conference
+      })),
+      cfpFirstRound: r1.map(g => ({
+        hiSeed: g.hiSeed, loSeed: g.loSeed,
+        winnerSeed: g.winnerSeed, loserSeed: g.loserSeed,
+        winnerAbbr: g.winner.abbr, winnerName: g.winner.name, winnerScore: g.winnerScore,
+        loserAbbr: g.loser.abbr, loserName: g.loser.name, loserScore: g.loserScore
+      })),
+      cfpQuarterfinals: qf.map(g => ({
+        winnerAbbr: g.winner.abbr, winnerName: g.winner.name, winnerScore: g.winnerScore,
+        loserAbbr: g.loser.abbr, loserName: g.loser.name, loserScore: g.loserScore
+      })),
+      cfpSemifinals: [sf1, sf2].map(g => ({
+        winnerAbbr: g.winner.abbr, winnerName: g.winner.name, winnerScore: g.winnerScore,
+        loserAbbr: g.loser.abbr, loserName: g.loser.name, loserScore: g.loserScore
+      })),
+      cfpTitleGame: {
+        winnerAbbr: titleGame.winner.abbr, winnerName: titleGame.winner.name, winnerScore: titleGame.winnerScore,
+        loserAbbr: titleGame.loser.abbr, loserName: titleGame.loser.name, loserScore: titleGame.loserScore
+      },
+      confChampGames,
+      bowlGames,
+      heismanFinalists
     };
     
     if (!this.state.collegeHistory) this.state.collegeHistory = [];
@@ -2905,8 +3783,18 @@ let game = {
     this.addHeadline({
       type: 'champ',
       title: champion.name + ' wins national championship',
-      body: 'Defeated ' + runnerUp.name + ' in the title game. ' + heisman.name + ' (' + heisman.school + ', ' + heisman.position + ') wins the Heisman.'
+      body: champion.name + ' defeats ' + runnerUp.name + ' ' + titleGame.winnerScore + '-' + titleGame.loserScore + ' in the CFP title game. ' + heisman.name + ' (' + heisman.school + ', ' + heisman.position + ') wins the Heisman.'
     });
+    
+    // Also push a conference championship summary headline
+    if (confChampGames.length > 0) {
+      const summaries = confChampGames.slice(0, 3).map(g => g.winnerName + ' (' + g.confName + ')');
+      this.addHeadline({
+        type: 'college',
+        title: 'Conference titles decided',
+        body: 'Champions: ' + summaries.join(', ') + '.'
+      });
+    }
   },
 
   pickCollegeAward(school) {
@@ -2940,6 +3828,17 @@ let game = {
   // Generate a 12-game schedule for every school. 8 conference + 4 non-conf is typical CFB.
   // For mid-tier conferences with <8 teams, we fill with non-conf matchups.
   generateCollegeSchedule() {
+    // Only generate a weekly college schedule in player career mode.
+    // Dynasty/coach modes use the legacy single-shot season sim (simCollegeSeason) and don't need
+    // per-week games. Skip schedule gen entirely to save state size + sim time.
+    const isPlayerMode = this.state.career && this.state.career.mode === 'player';
+    if (!isPlayerMode) {
+      this.state.collegeSchedule = null;
+      this.state.collegeWeek = 0;
+      this.state.collegeStandings = null;
+      this.state.apPoll = null;
+      return;
+    }
     const schedule = []; // array of { week, home, away, played, homeScore, awayScore, topPerformers }
     const schools = COLLEGE_SCHOOLS;
     const byConference = {};
@@ -3034,6 +3933,11 @@ let game = {
   simCollegeWeek() {
     if (!this.state.collegeSchedule) return [];
     if (this.state.collegeWeek >= this.COLLEGE_SEASON_WEEKS) return [];
+    // At the very start of a season (week 0 → 1), zero out per-player Heisman stats so the
+    // running leaderboard tracks THIS year only.
+    if (this.state.collegeWeek === 0) {
+      (this.state.collegeProspects || []).forEach(p => { if (p._heismanStats) delete p._heismanStats; });
+    }
     this.state.collegeWeek++;
     const week = this.state.collegeWeek;
     const games = this.state.collegeSchedule.filter(g => g.week === week && !g.played);
@@ -3108,6 +4012,22 @@ let game = {
   // Pick offensive + defensive top performers for a college game.
   // Returns { homeOff, homeDef, awayOff, awayDef } — each an object { name, position, stat }
   pickGameTopPerformers(homeAbbr, awayAbbr, homeScore, awayScore) {
+    const updateHeismanStats = (player, statLine) => {
+      // Accumulate per-prospect season totals on a `_heismanStats` field.
+      // We use a single weekly call so the totals build through the 12-game season.
+      if (!player._heismanStats) {
+        player._heismanStats = { passYds: 0, passTDs: 0, ints: 0, rushYds: 0, rushTDs: 0, recYds: 0, recTDs: 0, receptions: 0, games: 0, lastTeamScore: 0 };
+      }
+      player._heismanStats.games++;
+      player._heismanStats.passYds += statLine.passYds || 0;
+      player._heismanStats.passTDs += statLine.passTDs || 0;
+      player._heismanStats.ints += statLine.ints || 0;
+      player._heismanStats.rushYds += statLine.rushYds || 0;
+      player._heismanStats.rushTDs += statLine.rushTDs || 0;
+      player._heismanStats.recYds += statLine.recYds || 0;
+      player._heismanStats.recTDs += statLine.recTDs || 0;
+      player._heismanStats.receptions += statLine.receptions || 0;
+    };
     const pickFor = (schoolAbbr, side) => {
       const roster = (this.state.collegeProspects || []).filter(p => p.school === schoolAbbr);
       if (roster.length === 0) return null;
@@ -3117,8 +4037,10 @@ let game = {
         skill.sort((a, b) => b.prospectGrade - a.prospectGrade);
         const p = skill[0] || roster[0];
         // Stat line based on position
-        const stat = this.generateCollegeStatLine(p, schoolAbbr === homeAbbr ? homeScore : awayScore);
-        return { name: p.name, position: p.position, stat, prospectId: p.id };
+        const teamScore = schoolAbbr === homeAbbr ? homeScore : awayScore;
+        const { display, raw } = this.generateCollegeStatLine(p, teamScore);
+        updateHeismanStats(p, raw);
+        return { name: p.name, position: p.position, stat: display, prospectId: p.id };
       } else {
         // Best graded defender. EDGE/LB/CB/S.
         const def = roster.filter(p => ['EDGE','LB','CB','S','DT'].includes(p.position));
@@ -3142,7 +4064,8 @@ let game = {
     };
   },
 
-  // Generate a stat line string for a college offensive player based on their position and team score.
+  // Generate a stat line for a college offensive player. Returns both the display string and
+  // raw numbers (used by the Heisman race tracker to compute season totals).
   generateCollegeStatLine(p, teamScore) {
     // Scale stats with team score — high-scoring games have big individual lines
     const scoreFactor = teamScore / 28; // 1.0 = average game, 1.5 = ~42pt game
@@ -3150,18 +4073,58 @@ let game = {
       const yds = Math.round((200 + Math.random() * 180) * scoreFactor);
       const tds = Math.min(6, Math.floor(scoreFactor * (1 + Math.random() * 3)));
       const ints = Math.random() < 0.35 ? 1 : 0;
-      return yds + ' pass yds, ' + tds + ' TD' + (tds === 1 ? '' : 's') + (ints > 0 ? ', ' + ints + ' INT' : '');
+      return {
+        display: yds + ' pass yds, ' + tds + ' TD' + (tds === 1 ? '' : 's') + (ints > 0 ? ', ' + ints + ' INT' : ''),
+        raw: { passYds: yds, passTDs: tds, ints }
+      };
     } else if (p.position === 'RB') {
       const yds = Math.round((70 + Math.random() * 130) * scoreFactor);
       const tds = Math.floor(scoreFactor * Math.random() * 2.5);
-      return yds + ' rush yds, ' + tds + ' TD' + (tds === 1 ? '' : 's');
+      return {
+        display: yds + ' rush yds, ' + tds + ' TD' + (tds === 1 ? '' : 's'),
+        raw: { rushYds: yds, rushTDs: tds }
+      };
     } else if (p.position === 'WR' || p.position === 'TE') {
       const yds = Math.round((50 + Math.random() * 110) * scoreFactor);
       const recs = 4 + Math.floor(Math.random() * 6);
       const tds = Math.random() < 0.5 * scoreFactor ? Math.ceil(Math.random() * 2) : 0;
-      return recs + ' rec, ' + yds + ' yds' + (tds > 0 ? ', ' + tds + ' TD' : '');
+      return {
+        display: recs + ' rec, ' + yds + ' yds' + (tds > 0 ? ', ' + tds + ' TD' : ''),
+        raw: { receptions: recs, recYds: yds, recTDs: tds }
+      };
     }
-    return '—';
+    return { display: '—', raw: {} };
+  },
+  
+  // Compute the current Heisman race standings from accumulated _heismanStats.
+  // Returns top N candidates sorted by Heisman score.
+  // Scoring rough formula: TDs are heavily weighted (each TD ≈ 100 yards), yardage counts in chunks,
+  // INTs are penalty, team prestige adds a bias (real Heismans go to players on top teams).
+  getHeismanRace(topN) {
+    if (!topN) topN = 10;
+    const pool = (this.state.collegeProspects || []).filter(p => p._heismanStats && p._heismanStats.games > 0);
+    const prestigeMap = this.state.collegePrestige || {};
+    const scored = pool.map(p => {
+      const s = p._heismanStats;
+      const school = COLLEGE_SCHOOLS.find(x => x.abbr === p.school);
+      const teamPrestige = prestigeMap[p.school] !== undefined ? prestigeMap[p.school] : (school ? school.prestige : 70);
+      // Position-weighted scoring — QBs and RBs get the lion's share of Heisman votes historically.
+      let score = 0;
+      if (p.position === 'QB') {
+        score = (s.passYds / 10) + (s.passTDs * 11) - (s.ints * 4) + (s.rushYds / 7) + (s.rushTDs * 8);
+      } else if (p.position === 'RB') {
+        score = (s.rushYds / 4) + (s.rushTDs * 13) + (s.recYds / 6) + (s.recTDs * 10);
+      } else if (p.position === 'WR' || p.position === 'TE') {
+        score = (s.recYds / 5) + (s.recTDs * 14) + (s.receptions * 1.5);
+      }
+      // Team prestige bonus: top-25 teams get a +10 bias (voters watch them more)
+      if (teamPrestige >= 90) score += 15;
+      else if (teamPrestige >= 82) score += 8;
+      else if (teamPrestige >= 75) score += 3;
+      return { player: p, school, score, stats: s };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, topN);
   },
 
   // Recompute the AP Top 25 based on current standings + prestige.
@@ -3238,8 +4201,81 @@ let game = {
         }
       });
     });
+    // Anti-clustering pass: real GMs trade away surplus elite talent at scarce positions.
+    // Without this, random rolls can produce 3 elite QBs on one team while other teams have none.
+    this._redistributeEliteClusters();
     // Retroactively assign cap-compliant contracts to every team, identical to startup-draft flow.
     this.allocateStartupContracts();
+  },
+  
+  // Detect teams with multiple top-tier players at scarce positions (especially QB) and shuffle
+  // those players to teams that lack one. Real NFL: a team with 3 elite QBs would trade or release
+  // backups for picks. We model that by swapping surplus elites with backups from other teams.
+  _redistributeEliteClusters() {
+    // Positions where stacking 2-3 elite players is unrealistic. QB is by far the worst offender.
+    const scarcePositions = ['QB', 'LT', 'OT', 'EDGE'];
+    // Use OT/LT as the same since we don't distinguish in POSITION_COUNTS — but keep config simple.
+    const ELITE_THRESHOLD = 85; // a player at 85+ is a legitimate starter
+    const TOP_THRESHOLD = 90;   // 90+ is "best in league" tier
+    
+    scarcePositions.forEach(pos => {
+      if (!POSITION_COUNTS[pos]) return;
+      // For each team, count their elite players at this position
+      // Then identify "surplus" teams (have 2+ elite) and "needy" teams (have 0 elite)
+      const teamAnalysis = this.state.teams.map(team => {
+        const players = team.roster.map(id => this.state.players[id])
+          .filter(p => p && p.position === pos)
+          .sort((a, b) => b.rating - a.rating);
+        return {
+          team,
+          players,
+          eliteCount: players.filter(p => p.rating >= ELITE_THRESHOLD).length,
+          topCount: players.filter(p => p.rating >= TOP_THRESHOLD).length
+        };
+      });
+      
+      // Multiple passes: handle 90+ stacking first, then 85+
+      [TOP_THRESHOLD, ELITE_THRESHOLD].forEach(threshold => {
+        const surplus = teamAnalysis
+          .filter(ta => ta.players.filter(p => p.rating >= threshold).length >= 2)
+          .sort((a, b) => b.players.filter(p => p.rating >= threshold).length - a.players.filter(p => p.rating >= threshold).length);
+        const needy = teamAnalysis
+          .filter(ta => ta.players.filter(p => p.rating >= threshold).length === 0)
+          .sort((a, b) => (a.players[0]?.rating || 0) - (b.players[0]?.rating || 0)); // worst-starter team first
+        
+        surplus.forEach(surplusTa => {
+          // Move all but the top one from this team
+          const eliteAtThreshold = surplusTa.players.filter(p => p.rating >= threshold);
+          const toMove = eliteAtThreshold.slice(1); // keep the #1, redistribute the rest
+          toMove.forEach(player => {
+            if (needy.length === 0) return; // no one to give them to
+            const target = needy.shift(); // give to the most-needy team
+            // Find a swap-back candidate: the LOWEST-rated player at this position on the target team
+            const swapBack = target.players[target.players.length - 1];
+            if (!swapBack) return; // shouldn't happen, but defensive
+            
+            // Execute swap: player → target team, swapBack → surplus team
+            const surplusTeam = surplusTa.team;
+            const targetTeam = target.team;
+            
+            surplusTeam.roster = surplusTeam.roster.filter(id => id !== player.id);
+            targetTeam.roster = targetTeam.roster.filter(id => id !== swapBack.id);
+            surplusTeam.roster.push(swapBack.id);
+            targetTeam.roster.push(player.id);
+            player.team = targetTeam.id;
+            swapBack.team = surplusTeam.id;
+            
+            // Update analysis arrays to reflect the swap (so subsequent iterations see correct state)
+            surplusTa.players = surplusTa.players.filter(p => p.id !== player.id);
+            surplusTa.players.push(swapBack);
+            surplusTa.players.sort((a, b) => b.rating - a.rating);
+            target.players = target.players.filter(p => p.id !== swapBack.id);
+            target.players.push(player);
+            target.players.sort((a, b) => b.rating - a.rating);
+          });
+        });
+      });
+    });
   },
 
   generatePlayer(position, teamId, overrideAge) {
@@ -3267,11 +4303,20 @@ let game = {
     const abilities = generateAbilities(position, baseRating);
     const rating = calculateOvrFromAbilities(position, abilities);
     const archetype = detectArchetype(position, abilities);
-    // Potential: usually rating + small upside for young players
+    // Potential: rating + modest upside for young players.
+    // Tight ceilings (matching the post-draft model) prevent the "everyone grows to 90+" failure mode.
     let potential = rating;
-    if (age <= 23) potential = Math.min(99, rating + 3 + Math.floor(Math.random() * 12));
-    else if (age <= 26) potential = Math.min(99, rating + Math.floor(Math.random() * 6));
-    else potential = rating + Math.floor(Math.random() * 3) - 1;
+    if (age <= 23) {
+      // Young — could grow up to ~8 points but capped 88 (only true rookies hit higher)
+      potential = Math.min(88, rating + 2 + Math.floor(Math.random() * 7));
+    } else if (age <= 26) {
+      // Still maturing — small upside
+      potential = Math.min(92, rating + Math.floor(Math.random() * 5));
+    } else {
+      // 27+: at or past peak; potential is essentially current rating
+      potential = rating + Math.floor(Math.random() * 3) - 1;
+    }
+    potential = Math.max(potential, rating); // potential never below current
     
     return {
       id: this.state.players.length,
@@ -3437,17 +4482,64 @@ let game = {
   },
 
   calculateTeamNeeds(team) {
+    // Quality-aware team needs. The old version only counted bodies, so a team with 3 backup-tier QBs
+    // had "no QB need" — and a team with 3 elite QBs had the same flat zero. Real GMs assess STARTER
+    // QUALITY: does our starter give us a chance to win? Do we have functional depth?
+    //
+    // New scoring per position:
+    //   - Starter quality: how far below "expected starter OVR" is our best player at this position?
+    //   - Depth: do we even have enough warm bodies to fill the roster spot?
+    //   - The bigger the gap, the higher the need value.
+    //
+    // Need scale: 0 (set) → 1-2 (could upgrade) → 3-4 (definite need) → 5+ (urgent).
     const need = {};
-    const counts = {};
-    team.roster.forEach(id => {
-      const p = this.state.players[id];
-      if (!p || p.retired) return;
-      counts[p.position] = (counts[p.position] || 0) + 1;
+    const players = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
+    
+    // Group by position
+    const byPos = {};
+    players.forEach(p => {
+      if (!byPos[p.position]) byPos[p.position] = [];
+      byPos[p.position].push(p);
     });
+    Object.values(byPos).forEach(arr => arr.sort((a, b) => b.rating - a.rating));
+    
+    // Position-specific "expected starter OVR" — what a competent starter looks like at this position.
+    // Slightly higher for QB (it dictates outcomes) and lower for K/P (lower-impact specialists).
+    const expectedStarterOvr = {
+      QB: 78, RB: 75, WR: 76, TE: 74,
+      OT: 76, OG: 74, C: 74,
+      EDGE: 76, DT: 74, LB: 74, CB: 76, S: 74,
+      K: 70, P: 70
+    };
+    
     Object.entries(POSITION_COUNTS).forEach(([pos, target]) => {
-      const have = counts[pos] || 0;
-      need[pos] = Math.max(0, target - have);
+      const arr = byPos[pos] || [];
+      const have = arr.length;
+      const starter = arr[0]; // best player at this position
+      const starterOvr = starter ? starter.rating : 0;
+      const expected = expectedStarterOvr[pos] || 74;
+      
+      // Component 1: depth shortfall. Each missing roster spot = +1.0 need.
+      const depthNeed = Math.max(0, target - have) * 1.0;
+      
+      // Component 2: starter quality. If our best player at this position is below expected,
+      // the gap counts heavily. A 65 OVR "starter" at QB (expected 78) gives 13 points of need / 3 = 4.3.
+      // Divisor of 3 means a 9-point gap is "very high need" territory.
+      const qualityNeed = starter ? Math.max(0, (expected - starterOvr) / 3) : 5;
+      
+      // Component 3: stockpile penalty. If our STARTER is already elite (85+) AND we have full depth,
+      // strongly discourage adding more. This is the fix for the QB-stacking issue — teams with a
+      // 92 OVR QB get a negative need value, so the AI deprioritizes drafting another QB.
+      let stockpilePenalty = 0;
+      if (starter && starterOvr >= 85 && have >= target) stockpilePenalty = -2.0;
+      if (starter && starterOvr >= 90 && have >= target) stockpilePenalty = -3.5;
+      // Very-deep penalty: if we already have 2+ at 85+ at a scarce position, do not draft another.
+      const eliteCount = arr.filter(p => p.rating >= 85).length;
+      if (eliteCount >= 2 && (pos === 'QB' || pos === 'OT' || pos === 'EDGE')) stockpilePenalty -= 3.0;
+      
+      need[pos] = Math.max(-5, depthNeed + qualityNeed + stockpilePenalty);
     });
+    
     return need;
   },
 
@@ -3607,8 +4699,32 @@ let game = {
       const abilities = generateAbilities(prospect.position, Math.round(targetOvr));
       const rating = calculateOvrFromAbilities(prospect.position, abilities);
       const archetype = detectArchetype(prospect.position, abilities);
-      // Potential: rookies have a higher ceiling
-      const potential = Math.min(99, Math.max(rating, Math.round(prospect.prospectGrade + 3 + Math.random() * 8)));
+      // Potential: rookies have a slightly higher ceiling than current OVR, but TIGHT.
+      // The real NFL has ~10-15 players at 90+ in any given year. Our model has 32 teams × 53 roster
+      // = 1696 active players. If we let every top prospect become 95+, we end up with 100+ elite players.
+      // Rule of thumb: prospect.grade ≥ 95 → potential 92-96 (generational, rare)
+      //                prospect.grade 88-94 → potential rating + 3-7 (elite ceiling)
+      //                prospect.grade 78-87 → potential rating + 2-5 (good ceiling)
+      //                prospect.grade < 78  → potential rating + 1-3 (modest ceiling)
+      let potential;
+      const grade = prospect.prospectGrade;
+      if (grade >= 95) {
+        // Generational. ~1% of rookies hit this tier in real CFB. Their NFL potential 92-97.
+        potential = 92 + Math.floor(Math.random() * 6);
+      } else if (grade >= 88) {
+        // Elite prospect — top-15 pick territory. Potential lands in 86-93 range typically.
+        potential = Math.max(rating, Math.round(rating + 3 + Math.random() * 5));
+        potential = Math.min(potential, 93);
+      } else if (grade >= 78) {
+        // Mid-1st to 3rd round prospect. Potential rating + 2-5.
+        potential = Math.max(rating, Math.round(rating + 2 + Math.random() * 4));
+        potential = Math.min(potential, 88);
+      } else {
+        // Late-round / UDFA. Modest ceiling.
+        potential = Math.max(rating, Math.round(rating + 1 + Math.random() * 3));
+        potential = Math.min(potential, 82);
+      }
+      potential = Math.min(99, potential);
       
       const newPlayer = {
         id: this.state.players.length,
@@ -5407,6 +6523,56 @@ let game = {
       }
     }
     
+    // STEP 4.5: STRATEGIC FREE-AGENT SIGNINGS
+    // Real NFL: in March, teams with cap space sign FAs at positions of need to upgrade.
+    // Teams with a weak starter at a high-value position will outbid for a quality FA.
+    // We do NOT sign FAs at positions where we're already strong (the user's complaint).
+    const capSpaceForFA = cap - teamCapUsed(team, this.state.players);
+    if (capSpaceForFA > 3_000_000) {
+      const needs = this.calculateTeamNeeds(team);
+      const allFAs = this.state.players.filter(p =>
+        p.team === null && !p.retired && !p.isUserControlled && p.rating >= 70
+      );
+      // Sort FAs by overall value (rating + tiny age penalty for veterans)
+      allFAs.sort((a, b) => (b.rating - (b.age - 27) * 0.5) - (a.rating - (a.age - 27) * 0.5));
+      // Top 80 are the realistic candidates teams scout. Take 1-3 signings per team max.
+      let signingsThisTeam = 0;
+      const maxSignings = capSpaceForFA > 15_000_000 ? 3 : capSpaceForFA > 8_000_000 ? 2 : 1;
+      for (const fa of allFAs.slice(0, 80)) {
+        if (signingsThisTeam >= maxSignings) break;
+        const remainingCap = cap - teamCapUsed(team, this.state.players);
+        if (remainingCap < 3_000_000) break;
+        // Only sign at positions of REAL need. need ≥ 2.5 means starter is below-average OR depth is thin.
+        // Skip positions where need is negative (we're already deep — the QB-stacking fix).
+        const posNeed = needs[fa.position] || 0;
+        if (posNeed < 2.5) continue;
+        // Don't sign if this player is worse than our current starter (no upgrade)
+        const ourStarter = team.roster
+          .map(id => this.state.players[id])
+          .filter(p => p && !p.retired && p.position === fa.position)
+          .sort((a, b) => b.rating - a.rating)[0];
+        if (ourStarter && fa.rating <= ourStarter.rating - 2) continue; // not enough of an upgrade
+        // Estimated AAV for this player. Skip if we can't afford.
+        const estAAV = calculateContractAAV(fa.position, fa.rating, fa.age, this.state.year);
+        if (estAAV > remainingCap) continue;
+        // Sign the FA
+        fa.team = team.id;
+        team.roster.push(fa.id);
+        fa.contract = generateContract(fa.position, fa.rating, fa.age, this.state.year, false);
+        signingsThisTeam++;
+        // Quietly recompute needs since we just changed the roster
+        Object.assign(needs, this.calculateTeamNeeds(team));
+        // Headline for marquee signings (OVR ≥ 82)
+        if (fa.rating >= 82) {
+          this.addHeadline({
+            type: 'contract',
+            title: team.city + ' ' + team.name + ' sign ' + fa.name,
+            body: fa.position + ' ' + fa.name + ' (OVR ' + fa.rating + ') signs a ' + fa.contract.years + '-year, ' + formatMoney(fa.contract.totalValue) + ' deal.'
+          });
+        }
+      }
+    }
+    
     // STEP 5: Coaching cap enforcement (unchanged from before)
     let coachTotal = this.teamCoachingSalary(team);
     if (coachTotal > COACHING_CAP) {
@@ -5842,14 +7008,28 @@ let game = {
       if (p.abilities) {
         const aging = getEffectiveAging(p.position, p.archetype, p.peakOvr);
         const isGenerational = (p.peakOvr || 75) >= 95;
+        // Per-ability soft ceiling. A player's potential bounds how high any single ability can go.
+        // Most abilities cluster within potential ± 4. This prevents the "5 abilities all growing in lockstep
+        // until OVR hits 99" failure mode that produced 100+ players at 90+ across the league.
+        const abilityCeiling = Math.min(99, (p.potential || p.rating) + 2);
         Object.keys(p.abilities).forEach(k => {
           let delta = 0;
-          if (p.age < aging.peakStart && p.rating < (p.potential || p.rating + 5)) {
-            // Pre-peak: growing (0-2)
-            delta = Math.floor(Math.random() * 3);
+          const currentAbility = p.abilities[k];
+          if (p.age < aging.peakStart && p.rating < (p.potential || p.rating + 5) && currentAbility < abilityCeiling) {
+            // Pre-peak: average +0.5/year per ability (was +1). 60% no gain, 30% +1, 10% +2.
+            // Across ~5 abilities this gives ~+2.5 OVR/year max, ~+1.5 typical. Over 4 years that
+            // means a 75 OVR rookie tops out around 81-87 in their prime — realistic.
+            const r = Math.random();
+            if (r < 0.60) delta = 0;
+            else if (r < 0.90) delta = 1;
+            else delta = 2;
+            // Slow growth even more as you approach the ability ceiling
+            if (currentAbility >= abilityCeiling - 3) delta = Math.min(delta, 1);
+            if (currentAbility >= abilityCeiling - 1) delta = 0;
           } else if (p.age >= aging.peakStart && p.age <= aging.peakEnd) {
             // In peak: stable with slight fluctuation
             delta = Math.random() < 0.3 ? 1 : (Math.random() < 0.3 ? -1 : 0);
+            if (currentAbility >= abilityCeiling) delta = Math.min(delta, 0);
           } else if (p.age >= aging.declineStart) {
             // POST-PEAK DECLINE — steeper the further past peak.
             // Non-generational players fall off a cliff. Generational players decline gracefully.
@@ -5867,11 +7047,14 @@ let game = {
           p.abilities[k] = Math.max(40, Math.min(99, p.abilities[k] + delta));
         });
         p.rating = calculateOvrFromAbilities(p.position, p.abilities);
+        // Hard rating ceiling — even if abilities suggest higher, cap rating at potential + 1 to
+        // prevent over-shoots from compounding through trades/draft picks.
+        p.rating = Math.min(p.rating, Math.min(99, (p.potential || p.rating) + 1));
         p.archetype = detectArchetype(p.position, p.abilities);
       } else {
         // Legacy player without abilities — fallback
         if (p.age >= 30) p.rating = Math.max(40, p.rating - Math.floor(Math.random() * 4));
-        else if (p.age <= 25) p.rating = Math.min(99, p.rating + Math.floor(Math.random() * 3));
+        else if (p.age <= 25) p.rating = Math.min(99, p.rating + Math.floor(Math.random() * 2));
       }
       
       // Advance contract
@@ -5901,6 +7084,7 @@ let game = {
       if (willRetire) {
         p.retired = true;
         p.retiredYear = this.state.year;
+        const lastTeamId = p.team; // capture before nulling — used for team-HOF lookup
         if (p.team !== null) {
           this.state.teams[p.team].roster = this.state.teams[p.team].roster.filter(id => id !== p.id);
           p.team = null;
@@ -5916,6 +7100,74 @@ let game = {
             yearsInLeague: p.yearsInLeague, awards: [...p.awards]
           });
           this.addHeadline({ type:'hof', title: p.name + ' retires after ' + p.yearsInLeague + ' seasons', body: 'Legendary ' + p.position + '. ' + this.formatCareerStats(p) + '.' });
+        } else {
+          // TEAM HALL OF FAME — a retired player who spent significant time with one franchise
+          // and had a meaningful career on it gets enshrined in that team's Ring of Honor.
+          // Threshold is lower than league HOF: 5+ seasons + (notable production OR an award).
+          // Use seasonHistory to identify the player's primary team (most seasons spent there).
+          // For players generated at game start, seasonHistory only tracks IN-GAME years —
+          // so we add an implicit "pre-game tenure" credit assuming they spent their existing
+          // yearsInLeague at lastTeamId (a fair approximation since NFL tenure is high).
+          const tenureByTeam = {};
+          if (Array.isArray(p.seasonHistory)) {
+            p.seasonHistory.forEach(h => {
+              if (h.teamId !== undefined && h.teamId !== null) {
+                tenureByTeam[h.teamId] = (tenureByTeam[h.teamId] || 0) + 1;
+              }
+            });
+          }
+          // Add pre-game tenure credit to whichever team appears most in seasonHistory (or lastTeamId).
+          // This avoids losing legends from the first few simmed years to a strict "5+ in-game seasons" check.
+          const inGameYears = Object.values(tenureByTeam).reduce((s, n) => s + n, 0);
+          const preGameYears = Math.max(0, (p.yearsInLeague || 0) - inGameYears);
+          if (preGameYears > 0) {
+            const primaryFromHistory = Object.entries(tenureByTeam).sort((a, b) => b[1] - a[1])[0];
+            const creditTeam = primaryFromHistory ? parseInt(primaryFromHistory[0]) : lastTeamId;
+            if (creditTeam !== null && creditTeam !== undefined) {
+              tenureByTeam[creditTeam] = (tenureByTeam[creditTeam] || 0) + preGameYears;
+            }
+          }
+          // Fall back to lastTeamId if no tenure data at all
+          if (Object.keys(tenureByTeam).length === 0 && lastTeamId !== null && lastTeamId !== undefined) {
+            tenureByTeam[lastTeamId] = p.yearsInLeague || 1;
+          }
+          let primaryTeamId = null;
+          let maxYears = 0;
+          Object.entries(tenureByTeam).forEach(([tid, yrs]) => {
+            if (yrs > maxYears) { maxYears = yrs; primaryTeamId = parseInt(tid); }
+          });
+          
+          // Qualifying threshold
+          const hasNotableProduction = (p.careerStats.passingYards || 0) > 12000 ||
+            (p.careerStats.rushingYards || 0) > 4500 ||
+            (p.careerStats.receivingYards || 0) > 4500 ||
+            (p.careerStats.touchdowns || 0) > 50 ||
+            (p.careerStats.sacks || 0) > 50 ||
+            (p.careerStats.interceptionsMade || 0) > 25;
+          const hasAward = Array.isArray(p.awards) && p.awards.length >= 1;
+          const qualifiesForTeamHOF = primaryTeamId !== null &&
+            maxYears >= 5 &&
+            (hasNotableProduction || hasAward);
+          
+          if (qualifiesForTeamHOF) {
+            const team = this.state.teams[primaryTeamId];
+            if (team) {
+              if (!team.teamHOF) team.teamHOF = [];
+              team.teamHOF.push({
+                playerId: p.id, name: p.name, position: p.position,
+                yearsWithTeam: maxYears,
+                inductedYear: this.state.year + 2,
+                careerStats: { ...p.careerStats },
+                awards: Array.isArray(p.awards) ? [...p.awards] : []
+              });
+              p.teamHofInducted = true; // flag for culling exemption below
+              this.addHeadline({
+                type: 'hof',
+                title: team.city + ' ' + team.name + ' to enshrine ' + p.name + ' in Ring of Honor',
+                body: maxYears + ' seasons in ' + team.city + ' · ' + p.position + ' ' + p.name + ' retires after ' + p.yearsInLeague + ' years.'
+              });
+            }
+          }
         }
       }
       p.seasonStats = EMPTY_SEASON_STATS();
@@ -5927,6 +7179,51 @@ let game = {
         const p = this.state.players[id];
         return p && !p.retired;
       });
+    });
+    
+    // Cull retired non-HOF players to minimal stubs. Saves significant state size over multi-year sims.
+    // We don't splice them out (player IDs are array indices, references would break) — instead we
+    // strip bulky fields (abilities, seasonHistory, contract, awards) and keep just the identity
+    // shell so any name-lookup references still work.
+    // EXCEPTIONS that are preserved fully:
+    //  - League HOF inductees (the game's permanent legends gallery)
+    //  - Team HOF inductees (each team's Ring of Honor — see team.teamHOF)
+    //  - The user's own player (player career mode)
+    this.state.players.forEach(p => {
+      if (!p.retired || p.hofInducted || p.teamHofInducted) return;
+      if (p.isUserControlled) return; // never cull the user's career
+      // Strip bulky fields. Keep identity + summary stats for record lookups.
+      delete p.abilities;
+      delete p.seasonHistory;
+      delete p.awards;
+      delete p.contract;
+      delete p.injury;
+      delete p.combineResults;
+      delete p.weeklyTraining;
+      delete p.collegeGrade;
+      delete p.declaredEarly;
+      // Keep a compact careerStats summary (totals only, ~100 bytes vs full ~260 bytes).
+      // Don't fully delete — players page and HOF voting still reference these.
+      if (p.careerStats) {
+        const minimal = {
+          gamesPlayed: p.careerStats.gamesPlayed || 0,
+          passingYards: p.careerStats.passingYards || 0,
+          passingTDs: p.careerStats.passingTDs || 0,
+          rushingYards: p.careerStats.rushingYards || 0,
+          rushingTDs: p.careerStats.rushingTDs || 0,
+          receivingYards: p.careerStats.receivingYards || 0,
+          receivingTDs: p.careerStats.receivingTDs || 0,
+          sacks: p.careerStats.sacks || 0,
+          interceptionsMade: p.careerStats.interceptionsMade || 0,
+          touchdowns: p.careerStats.touchdowns || 0,
+          seasonsPlayed: p.careerStats.seasonsPlayed || p.yearsInLeague || 0
+        };
+        // Only keep non-zero fields
+        p.careerStats = {};
+        Object.entries(minimal).forEach(([k, v]) => { if (v !== 0) p.careerStats[k] = v; });
+      }
+      // Mark as culled so we know not to do this again
+      p._culled = true;
     });
     
     // Process coaches: snapshot history, grow OVR based on success, age, retire
@@ -6460,8 +7757,77 @@ let game = {
   },
 
   // RENDER ROUTER
+  // Capture a snapshot of the current view so the user can return to it via Back.
+  // We track currentView + the few filter/context fields that affect rendering. New
+  // fields can be added without breaking existing snapshots.
+  _captureViewSnapshot() {
+    return {
+      view: this.currentView,
+      rosterPosFilter: this.rosterPosFilter,
+      rosterView: this.rosterView,
+      statsTab: this.statsTab,
+      seasonLeadersCat: this.seasonLeadersCat,
+      seasonLeadersLen: this.seasonLeadersLen,
+      allTimeLeadersCat: this.allTimeLeadersCat,
+      allTimeLeadersLen: this.allTimeLeadersLen,
+      collegeTab: this.collegeTab,
+      collegeProspectFilter: this.collegeProspectFilter,
+      collegeYearFilter: this.collegeYearFilter,
+      viewingCollegeGame: this.viewingCollegeGame,
+      teamHistoryTeamId: this.teamHistoryTeamId,
+      faFilter: this.faFilter
+    };
+  },
+  
+  // Restore from a snapshot. Apply fields then re-render.
+  _restoreViewSnapshot(s) {
+    if (!s) return;
+    this.currentView = s.view;
+    this.rosterPosFilter = s.rosterPosFilter;
+    this.rosterView = s.rosterView;
+    this.statsTab = s.statsTab;
+    this.seasonLeadersCat = s.seasonLeadersCat;
+    this.seasonLeadersLen = s.seasonLeadersLen;
+    this.allTimeLeadersCat = s.allTimeLeadersCat;
+    this.allTimeLeadersLen = s.allTimeLeadersLen;
+    this.collegeTab = s.collegeTab;
+    this.collegeProspectFilter = s.collegeProspectFilter;
+    this.collegeYearFilter = s.collegeYearFilter;
+    this.viewingCollegeGame = s.viewingCollegeGame;
+    this.teamHistoryTeamId = s.teamHistoryTeamId;
+    this.faFilter = s.faFilter;
+  },
+  
+  // Page-level back navigation. Pops one entry from view history. The render() in turn
+  // will skip its push-on-change check because we set _suppressNextSnapshot.
+  goBack() {
+    if (!this._viewHistory || this._viewHistory.length === 0) return;
+    const prev = this._viewHistory.pop();
+    // Don't push the current snapshot onto history during this restore — we're navigating BACK,
+    // not forward. We do this by clearing _lastSnapshot so render's push logic finds nothing to push.
+    this._lastSnapshot = null;
+    this._restoreViewSnapshot(prev);
+    this.render();
+  },
+  
+  // True iff there's a view to go back to. Used to decide whether to show the Back button.
+  canGoBack() {
+    return this._viewHistory && this._viewHistory.length > 0;
+  },
+
   render() {
     if (!this.state) return;
+    // Snapshot previous view state for back navigation. We track currentView + a few key
+    // filter/context fields that affect what the user sees. We only push when a NEW view
+    // is being rendered — not when re-rendering the same view (e.g. filter toggles).
+    if (!this._viewHistory) this._viewHistory = [];
+    if (this._lastSnapshot && this._lastSnapshot.view !== this.currentView) {
+      this._viewHistory.push(this._lastSnapshot);
+      // Cap history at 50 entries to bound memory
+      if (this._viewHistory.length > 50) this._viewHistory.shift();
+    }
+    this._lastSnapshot = this._captureViewSnapshot();
+    
     document.getElementById('currentYear').textContent = this.state.year;
     // Display week with playoff awareness
     let weekDisplay;
@@ -6515,6 +7881,7 @@ let game = {
       case 'myschoolschedule': this.renderMySchoolSchedule(); break;
       case 'myschoolstandings': this.renderMySchoolStandings(); break;
       case 'collegeplayoffs': this.renderCollegePlayoffPicture(); break;
+      case 'heismanrace': this.renderHeismanRace(); break;
       case 'collegeboxscore': this.renderCollegeBoxScore(); break;
       case 'combine': this.renderCombine(); break;
       case 'trades': this.renderTrades(); break;
@@ -6527,6 +7894,29 @@ let game = {
     }
     // Keep the accordion sidebar in sync with the currently-active view.
     this.syncNavGroupForActive();
+    // Prepend a Back button to content if there's history. Inserted AFTER the view-specific render
+    // overwrites #content so the button isn't wiped.
+    this._injectBackButton();
+  },
+  
+  // Insert a Back button at the very top of content if the user can navigate back.
+  // Hidden if no history. Clicks call goBack() which restores the previous snapshot.
+  _injectBackButton() {
+    const content = document.getElementById('content');
+    if (!content) return;
+    // Defensive: in some headless/test environments content may not be a real DOM element.
+    if (typeof content.querySelector !== 'function' || typeof content.insertBefore !== 'function') return;
+    if (typeof document.createElement !== 'function') return;
+    // Remove any existing back bar
+    const existing = content.querySelector('.back-bar-inline');
+    if (existing && typeof existing.remove === 'function') existing.remove();
+    if (!this.canGoBack()) return;
+    const div = document.createElement('div');
+    if (!div || typeof content.insertBefore !== 'function') return;
+    div.className = 'back-bar-inline';
+    div.style.cssText = 'padding:6px 0 12px 0;margin-bottom:-4px';
+    div.innerHTML = '<button onclick="game.goBack()" style="background:transparent;border:1px solid var(--border-strong);padding:4px 12px;font-family:inherit;font-size:12px;cursor:pointer;color:var(--text-muted);display:inline-flex;align-items:center;gap:4px" onmouseover="this.style.color=\'var(--text)\';this.style.borderColor=\'var(--text-muted)\'" onmouseout="this.style.color=\'var(--text-muted)\';this.style.borderColor=\'var(--border-strong)\'">← Back</button>';
+    try { content.insertBefore(div, content.firstChild); } catch (e) { /* test env */ }
   },
 
   // MY TEAM
@@ -6621,17 +8011,31 @@ let game = {
 
   renderRosterCard(team, ctx) {
     const allRoster = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
+    const view = this.rosterView || 'list';
+    
+    // View toggle: List (current table) vs Depth Chart (position-grouped)
+    let html = '<div class="card"><div class="card-header">' +
+      '<div class="card-title">Roster</div>' +
+      '<div class="card-meta">' + allRoster.length + '/' + ROSTER_SIZE + ' active</div>' +
+      '</div>' +
+      '<div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px">' +
+      '<button onclick="game.setRosterView(\'list\', \'' + ctx + '\', ' + team.id + ')" style="padding:5px 12px;background:' + (view === 'list' ? 'var(--accent)' : 'transparent') + ';color:' + (view === 'list' ? '#fff' : 'var(--text)') + ';border:1px solid var(--border-strong);font-family:inherit;font-size:11px;cursor:pointer;font-weight:' + (view === 'list' ? '600' : '400') + '">List view</button>' +
+      '<button onclick="game.setRosterView(\'depth\', \'' + ctx + '\', ' + team.id + ')" style="padding:5px 12px;background:' + (view === 'depth' ? 'var(--accent)' : 'transparent') + ';color:' + (view === 'depth' ? '#fff' : 'var(--text)') + ';border:1px solid var(--border-strong);font-family:inherit;font-size:11px;cursor:pointer;font-weight:' + (view === 'depth' ? '600' : '400') + '">Depth chart</button>' +
+      '</div>';
+    
+    if (view === 'depth') {
+      html += this.renderTeamDepthChart(team, allRoster, ctx);
+      html += '</div>';
+      return html;
+    }
+    
     const filtered = this.rosterPosFilter === 'ALL' ? allRoster : allRoster.filter(p => p.position === this.rosterPosFilter);
     filtered.sort((a, b) => b.rating - a.rating);
     const cap = getSalaryCap(this.state.year);
     // Show Cut buttons only on user's own My Team full page
     const showActions = ctx === 'fullPage' && team.id === this.state.userTeamId;
     const rowCls = showActions ? 'roster-row with-actions' : 'roster-row';
-    let html = '<div class="card"><div class="card-header">' +
-      '<div class="card-title">Roster</div>' +
-      '<div class="card-meta">' + filtered.length + ' of ' + allRoster.length + '/' + ROSTER_SIZE + ' active</div>' +
-      '</div>' +
-      '<div style="padding:12px 16px;border-bottom:1px solid var(--border)"><div class="draft-filters" style="margin:0">' +
+    html += '<div style="padding:12px 16px;border-bottom:1px solid var(--border)"><div class="draft-filters" style="margin:0">' +
       ['ALL'].concat(POSITIONS_FOR_DRAFT).map(pos =>
         '<button class="filter-btn ' + (this.rosterPosFilter === pos ? 'active' : '') + '" onclick="game.setRosterFilter(\'' + pos + '\', \'' + ctx + '\', ' + team.id + ')">' + pos + '</button>'
       ).join('') + '</div></div>' +
@@ -6658,6 +8062,55 @@ let game = {
     });
     html += '</div>';
     return html;
+  },
+
+  // NFL depth chart — mirrors the college depth chart UX. Each position gets a card showing
+  // every player at that position sorted by OVR (starters first), with year-in-league badge.
+  renderTeamDepthChart(team, roster, ctx) {
+    if (roster.length === 0) {
+      return '<div class="empty-state" style="padding:32px">No active players on the roster.</div>';
+    }
+    const byPos = {};
+    roster.forEach(p => {
+      if (!byPos[p.position]) byPos[p.position] = [];
+      byPos[p.position].push(p);
+    });
+    Object.keys(byPos).forEach(pos => byPos[pos].sort((a, b) => b.rating - a.rating));
+    
+    const posOrder = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
+    const userTeamId = this.state.userTeamId;
+    
+    let html = '<div style="padding:14px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px">';
+    posOrder.forEach(pos => {
+      const players = byPos[pos];
+      if (!players || players.length === 0) return;
+      html += '<div style="background:var(--surface);padding:10px 12px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">' +
+        '<span style="font-size:11px;font-weight:700;letter-spacing:0.5px">' + pos + '</span>' +
+        '<span style="font-size:10px;color:var(--text-muted)">' + players.length + ' deep</span>' +
+        '</div>';
+      players.forEach((p, idx) => {
+        const rc = this.ratingClass(p.rating);
+        const isStarter = idx === 0;
+        const injuredTag = (p.injury && p.injury.weeksRemaining > 0) ? ' <span style="font-size:8px;background:var(--danger);color:#fff;padding:1px 3px;font-weight:600">OUT</span>' : '';
+        // Year-in-league badge: "R" for rookies (0 years), else "Y" + count
+        const yrs = p.yearsInLeague || 0;
+        const yrTag = yrs === 0 ? 'R' : 'Y' + yrs;
+        html += '<div onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:12px' + (isStarter ? ';font-weight:600' : ';opacity:0.85') + '">' +
+          '<span>' + (isStarter ? '<span style="color:var(--accent);font-size:9px;margin-right:4px">●</span>' : '<span style="color:var(--text-muted);font-size:9px;margin-right:4px;font-family:var(--font-mono)">' + (idx+1) + '.</span>') + p.name + injuredTag + ' <span class="muted" style="font-size:10px">(' + yrTag + ')</span></span>' +
+          '<span class="rating ' + rc + '" style="font-size:11px">' + p.rating + '</span>' +
+          '</div>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  },
+
+  setRosterView(view, ctx, teamId) {
+    this.rosterView = view;
+    if (ctx === 'fullPage') this.renderMyTeam();
+    else if (ctx === 'modal') this.showTeam(teamId);
   },
 
   // Confirm dialog wrapper around release — used from My Team Cut button.
@@ -7205,10 +8658,13 @@ let game = {
       '</div>';
     
     // Hero block
+    const starsBadge = (p.recruitStars !== undefined && p.recruitStars !== null)
+      ? '<span style="color:#d4a017;letter-spacing:1.5px;margin-left:8px;font-size:12px">' + '★'.repeat(p.recruitStars) + '<span style="opacity:0.3">' + '★'.repeat(5 - p.recruitStars) + '</span></span>'
+      : '';
     html += '<div class="my-team-hero">' +
       '<div class="my-team-hero-left">' +
       '<div class="player-face-large" style="width:88px;height:88px">' + pixelFaceSVG(p.faceSeed) + '</div>' +
-      '<div><div class="my-team-name">' + p.name + '</div>' +
+      '<div><div class="my-team-name">' + p.name + starsBadge + '</div>' +
       '<div class="my-team-meta">' + p.position + ' · ' + (stage === 'declared' ? 'NFL prospect' : p.year) + ' · <span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + p.school + '\')">' + schoolName + '</span></div>' +
       '<div style="margin-top:8px"><span class="rating ' + gradeRC + '" style="font-size:14px;padding:4px 10px">GRADE ' + p.prospectGrade.toFixed(1) + '</span></div></div></div>' +
       '<div class="my-team-stats">' +
@@ -7776,13 +9232,103 @@ let game = {
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">' +
       '<div><div class="section-label">National Champion</div>' +
       '<div style="font-size:22px;font-weight:700;letter-spacing:-0.3px">' + schoolLink(recap.champion) + '</div>' +
-      '<div class="muted" style="font-size:12px">' + recap.championRecord + ' · defeated ' + schoolLink(recap.runnerUp) + '</div></div>' +
+      '<div class="muted" style="font-size:12px">' + recap.championRecord + ' · defeated ' + schoolLink(recap.runnerUp) +
+      (recap.cfpTitleGame ? ' ' + recap.cfpTitleGame.winnerScore + '–' + recap.cfpTitleGame.loserScore : '') + '</div></div>' +
       '<div><div class="section-label">Heisman Trophy</div>' +
       '<div style="font-size:16px;font-weight:600">' + recap.heismanName + '</div>' +
       '<div class="muted" style="font-size:12px">' + recap.heismanPosition + ' · ' + schoolLinkByAbbr(recap.heismanSchool) + '</div>' +
       '<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">Maxwell: ' + recap.maxwellName + ' (' + recap.maxwellPosition + ', ' + schoolLinkByAbbr(recap.maxwellSchool) + ')</div></div>' +
-      '</div>' +
-      '<div class="section-label">Major Storylines</div><ul style="padding-left:20px;font-size:13px;line-height:1.7;color:var(--text-muted)">';
+      '</div>';
+    
+    // Heisman finalists — top 5 from the year's race
+    if (recap.heismanFinalists && recap.heismanFinalists.length > 0) {
+      html += '<div class="section-label" style="margin-top:8px">Heisman finalists</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-top:8px">';
+      recap.heismanFinalists.forEach((f, i) => {
+        const isWinner = i === 0;
+        const bgStyle = isWinner ? 'background:var(--surface-2);border-left:3px solid #d4a017' : 'background:var(--surface)';
+        const s = f.stats || {};
+        let prodStr;
+        if (f.position === 'QB') prodStr = (s.passYds || 0).toLocaleString() + ' / ' + (s.passTDs || 0) + ' TD';
+        else if (f.position === 'RB') prodStr = (s.rushYds || 0).toLocaleString() + ' yds / ' + (s.rushTDs || 0) + ' TD';
+        else prodStr = (s.receptions || 0) + '-' + (s.recYds || 0).toLocaleString() + '-' + (s.recTDs || 0);
+        html += '<div style="' + bgStyle + ';padding:8px 12px;font-size:12px">' +
+          '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.3px;margin-bottom:2px">#' + (i + 1) + (isWinner ? ' · WINNER' : '') + '</div>' +
+          '<div><strong>' + f.name + '</strong> <span class="muted" style="font-size:11px">(' + f.position + ', ' + schoolLinkByAbbr(f.school) + ')</span></div>' +
+          '<div class="muted" style="font-size:10px;margin-top:2px">' + prodStr + '</div>' +
+          '</div>';
+      });
+      html += '</div>';
+    }
+    
+    // CFP bracket results — only present if the bracket was simulated this season
+    if (recap.cfpBracket && recap.cfpBracket.length > 0) {
+      html += '<div class="section-label" style="margin-top:8px">CFP 12-team bracket</div>' +
+        '<div style="font-size:13px;line-height:1.6;margin-top:8px">';
+      
+      // Title game
+      if (recap.cfpTitleGame) {
+        const t = recap.cfpTitleGame;
+        html += '<div style="background:var(--surface-2);padding:10px 14px;border-left:3px solid var(--accent);margin-bottom:10px">' +
+          '<div style="font-size:10px;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:2px">TITLE GAME</div>' +
+          '<strong>' + schoolLinkByAbbr(t.winnerAbbr) + ' ' + t.winnerScore + '</strong> · ' + schoolLinkByAbbr(t.loserAbbr) + ' ' + t.loserScore +
+          '</div>';
+      }
+      
+      // Semifinals
+      if (recap.cfpSemifinals && recap.cfpSemifinals.length > 0) {
+        html += '<div style="font-size:10px;letter-spacing:0.5px;color:var(--text-muted);margin-top:8px;margin-bottom:4px">SEMIFINALS</div>';
+        recap.cfpSemifinals.forEach(g => {
+          html += '<div style="padding:3px 0"><strong>' + schoolLinkByAbbr(g.winnerAbbr) + ' ' + g.winnerScore + '</strong> over ' + schoolLinkByAbbr(g.loserAbbr) + ' ' + g.loserScore + '</div>';
+        });
+      }
+      
+      // Quarterfinals
+      if (recap.cfpQuarterfinals && recap.cfpQuarterfinals.length > 0) {
+        html += '<div style="font-size:10px;letter-spacing:0.5px;color:var(--text-muted);margin-top:8px;margin-bottom:4px">QUARTERFINALS</div>';
+        recap.cfpQuarterfinals.forEach(g => {
+          html += '<div style="padding:3px 0"><strong>' + schoolLinkByAbbr(g.winnerAbbr) + ' ' + g.winnerScore + '</strong> over ' + schoolLinkByAbbr(g.loserAbbr) + ' ' + g.loserScore + '</div>';
+        });
+      }
+      
+      // First round
+      if (recap.cfpFirstRound && recap.cfpFirstRound.length > 0) {
+        html += '<div style="font-size:10px;letter-spacing:0.5px;color:var(--text-muted);margin-top:8px;margin-bottom:4px">FIRST ROUND</div>';
+        recap.cfpFirstRound.forEach(g => {
+          html += '<div style="padding:3px 0"><span class="muted" style="font-size:11px">#' + g.winnerSeed + '</span> <strong>' + schoolLinkByAbbr(g.winnerAbbr) + ' ' + g.winnerScore + '</strong> over <span class="muted" style="font-size:11px">#' + g.loserSeed + '</span> ' + schoolLinkByAbbr(g.loserAbbr) + ' ' + g.loserScore + '</div>';
+        });
+      }
+      
+      html += '</div>';
+    }
+    
+    // Conference championship games
+    if (recap.confChampGames && recap.confChampGames.length > 0) {
+      html += '<div class="section-label" style="margin-top:16px">Conference championships</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-top:8px">';
+      recap.confChampGames.forEach(g => {
+        html += '<div style="background:var(--surface);padding:8px 12px;font-size:12px">' +
+          '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.3px;margin-bottom:2px">' + g.confName.toUpperCase() + '</div>' +
+          '<div><strong>' + schoolLinkByAbbr(g.winner) + ' ' + g.winnerScore + '</strong> over ' + schoolLinkByAbbr(g.loser) + ' ' + g.loserScore + '</div>' +
+          '</div>';
+      });
+      html += '</div>';
+    }
+    
+    // Bowl games — for non-playoff teams with 6+ wins
+    if (recap.bowlGames && recap.bowlGames.length > 0) {
+      html += '<div class="section-label" style="margin-top:16px">Bowl games · ' + recap.bowlGames.length + '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-top:8px">';
+      recap.bowlGames.forEach(g => {
+        html += '<div style="background:var(--surface);padding:8px 12px;font-size:12px">' +
+          '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.3px;margin-bottom:2px">' + g.bowlName.toUpperCase() + '</div>' +
+          '<div><strong>' + schoolLinkByAbbr(g.winnerAbbr) + ' ' + g.winnerScore + '</strong> over ' + schoolLinkByAbbr(g.loserAbbr) + ' ' + g.loserScore + '</div>' +
+          '</div>';
+      });
+      html += '</div>';
+    }
+    
+    html += '<div class="section-label" style="margin-top:20px">Major Storylines</div><ul style="padding-left:20px;font-size:13px;line-height:1.7;color:var(--text-muted)">';
     recap.storylines.forEach(s => { html += '<li>' + s + '</li>'; });
     html += '</ul>' +
       '<div class="section-label" style="margin-top:20px">Final Top 25</div>' +
@@ -9716,84 +11262,173 @@ let game = {
 
   renderSeasonLeaders() {
     const players = this.state.players.filter(p => !p.retired);
+    const currentCat = this.seasonLeadersCat || 'passingYards';
+    const currentLen = this.seasonLeadersLen || 25;
+    
+    // Categories with their stat-key + secondary stats to show alongside
     const cats = [
-      { title: 'Passing yards', key: 'passingYards' },
-      { title: 'Passing TDs', key: 'passingTDs' },
-      { title: 'Rushing yards', key: 'rushingYards' },
-      { title: 'Rushing TDs', key: 'rushingTDs' },
-      { title: 'Receiving yards', key: 'receivingYards' },
-      { title: 'Receptions', key: 'receptions' },
-      { title: 'Sacks', key: 'sacks' },
-      { title: 'Interceptions', key: 'interceptionsMade' },
-      { title: 'Tackles', key: 'tackles' },
-      { title: 'Field goals made', key: 'fieldGoalsMade' }
+      { key: 'passingYards', label: 'Passing Yards', stats: ['passingYards', 'passingTDs', 'completions', 'attempts', 'interceptionsThrown'] },
+      { key: 'passingTDs', label: 'Passing TDs', stats: ['passingTDs', 'passingYards', 'completions', 'interceptionsThrown'] },
+      { key: 'completions', label: 'Completions', stats: ['completions', 'attempts', 'passingYards'] },
+      { key: 'rushingYards', label: 'Rushing Yards', stats: ['rushingYards', 'rushingTDs', 'carries'] },
+      { key: 'rushingTDs', label: 'Rushing TDs', stats: ['rushingTDs', 'rushingYards', 'carries'] },
+      { key: 'receivingYards', label: 'Receiving Yards', stats: ['receivingYards', 'receivingTDs', 'receptions'] },
+      { key: 'receivingTDs', label: 'Receiving TDs', stats: ['receivingTDs', 'receivingYards', 'receptions'] },
+      { key: 'receptions', label: 'Receptions', stats: ['receptions', 'receivingYards', 'receivingTDs'] },
+      { key: 'sacks', label: 'Sacks', stats: ['sacks', 'tackles'] },
+      { key: 'interceptionsMade', label: 'Interceptions', stats: ['interceptionsMade', 'tackles'] },
+      { key: 'tackles', label: 'Tackles', stats: ['tackles', 'sacks', 'interceptionsMade'] },
+      { key: 'fieldGoalsMade', label: 'FG Made', stats: ['fieldGoalsMade', 'fieldGoalsAttempted', 'extraPoints'] },
+      { key: 'touchdowns', label: 'Total TDs', stats: ['touchdowns', 'rushingTDs', 'receivingTDs', 'passingTDs'] }
     ];
-    let html = '';
+    
+    // Tab bar for categories
+    let html = '<div class="card" style="padding:0;margin-bottom:0">' +
+      '<div style="display:flex;flex-wrap:wrap;gap:0;padding:4px;background:var(--surface);border-bottom:1px solid var(--border)">';
     cats.forEach(c => {
-      const sorted = [...players].sort((a, b) => (b.seasonStats[c.key] || 0) - (a.seasonStats[c.key] || 0)).slice(0, 5);
-      html += '<div class="card"><div class="card-header"><div class="card-title">' + c.title + '</div></div>';
-      sorted.forEach((p, i) => {
-        const team = this.state.teams[p.team];
-        const teamLabel = team
-          ? '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + team.id + ')">' + team.abbr + '</span>'
-          : 'FA';
-        html += '<div class="leader-row" onclick="game.showPlayer(' + p.id + ')">' +
-          '<div class="leader-rank">' + (i + 1) + '</div>' +
-          '<div><span class="leader-name">' + p.name + '</span><span class="leader-team">' + teamLabel + ' · ' + p.position + '</span></div>' +
-          '<div class="leader-stat">' + (p.seasonStats[c.key] || 0).toLocaleString() + '</div></div>';
-      });
-      html += '</div>';
+      const isActive = c.key === currentCat;
+      html += '<button onclick="game.seasonLeadersCat=\'' + c.key + '\';game.renderStatistics()" style="padding:6px 12px;background:' +
+        (isActive ? 'var(--accent)' : 'transparent') +
+        ';color:' + (isActive ? '#fff' : 'var(--text)') +
+        ';border:none;font-family:inherit;font-size:11px;font-weight:' + (isActive ? '600' : '400') +
+        ';cursor:pointer;letter-spacing:0.3px">' + c.label + '</button>';
     });
-    // Punting leaders
-    const punters = players.filter(p => p.position === 'P' && p.seasonStats.punts > 0);
-    const byAvg = [...punters].sort((a, b) => (b.seasonStats.puntYards/Math.max(1,b.seasonStats.punts)) - (a.seasonStats.puntYards/Math.max(1,a.seasonStats.punts))).slice(0, 5);
-    if (byAvg.length > 0) {
-      html += '<div class="card"><div class="card-header"><div class="card-title">Punting · avg yards</div></div>';
-      byAvg.forEach((p, i) => {
-        const team = this.state.teams[p.team];
-        const teamLabel = team
-          ? '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + team.id + ')">' + team.abbr + '</span>'
-          : 'FA';
-        const avg = (p.seasonStats.puntYards/p.seasonStats.punts).toFixed(1);
-        html += '<div class="leader-row" onclick="game.showPlayer(' + p.id + ')">' +
-          '<div class="leader-rank">' + (i + 1) + '</div>' +
-          '<div><span class="leader-name">' + p.name + '</span><span class="leader-team">' + teamLabel + '</span></div>' +
-          '<div class="leader-stat">' + avg + ' (' + p.seasonStats.punts + ' punts)</div></div>';
+    html += '</div>';
+    
+    // Length toggle
+    html += '<div style="padding:6px 12px;background:var(--surface);font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">' +
+      '<span>Show top:</span>';
+    [10, 25, 50, 100].forEach(n => {
+      const isActive = n === currentLen;
+      html += '<button onclick="game.seasonLeadersLen=' + n + ';game.renderStatistics()" style="padding:2px 8px;background:' + (isActive ? 'var(--accent)' : 'transparent') + ';color:' + (isActive ? '#fff' : 'var(--text)') + ';border:1px solid var(--border-strong);font-family:inherit;font-size:11px;cursor:pointer">' + n + '</button>';
+    });
+    html += '</div>';
+    
+    // Active category data
+    const activeCat = cats.find(c => c.key === currentCat) || cats[0];
+    const sorted = [...players]
+      .filter(p => (p.seasonStats[activeCat.key] || 0) > 0)
+      .sort((a, b) => (b.seasonStats[activeCat.key] || 0) - (a.seasonStats[activeCat.key] || 0))
+      .slice(0, currentLen);
+    
+    // Build header row dynamically based on the secondary stats for this category
+    const statHeaders = {
+      passingYards: 'PASS YDS', passingTDs: 'PASS TD', completions: 'CMP', attempts: 'ATT', interceptionsThrown: 'INT',
+      rushingYards: 'RUSH YDS', rushingTDs: 'RUSH TD', carries: 'CAR',
+      receivingYards: 'REC YDS', receivingTDs: 'REC TD', receptions: 'REC',
+      sacks: 'SACK', interceptionsMade: 'INT', tackles: 'TKL',
+      fieldGoalsMade: 'FGM', fieldGoalsAttempted: 'FGA', extraPoints: 'XPT',
+      touchdowns: 'TD'
+    };
+    
+    html += '<table style="margin:0"><thead><tr><th>RK</th><th>PLAYER</th><th class="text-center">POS</th><th class="text-center">TEAM</th>';
+    activeCat.stats.forEach(s => {
+      html += '<th class="text-right">' + (statHeaders[s] || s.toUpperCase()) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+    
+    sorted.forEach((p, i) => {
+      const team = this.state.teams[p.team];
+      html += '<tr onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer">' +
+        '<td class="mono-num">' + (i + 1) + '</td>' +
+        '<td><strong>' + p.name + '</strong></td>' +
+        '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
+        '<td class="text-center mono-num">' + (team ? team.abbr : 'FA') + '</td>';
+      activeCat.stats.forEach(s => {
+        const val = p.seasonStats[s] || 0;
+        html += '<td class="text-right mono-num">' + val.toLocaleString() + '</td>';
       });
-      html += '</div>';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    if (sorted.length === 0) {
+      html = '<div class="empty-state">No data yet for ' + activeCat.label + ' — sim some games first.</div>';
     }
+    
     return html;
   },
 
   renderAllTimeLeaders() {
     const players = this.state.players;
+    const currentCat = this.allTimeLeadersCat || 'passingYards';
+    const currentLen = this.allTimeLeadersLen || 25;
     const cats = [
-      { title: 'Career passing yards', key: 'passingYards' },
-      { title: 'Career rushing yards', key: 'rushingYards' },
-      { title: 'Career receiving yards', key: 'receivingYards' },
-      { title: 'Career touchdowns', key: 'touchdowns' },
-      { title: 'Career sacks', key: 'sacks' },
-      { title: 'Career tackles', key: 'tackles' },
-      { title: 'Career interceptions', key: 'interceptionsMade' }
+      { key: 'passingYards', label: 'Pass Yards', stats: ['passingYards', 'passingTDs'] },
+      { key: 'passingTDs', label: 'Pass TDs', stats: ['passingTDs', 'passingYards'] },
+      { key: 'rushingYards', label: 'Rush Yards', stats: ['rushingYards', 'rushingTDs'] },
+      { key: 'rushingTDs', label: 'Rush TDs', stats: ['rushingTDs', 'rushingYards'] },
+      { key: 'receivingYards', label: 'Rec Yards', stats: ['receivingYards', 'receivingTDs'] },
+      { key: 'receivingTDs', label: 'Rec TDs', stats: ['receivingTDs', 'receivingYards'] },
+      { key: 'sacks', label: 'Sacks', stats: ['sacks', 'tackles'] },
+      { key: 'tackles', label: 'Tackles', stats: ['tackles', 'sacks'] },
+      { key: 'interceptionsMade', label: 'INTs', stats: ['interceptionsMade', 'tackles'] },
+      { key: 'touchdowns', label: 'Total TDs', stats: ['touchdowns'] }
     ];
-    let html = '';
+    const statHeaders = {
+      passingYards: 'PASS YDS', passingTDs: 'PASS TD',
+      rushingYards: 'RUSH YDS', rushingTDs: 'RUSH TD',
+      receivingYards: 'REC YDS', receivingTDs: 'REC TD',
+      sacks: 'SACK', tackles: 'TKL', interceptionsMade: 'INT', touchdowns: 'TD'
+    };
+    
+    let html = '<div class="card" style="padding:0">' +
+      '<div style="display:flex;flex-wrap:wrap;gap:0;padding:4px;background:var(--surface);border-bottom:1px solid var(--border)">';
     cats.forEach(c => {
-      const sorted = [...players].filter(p => (p.careerStats[c.key] || 0) > 0).sort((a, b) => (b.careerStats[c.key] || 0) - (a.careerStats[c.key] || 0)).slice(0, 10);
-      if (sorted.length === 0) return;
-      html += '<div class="card"><div class="card-header"><div class="card-title">' + c.title + '</div></div>';
-      sorted.forEach((p, i) => {
-        const team = p.team !== null ? this.state.teams[p.team] : null;
-        const teamLabel = team
-          ? '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + team.id + ')">' + team.abbr + '</span>'
-          : 'Retired';
-        html += '<div class="leader-row" onclick="game.showPlayer(' + p.id + ')">' +
-          '<div class="leader-rank">' + (i + 1) + '</div>' +
-          '<div><span class="leader-name">' + p.name + (p.hofInducted ? ' ★' : '') + '</span>' +
-          '<span class="leader-team">' + teamLabel + ' · ' + p.position + '</span></div>' +
-          '<div class="leader-stat">' + (p.careerStats[c.key] || 0).toLocaleString() + '</div></div>';
-      });
-      html += '</div>';
+      const isActive = c.key === currentCat;
+      html += '<button onclick="game.allTimeLeadersCat=\'' + c.key + '\';game.renderStatistics()" style="padding:6px 12px;background:' +
+        (isActive ? 'var(--accent)' : 'transparent') +
+        ';color:' + (isActive ? '#fff' : 'var(--text)') +
+        ';border:none;font-family:inherit;font-size:11px;font-weight:' + (isActive ? '600' : '400') +
+        ';cursor:pointer;letter-spacing:0.3px">' + c.label + '</button>';
     });
+    html += '</div>';
+    
+    html += '<div style="padding:6px 12px;background:var(--surface);font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">' +
+      '<span>Show top:</span>';
+    [10, 25, 50, 100].forEach(n => {
+      const isActive = n === currentLen;
+      html += '<button onclick="game.allTimeLeadersLen=' + n + ';game.renderStatistics()" style="padding:2px 8px;background:' + (isActive ? 'var(--accent)' : 'transparent') + ';color:' + (isActive ? '#fff' : 'var(--text)') + ';border:1px solid var(--border-strong);font-family:inherit;font-size:11px;cursor:pointer">' + n + '</button>';
+    });
+    html += '</div>';
+    
+    const activeCat = cats.find(c => c.key === currentCat) || cats[0];
+    const sorted = [...players]
+      .filter(p => p.careerStats && (p.careerStats[activeCat.key] || 0) > 0)
+      .sort((a, b) => (b.careerStats[activeCat.key] || 0) - (a.careerStats[activeCat.key] || 0))
+      .slice(0, currentLen);
+    
+    html += '<table style="margin:0"><thead><tr><th>RK</th><th>PLAYER</th><th class="text-center">POS</th><th class="text-center">STATUS</th><th class="text-center">YRS</th>';
+    activeCat.stats.forEach(s => {
+      html += '<th class="text-right">' + (statHeaders[s] || s.toUpperCase()) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+    
+    sorted.forEach((p, i) => {
+      const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
+      let statusLabel;
+      if (p.hofInducted) statusLabel = '<span style="color:#d4a017;font-weight:600">HOF</span>';
+      else if (p.retired) statusLabel = '<span style="color:var(--text-muted)">Retired</span>';
+      else if (team) statusLabel = team.abbr;
+      else statusLabel = 'FA';
+      html += '<tr onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer">' +
+        '<td class="mono-num">' + (i + 1) + '</td>' +
+        '<td><strong>' + p.name + '</strong>' + (p.hofInducted ? ' ★' : '') + '</td>' +
+        '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
+        '<td class="text-center">' + statusLabel + '</td>' +
+        '<td class="text-center mono-num">' + (p.yearsInLeague || p.careerStats.seasonsPlayed || '—') + '</td>';
+      activeCat.stats.forEach(s => {
+        const val = (p.careerStats && p.careerStats[s]) || 0;
+        html += '<td class="text-right mono-num">' + val.toLocaleString() + '</td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    if (sorted.length === 0) {
+      html = '<div class="empty-state">No career data yet for ' + activeCat.label + '.</div>';
+    }
+    
     return html;
   },
 
@@ -10296,6 +11931,25 @@ let game = {
     }
     html += '</div>';
     
+    // Team Ring of Honor — players whose primary tenure was with this franchise.
+    // Bar for inclusion is lower than league HOF: 5+ years on this team + notable production/award.
+    const teamHOF = team.teamHOF || [];
+    html += '<div class="card"><div class="card-header"><div class="card-title">' + team.city + ' Ring of Honor</div>' +
+      '<div class="card-meta">' + teamHOF.length + ' players</div></div>';
+    if (teamHOF.length === 0) {
+      html += '<div class="empty-state" style="padding:24px">No Ring of Honor inductees yet. Franchise legends will be enshrined here.</div>';
+    } else {
+      html += '<table><thead><tr><th>Name</th><th>Position</th><th class="text-right">Years here</th><th class="text-right">Inducted</th></tr></thead><tbody>';
+      teamHOF.slice().sort((a, b) => b.yearsWithTeam - a.yearsWithTeam).forEach(h => {
+        html += '<tr><td><span style="cursor:pointer;text-decoration:underline" onclick="game.showPlayerCard(' + h.playerId + ')">' + h.name + '</span></td>' +
+          '<td>' + h.position + '</td>' +
+          '<td class="text-right mono-num">' + h.yearsWithTeam + '</td>' +
+          '<td class="text-right mono-num">' + h.inductedYear + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    
     document.getElementById('content').innerHTML = html;
   },
 
@@ -10588,6 +12242,54 @@ let game = {
     }
     
     document.getElementById('content').innerHTML = html;
+  },
+
+  // HEISMAN RACE — running leaderboard of top candidates during the season.
+  // Built from the _heismanStats accumulated each week in pickGameTopPerformers.
+  renderHeismanRace() {
+    let html = '<div class="page-header"><div class="page-title">Heisman race</div>' +
+      '<div class="page-subtitle">Top candidates · ' + this.state.year + ' season · week ' + (this.state.collegeWeek || 0) + '/' + this.COLLEGE_SEASON_WEEKS + '</div></div>';
+    
+    const race = this.getHeismanRace(15);
+    if (race.length === 0) {
+      html += '<div class="empty-state">The Heisman race opens after week 1 of college football.</div>';
+      document.getElementById('content').innerHTML = html;
+      this._injectBackButton();
+      return;
+    }
+    
+    html += '<div class="card"><div class="card-header"><div class="card-title">Current standings</div><div class="card-meta">Score = position-weighted production + team prestige</div></div>' +
+      '<table><thead><tr><th>RK</th><th>PLAYER</th><th>POS</th><th>SCHOOL</th>' +
+      '<th class="text-right">GAMES</th><th class="text-right">PROD</th><th class="text-right">SCORE</th></tr></thead><tbody>';
+    
+    race.forEach((entry, i) => {
+      const p = entry.player;
+      const s = entry.stats;
+      const school = entry.school;
+      let prodStr = '';
+      if (p.position === 'QB') {
+        prodStr = (s.passYds || 0).toLocaleString() + ' pass · ' + (s.passTDs || 0) + ' TD' + ((s.ints || 0) > 0 ? ' · ' + s.ints + ' INT' : '');
+      } else if (p.position === 'RB') {
+        prodStr = (s.rushYds || 0).toLocaleString() + ' rush · ' + (s.rushTDs || 0) + ' TD';
+      } else {
+        prodStr = (s.receptions || 0) + ' rec · ' + (s.recYds || 0).toLocaleString() + ' yds · ' + (s.recTDs || 0) + ' TD';
+      }
+      const rank = i + 1;
+      const rankCls = rank === 1 ? 'style="color:#d4a017;font-weight:700"' : '';
+      html += '<tr style="cursor:pointer" onclick="game.showCollegeCard(\'' + p.school + '\')">' +
+        '<td class="mono-num" ' + rankCls + '>' + rank + '</td>' +
+        '<td><strong>' + p.name + '</strong></td>' +
+        '<td><span class="position-tag">' + p.position + '</span></td>' +
+        '<td>' + (school ? school.name : p.school) + '</td>' +
+        '<td class="text-right mono-num">' + (s.games || 0) + '</td>' +
+        '<td class="text-right" style="font-size:11px">' + prodStr + '</td>' +
+        '<td class="text-right mono-num"><strong>' + Math.round(entry.score) + '</strong></td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    document.getElementById('content').innerHTML = html;
+    this._injectBackButton();
   },
 
   // COLLEGE PLAYOFF PICTURE — show the projected 12-team College Football Playoff bracket
@@ -11183,11 +12885,42 @@ let game = {
     news.innerHTML = html;
   },
 
-  // MODAL HELPER
+  // MODAL HELPER — supports a back button via modalHistory stack.
+  // Each entry: { title, body }. New showModal calls push the previous content.
+  // closeModal clears the history. modalGoBack pops one level back.
   showModal(title, body) {
-    document.getElementById('modalTitle').textContent = title;
-    document.getElementById('modalBody').innerHTML = body;
+    if (!this._modalHistory) this._modalHistory = [];
+    const titleEl = document.getElementById('modalTitle');
+    const bodyEl = document.getElementById('modalBody');
+    const isOpen = document.getElementById('modal').classList.contains('show');
+    // If the modal is already open, push the current content onto history before replacing.
+    if (isOpen && titleEl && bodyEl) {
+      this._modalHistory.push({ title: titleEl.textContent, body: bodyEl.innerHTML });
+    }
+    // Build header with back button when history is non-empty
+    const backBtn = this._modalHistory.length > 0
+      ? '<button onclick="game.modalGoBack()" style="background:none;border:none;color:var(--text);font-size:18px;cursor:pointer;padding:0 8px 0 0;font-family:inherit" title="Back">←</button>'
+      : '';
+    // We render the back button inside title bar by prefixing it; CSS doesn't have a slot for it.
+    if (titleEl) titleEl.innerHTML = backBtn + '<span>' + title + '</span>';
+    if (bodyEl) bodyEl.innerHTML = body;
     document.getElementById('modal').classList.add('show');
+  },
+  
+  // Pop the modal history and restore the previous modal content.
+  modalGoBack() {
+    if (!this._modalHistory || this._modalHistory.length === 0) {
+      closeModal();
+      return;
+    }
+    const prev = this._modalHistory.pop();
+    const titleEl = document.getElementById('modalTitle');
+    const bodyEl = document.getElementById('modalBody');
+    const backBtn = this._modalHistory.length > 0
+      ? '<button onclick="game.modalGoBack()" style="background:none;border:none;color:var(--text);font-size:18px;cursor:pointer;padding:0 8px 0 0;font-family:inherit" title="Back">←</button>'
+      : '';
+    if (titleEl) titleEl.innerHTML = backBtn + '<span>' + prev.title + '</span>';
+    if (bodyEl) bodyEl.innerHTML = prev.body;
   },
 
   // SAVE/LOAD — 3 slots
@@ -11586,6 +13319,8 @@ let game = {
 
 function closeModal() {
   document.getElementById('modal').classList.remove('show');
+  // Clear modal history so next open starts fresh
+  if (typeof game !== 'undefined') game._modalHistory = [];
 }
 
 document.getElementById('modal').addEventListener('click', (e) => {
