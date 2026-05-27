@@ -408,6 +408,7 @@ select { font-family: inherit; }
         <div class="nav-subtitle">Insights</div>
         <div class="nav-item" data-view="statistics"><span>Statistics</span></div>
         <div class="nav-item" data-view="awards"><span>Awards</span></div>
+        <div class="nav-item" data-view="pinnedplayers"><span>Pinned Players</span></div>
         
         <div class="nav-subtitle">History</div>
         <div class="nav-item" data-view="records"><span>Record Book</span></div>
@@ -427,6 +428,7 @@ select { font-family: inherit; }
         <div class="nav-subtitle">History</div>
         <div class="nav-item" data-view="collegehistory"><span>College History</span></div>
         <div class="nav-item" data-view="collegehof"><span>College HOF</span></div>
+        <div class="nav-item" data-view="pinnedplayers"><span>Pinned Players</span></div>
       </div>
       
       <div class="nav-section">
@@ -2354,64 +2356,85 @@ let game = {
     });
   },
 
-  // Each year of college, generate a season stat line + grade evolution for the user's prospect.
-  // CPU prospects get the existing grade-bump logic; the user gets a more detailed annual recap.
+  // Each year of college, capture the user's season stat line + grade evolution + awards.
+  // CRITICAL: Use the REAL weekly stats accumulated in p._heismanStats (which mirrors what
+  // CPU prospects use). Old version generated synthetic stats which didn't match what the user
+  // actually saw during the season. This was the bug where the player's seasonHistory showed
+  // pass yds + TDs that didn't add up to what they earned week-by-week.
   simUserCollegeSeason() {
     const p = this.getUserPlayer();
     if (!p || !this.state.career || this.state.career.careerStage !== 'college') return;
     if (!p.seasonHistory) p.seasonHistory = [];
     
-    // Stat line scales with current prospect grade × random variance × position
+    // Pull from the real accumulated weekly stats. Fall back to zeros if for some reason
+    // the player didn't accumulate any (shouldn't happen, but defensive).
+    const hs = p._heismanStats || {};
     const grade = p.prospectGrade;
-    const variance = 0.75 + Math.random() * 0.5; // 0.75x – 1.25x
-    const gradeMod = grade / 80; // 80 = ~baseline; star (95) gets 1.19x; mid (65) gets 0.81x
     
-    let line = { games: 12, year: this.state.year, classYear: p.year, prospectGrade: grade };
+    let line = {
+      games: hs.games || 0,
+      year: this.state.year,
+      classYear: p.year,
+      prospectGrade: grade
+    };
     
+    // Map weekly stats into the position-appropriate season stat line
     if (p.position === 'QB') {
-      line.passingYards = Math.round((2400 + Math.random() * 1800) * gradeMod * variance);
-      line.passingTDs = Math.round((18 + Math.random() * 22) * gradeMod * variance);
-      line.interceptionsThrown = Math.max(0, Math.round((6 + Math.random() * 8) * (2 - gradeMod)));
-      line.completionPct = Math.min(75, 55 + (grade - 65) * 0.4 + Math.random() * 4);
+      line.passingYards = hs.passYds || 0;
+      line.passingTDs = hs.passTDs || 0;
+      line.interceptionsThrown = hs.ints || 0;
+      line.completionPct = Math.min(75, 55 + (grade - 65) * 0.4);
+      // QBs can rush too
+      if (hs.rushYds) {
+        line.rushingYards = hs.rushYds;
+        line.rushingTDs = hs.rushTDs || 0;
+      }
     } else if (p.position === 'RB') {
-      line.rushingYards = Math.round((650 + Math.random() * 1100) * gradeMod * variance);
-      line.rushingTDs = Math.round((6 + Math.random() * 14) * gradeMod * variance);
-      line.receivingYards = Math.round((100 + Math.random() * 400) * gradeMod * variance);
-      line.receivingTDs = Math.round((Math.random() * 5) * gradeMod);
+      line.rushingYards = hs.rushYds || 0;
+      line.rushingTDs = hs.rushTDs || 0;
+      line.receivingYards = hs.recYds || 0;
+      line.receivingTDs = hs.recTDs || 0;
+      line.receptions = hs.receptions || 0;
     } else if (p.position === 'WR' || p.position === 'TE') {
-      line.receivingYards = Math.round((p.position === 'WR' ? 600 : 400) + Math.random() * (p.position === 'WR' ? 1000 : 700) * gradeMod * variance);
-      line.receivingTDs = Math.round((p.position === 'WR' ? 5 : 3) + Math.random() * 12 * gradeMod * variance);
-      line.receptions = Math.round((p.position === 'WR' ? 40 : 30) + Math.random() * 50 * gradeMod);
-    } else if (p.position === 'EDGE' || p.position === 'DT' || p.position === 'LB') {
-      line.tackles = Math.round((40 + Math.random() * 70) * gradeMod * variance);
-      line.sacks = Math.round((p.position === 'EDGE' ? 4 : p.position === 'DT' ? 3 : 2) + Math.random() * 8 * gradeMod * variance);
-      line.interceptionsMade = p.position === 'LB' ? Math.round(Math.random() * 3 * gradeMod) : 0;
-    } else if (p.position === 'CB' || p.position === 'S') {
-      line.tackles = Math.round((30 + Math.random() * 50) * gradeMod * variance);
-      line.interceptionsMade = Math.round((1 + Math.random() * 4) * gradeMod * variance);
-      line.passDeflections = Math.round((4 + Math.random() * 10) * gradeMod);
-    } else if (p.position === 'K') {
-      line.fieldGoalsMade = Math.round((10 + Math.random() * 15) * gradeMod * variance);
-      line.fieldGoalsAttempted = Math.round(line.fieldGoalsMade * 1.15);
-      line.extraPoints = Math.round((25 + Math.random() * 20) * gradeMod);
-    } else if (p.position === 'P') {
-      line.punts = Math.round((40 + Math.random() * 30) * variance);
-      line.puntYards = Math.round(line.punts * (38 + Math.random() * 8) * gradeMod);
-      line.puntsInside20 = Math.round(line.punts * (0.20 + Math.random() * 0.20) * gradeMod);
+      line.receivingYards = hs.recYds || 0;
+      line.receivingTDs = hs.recTDs || 0;
+      line.receptions = hs.receptions || 0;
+    } else {
+      // Defensive players & specialists — their weekly stats aren't captured in _heismanStats
+      // (which only tracks skill positions). Fall back to a grade-based estimate.
+      const variance = 0.85 + Math.random() * 0.3;
+      const gradeMod = grade / 80;
+      if (p.position === 'EDGE' || p.position === 'DT' || p.position === 'LB') {
+        line.tackles = Math.round((45 + Math.random() * 60) * gradeMod * variance);
+        line.sacks = Math.round((p.position === 'EDGE' ? 5 : p.position === 'DT' ? 3 : 2) + Math.random() * 7 * gradeMod * variance);
+        line.interceptionsMade = p.position === 'LB' ? Math.round(Math.random() * 3 * gradeMod) : 0;
+      } else if (p.position === 'CB' || p.position === 'S') {
+        line.tackles = Math.round((35 + Math.random() * 45) * gradeMod * variance);
+        line.interceptionsMade = Math.round((1 + Math.random() * 4) * gradeMod * variance);
+        line.passDeflections = Math.round((4 + Math.random() * 10) * gradeMod);
+      } else if (p.position === 'K') {
+        line.fieldGoalsMade = Math.round((10 + Math.random() * 15) * gradeMod * variance);
+        line.fieldGoalsAttempted = Math.round(line.fieldGoalsMade * 1.15);
+        line.extraPoints = Math.round((25 + Math.random() * 20) * gradeMod);
+      } else if (p.position === 'P') {
+        line.punts = Math.round((40 + Math.random() * 30) * variance);
+        line.puntYards = Math.round(line.punts * (38 + Math.random() * 8) * gradeMod);
+        line.puntsInside20 = Math.round(line.punts * (0.20 + Math.random() * 0.20) * gradeMod);
+      }
     }
     
-    // Did they win major awards?
+    // AWARDS — check if the user won the Heisman or other major awards this season.
+    // The Heisman winner was already picked in simCollegeSeason() based on the actual
+    // Heisman race (getHeismanRace), which uses real season production for all skill players
+    // including the user. If the user's player is the race leader, they win.
     line.awards = [];
-    // Heisman/Maxwell may have been assigned during simCollegeSeason — check via latestCollegeRecap.
     const recap = this.state.latestCollegeRecap;
     if (recap) {
-      if (recap.heismanSchool === p.school && (p.position === 'QB' || p.position === 'RB' || p.position === 'WR')) {
-        // Plausible Heisman fit: hijack the assignment for the user if their grade is high enough
-        if (grade >= 88 && Math.random() < 0.5) {
-          recap.heismanName = p.name;
-          recap.heismanPosition = p.position;
-          line.awards.push('Heisman');
-        }
+      if (recap.heismanName === p.name && recap.heismanSchool === p.school) {
+        line.awards.push('Heisman');
+      }
+      if (recap.maxwellName === p.name && recap.maxwellSchool === p.school) {
+        line.awards.push('Maxwell');
       }
     }
     
@@ -2460,9 +2483,19 @@ let game = {
             body: (adj > 0 ? 'Stock up: +' : adj < 0 ? 'Stock down: ' : 'Neutral: ') + adj.toFixed(1) + ' grade adjustment. Composite ' + inPending.combineResults.composite + '/100. New grade: ' + inPending.prospectGrade.toFixed(1) + '.'
           });
         }
-        // Stash combine results on declaredIdentity so they can be carried across the NFL bridge,
-        // which runs after pendingDraftClass has been cleared by the draft.
+        // Pre-generate team interviews so the forced flow has them ready
+        if (!inPending.teamInterviews) {
+          inPending.teamInterviews = this.generateTeamInterviews(inPending);
+        }
+        // Stash combine results + interviews on declaredIdentity so they can be carried across
+        // the NFL bridge, which runs after pendingDraftClass has been cleared by the draft.
         this.state.career.declaredIdentity.combineResults = inPending.combineResults;
+        this.state.career.declaredIdentity.teamInterviews = inPending.teamInterviews;
+        // FORCED PRE-DRAFT FLOW — the user MUST go through the combine reveal + interviews
+        // before the draft. We use a state machine on the player: preDraftStep tracks where
+        // they are: 'combine_reveal' → 'interviews' → 'awaiting_draft' → null
+        inPending.preDraftStep = 'combine_reveal';
+        this.state.career.preDraftFlowActive = true;
         // Auto-route the user to the combine page so they see results immediately.
         this.currentView = 'combine';
       }
@@ -4901,19 +4934,42 @@ let game = {
       const s = p._heismanStats;
       const school = COLLEGE_SCHOOLS.find(x => x.abbr === p.school);
       const teamPrestige = prestigeMap[p.school] !== undefined ? prestigeMap[p.school] : (school ? school.prestige : 70);
-      // Position-weighted scoring — QBs and RBs get the lion's share of Heisman votes historically.
+      // POSITION-WEIGHTED SCORING — QBs dominate Heisman votes historically. Of the last 25
+      // Heismans, ~17 were QBs, ~6 were RBs, ~2 were WRs. We boost QB weight to match.
       let score = 0;
       if (p.position === 'QB') {
-        score = (s.passYds / 10) + (s.passTDs * 11) - (s.ints * 4) + (s.rushYds / 7) + (s.rushTDs * 8);
+        // QB: 25 base + production-driven points. The base ensures even a solid QB outranks
+        // a great RB on a mediocre team, mirroring real voting.
+        score = 25 + (s.passYds / 9) + (s.passTDs * 13) - (s.ints * 5) + (s.rushYds / 7) + (s.rushTDs * 8);
       } else if (p.position === 'RB') {
-        score = (s.rushYds / 4) + (s.rushTDs * 13) + (s.recYds / 6) + (s.recTDs * 10);
+        score = (s.rushYds / 4.5) + (s.rushTDs * 13) + (s.recYds / 6) + (s.recTDs * 10);
       } else if (p.position === 'WR' || p.position === 'TE') {
-        score = (s.recYds / 5) + (s.recTDs * 14) + (s.receptions * 1.5);
+        score = (s.recYds / 5.5) + (s.recTDs * 13) + (s.receptions * 1.4);
       }
-      // Team prestige bonus: top-25 teams get a +10 bias (voters watch them more)
+      // CLASS-YEAR BIAS — Heisman voters historically favor upperclassmen. Of the last 30
+      // Heismans, only a handful went to freshmen/sophomores (Manziel, Mayfield's first year,
+      // Burrow, etc.). The bias is real and substantial.
+      //   Freshman: -25 penalty (a freshman has to be otherworldly to win)
+      //   Sophomore: -10
+      //   Junior: +0 (baseline)
+      //   Senior: +10 bonus
+      if (p.year === 'Freshman') score -= 25;
+      else if (p.year === 'Sophomore') score -= 10;
+      else if (p.year === 'Senior') score += 10;
+      
+      // Team prestige bonus: top-25 teams get a +10-15 bias (voters watch them more,
+      // and winning matters — a 12-0 mid-tier QB beats a 5-7 elite QB)
       if (teamPrestige >= 90) score += 15;
       else if (teamPrestige >= 82) score += 8;
       else if (teamPrestige >= 75) score += 3;
+      
+      // Team wins matter — voters reward winning. Penalize losing teams heavily.
+      const standings = this.state.collegeStandings && this.state.collegeStandings[p.school];
+      if (standings) {
+        const winPct = standings.wins / Math.max(1, standings.wins + standings.losses);
+        score += (winPct - 0.5) * 30; // ±15 swing based on team record
+      }
+      
       return { player: p, school, score, stats: s };
     });
     scored.sort((a, b) => b.score - a.score);
@@ -5291,6 +5347,14 @@ let game = {
   },
 
   advanceDraftUntilUser() {
+    // PLAYER CAREER GUARD: in player career mode, the user has no team to "wait for". They
+    // ARE the prospect being drafted. Don't auto-advance — the player-career draft view handles
+    // picks one at a time via the user clicking "Reveal next pick" or "Sim to my pick", and
+    // the user's pick triggers the celebration. Auto-advancing here would silently sim through
+    // the entire draft, defeating the whole immersive flow.
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'declared') {
+      return;
+    }
     const userId = this.state.userTeamId;
     let safety = 0;
     while (this.state.draftCurrentIdx < this.state.draftOrder.length) {
@@ -5593,7 +5657,11 @@ let game = {
         collegeGrade: prospect.prospectGrade,
         declaredEarly: !!prospect.declaredEarly,
         // Legacy info: carries forward from prospect so the player card can show "son of X"
-        legacyOf: prospect.legacyOf || null
+        legacyOf: prospect.legacyOf || null,
+        // Source prospect ID — used by the Pinned Players page to track prospects through the
+        // draft into their NFL career. If the user pinned the prospect, they'll find the NFL
+        // player here via fromProspectId lookup.
+        fromProspectId: prospect.id
       };
       this.state.players.push(newPlayer);
       this.updateCollegeHOF(prospect, newPlayer.id);
@@ -5667,7 +5735,152 @@ let game = {
     if (this.state.draftActive) this.renderDraft();
   },
 
+  // PLAYER CAREER DRAFT VIEW — immersive watch-the-draft experience. The user is the prospect
+  // and watches picks come in one at a time. When their name is called, the celebration popup
+  // fires automatically. They can reveal picks one-by-one or hold "Sim to my pick" to fast-forward.
+  renderPlayerCareerDraft() {
+    const totalPicks = this.state.draftOrder.length;
+    const currentIdx = this.state.draftCurrentIdx;
+    document.getElementById('newsFeed').style.display = 'none';
+    document.getElementById('mainGrid').style.gridTemplateColumns = '200px 1fr';
+    if (currentIdx >= totalPicks) { this.finishDraft(); return; }
+    
+    // Find the user player — they may still be in draftPool (not yet picked) OR may have been
+    // picked already (in players array)
+    const userIdentity = this.state.career && this.state.career.declaredIdentity;
+    const userInPool = userIdentity ? this.state.draftPool.find(p =>
+      p.name === userIdentity.name && p.collegeSchool === userIdentity.school && p.position === userIdentity.position
+    ) : null;
+    const userPicked = userIdentity ? this.state.players.find(p =>
+      p.isUserControlled || (p.name === userIdentity.name && p.collegeSchool === userIdentity.school && p.position === userIdentity.position && p.team !== null)
+    ) : null;
+    const userPickInfo = userPicked ? this.state.draftPicks.find(pk => pk.playerId === userPicked.id) : null;
+    
+    const current = this.state.draftOrder[currentIdx];
+    const currentTeam = current ? this.state.teams[current.teamId] : null;
+    
+    let html = '<div class="draft-header-bar">' +
+      '<div class="draft-round-info"><strong>R' + (current ? current.round : '?') + '</strong> Pick <strong>' + (currentIdx + 1) + '</strong> of ' + totalPicks + '</div>' +
+      '<div class="draft-on-clock">' +
+      (currentTeam ? 'ON THE CLOCK: ' + currentTeam.city + ' ' + currentTeam.name : 'Draft in progress') + '</div>' +
+      '<div style="display:flex;gap:6px">' +
+      (userPicked
+        ? '<button class="btn btn-sm btn-success" onclick="game._fastForwardDraft()">Sim rest of draft →</button>'
+        : '<button class="btn btn-sm btn-success" onclick="game._revealNextDraftPick()">Reveal next pick →</button>' +
+          '<button class="btn btn-sm" onclick="game._fastForwardToUserPick()">Sim to my pick</button>') +
+      '</div></div>';
+    
+    // USER PROSPECT BANNER — always show their card at the top of the draft view
+    if (userInPool) {
+      html += '<div style="background:var(--surface);padding:16px 18px;margin-bottom:14px;border-left:4px solid var(--accent);display:flex;align-items:center;gap:14px">' +
+        '<div class="player-face-small" style="width:48px;height:48px">' + pixelFaceSVG(userInPool.faceSeed) + '</div>' +
+        '<div style="flex:1">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600">YOUR DRAFT STATUS · NOT YET SELECTED</div>' +
+        '<div style="font-size:18px;font-weight:700;margin-top:2px">' + userInPool.name + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted)">' + userInPool.position + ' · ' + (userInPool.collegeSchool || userInPool.school || '') + ' · Grade ' + (userInPool.prospectGrade || userInPool.collegeGrade || 0).toFixed(1) + '</div>' +
+        '</div>' +
+        '<div style="text-align:right">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600">CURRENT PICK</div>' +
+        '<div style="font-size:24px;font-weight:700">#' + (currentIdx + 1) + '</div>' +
+        '</div></div>';
+    } else if (userPicked && userPickInfo) {
+      // User has been drafted — banner shows draft slot + team
+      const draftedTeam = this.state.teams[userPickInfo.teamId];
+      html += '<div style="background:linear-gradient(135deg,' + draftedTeam.primary + ',' + draftedTeam.primary + 'CC);color:#fff;padding:18px 22px;margin-bottom:14px;display:flex;align-items:center;gap:14px">' +
+        '<div class="player-face-small" style="width:48px;height:48px">' + pixelFaceSVG(userPicked.faceSeed) + '</div>' +
+        '<div style="flex:1">' +
+        '<div style="font-size:10px;letter-spacing:1.5px;font-weight:700;opacity:0.85">🎉 SELECTED · ' + draftedTeam.city.toUpperCase() + ' ' + draftedTeam.name.toUpperCase() + '</div>' +
+        '<div style="font-size:20px;font-weight:800;margin-top:2px">' + userPicked.name + '</div>' +
+        '<div style="font-size:13px;opacity:0.92">Round ' + userPickInfo.round + ' · Pick #' + userPickInfo.overall + ' overall</div>' +
+        '</div></div>';
+    }
+    
+    // RECENT PICKS — last 15 picks descending, with user pick highlighted
+    html += '<div class="card"><div class="card-header"><div class="card-title">The board</div>' +
+      '<div class="card-meta">Recent picks · Click any pick to view player card</div></div>' +
+      '<div style="padding:6px 0;max-height:60vh;overflow-y:auto">';
+    
+    const recentPicks = this.state.draftPicks.slice(-15).reverse();
+    recentPicks.forEach(pk => {
+      const player = this.state.players[pk.playerId];
+      const team = this.state.teams[pk.teamId];
+      if (!player || !team) return;
+      const isUser = player.isUserControlled || (userIdentity && player.name === userIdentity.name && player.collegeSchool === userIdentity.school && player.position === userIdentity.position);
+      const bg = isUser ? 'background:linear-gradient(90deg,' + team.primary + '22 0%,transparent 100%);border-left:4px solid ' + team.primary : '';
+      
+      html += '<div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;cursor:pointer;' + bg + '" onclick="game.showPlayer(' + player.id + ')">' +
+        '<div style="font-family:var(--font-mono);font-weight:700;width:32px;color:var(--text-muted)">#' + pk.overall + '</div>' +
+        '<div style="width:4px;height:28px;background:' + team.primary + '"></div>' +
+        '<div style="flex:1">' +
+        '<div style="font-weight:' + (isUser ? '800' : '600') + ';font-size:13px">' + player.name + (isUser ? ' <span style="color:var(--accent);font-size:10px;font-weight:700;margin-left:6px">YOU</span>' : '') + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted)">' + player.position + ' · ' + (player.collegeSchool || '—') + '</div>' +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);min-width:120px;text-align:right">' + team.city + ' ' + team.name + '</div>' +
+        '</div>';
+    });
+    if (recentPicks.length === 0) {
+      html += '<div class="muted" style="padding:14px;text-align:center">Draft about to begin. Click "Reveal next pick" to start.</div>';
+    }
+    html += '</div></div>';
+    
+    document.getElementById('content').innerHTML = html;
+  },
+  
+  // Reveal the next pick — CPU makes the selection, render advances.
+  _revealNextDraftPick() {
+    if (!this.state.draftActive) return;
+    const current = this.state.draftOrder[this.state.draftCurrentIdx];
+    if (!current) { this.finishDraft(); return; }
+    const before = this.state.draftCurrentIdx;
+    this.cpuPick(current.teamId);
+    if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
+    this.saveGame();
+    // Render — if user was just picked, the celebration popup will fire via the render hook.
+    this.render();
+  },
+  
+  // Fast-forward through picks until the user is selected.
+  _fastForwardToUserPick() {
+    if (!this.state.draftActive) return;
+    const userIdentity = this.state.career && this.state.career.declaredIdentity;
+    if (!userIdentity) return;
+    let safety = 0;
+    while (this.state.draftActive && this.state.draftCurrentIdx < this.state.draftOrder.length && safety < 300) {
+      safety++;
+      const current = this.state.draftOrder[this.state.draftCurrentIdx];
+      if (!current) { this.state.draftCurrentIdx++; continue; }
+      const before = this.state.draftCurrentIdx;
+      this.cpuPick(current.teamId);
+      if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
+      // Stop if user was just picked
+      if (this._pendingUserDraftCelebration) break;
+    }
+    this.saveGame();
+    this.render();
+  },
+  
+  // After the user is drafted, finish the rest of the picks instantly to wrap up the draft.
+  _fastForwardDraft() {
+    if (!this.state.draftActive) return;
+    while (this.state.draftCurrentIdx < this.state.draftOrder.length) {
+      const current = this.state.draftOrder[this.state.draftCurrentIdx];
+      if (!current) { this.state.draftCurrentIdx++; continue; }
+      const before = this.state.draftCurrentIdx;
+      this.cpuPick(current.teamId);
+      if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
+    }
+    this.finishDraft();
+  },
+
   renderDraft() {
+    // PLAYER CAREER: show an immersive watch-the-draft view where the user sees picks come
+    // in one at a time, with their pick highlighted when it happens. Different from coach/dynasty
+    // mode where the user is making picks for their team.
+    const isPlayerMode = this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'declared';
+    if (isPlayerMode) {
+      return this.renderPlayerCareerDraft();
+    }
+    
     const totalPicks = this.state.draftOrder.length;
     const currentIdx = this.state.draftCurrentIdx;
     document.getElementById('newsFeed').style.display = 'none';
@@ -6939,19 +7152,23 @@ let game = {
   // AWARDS
   awardScores() {
     const players = this.state.players.filter(p => !p.retired && p.seasonStats.gamesPlayed > 0 && p.team !== null);
+    
+    // MVP — League's most valuable player. Heavy QB favoritism (real NFL: QBs win ~70% of MVPs).
+    // ROOKIE PENALTY: rookies almost never win MVP. Only 1 player (Jim Brown 1957) has won MVP
+    // as a rookie. Apply a 50% score reduction so rookies need to be truly otherworldly.
     const mvp = players.map(p => {
       const s = p.seasonStats;
       let score = 0;
       if (p.position === 'QB') {
-        // QB scoring tuned so a top QB (4500 yd / 32 TD / 8 INT) scores ~280, edging out top RBs in most seasons
-        // Real NFL: QBs win MVP ~70% of the time
-        score = s.passingYards * 0.040 + s.passingTDs * 7.5 - s.interceptionsThrown * 6 + s.rushingYards * 0.05 + s.rushingTDs * 5;
-        score *= 1.05;
+        // QB tuned so a top QB (4500 yd / 32 TD / 8 INT) scores ~520 — comfortably ahead of top
+        // RBs (~440). Real-world MVP voting heavily favors elite QB seasons.
+        score = s.passingYards * 0.055 + s.passingTDs * 11 - s.interceptionsThrown * 7 + s.rushingYards * 0.05 + s.rushingTDs * 5;
+        score *= 1.10;
       } else if (p.position === 'RB') {
-        // A top RB (1700 rush / 17 TD / 500 rec) scores ~250 — competitive but slightly below elite QB
+        // Top RB (1700 rush / 17 TD / 500 rec) scores ~440
         score = s.rushingYards * 0.15 + s.rushingTDs * 10 + s.receivingYards * 0.08 + s.receivingTDs * 7;
       } else if (p.position === 'WR' || p.position === 'TE') {
-        // A top WR (1500 yd / 13 TD) scores ~245
+        // Top WR (1500 yd / 13 TD) scores ~325 — WR/TE rarely win MVP (Rice 1987, etc.)
         score = s.receivingYards * 0.13 + s.receivingTDs * 10;
         if (p.position === 'TE') score *= 1.05;
       }
@@ -6959,39 +7176,72 @@ let game = {
       if (!team) return { player: p, score: 0 };
       const winPct = team.wins / Math.max(1, team.wins + team.losses);
       score *= (0.7 + winPct * 0.6);
+      // Rookie MVP penalty — extremely rare in real NFL
+      if (p.yearsInLeague === 0) score *= 0.5;
+      // Second-year penalty (lighter) — also unusual
+      else if (p.yearsInLeague === 1) score *= 0.85;
       return { player: p, score };
     }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
 
+    // OPOY — Best non-QB offensive player. Real NFL: OPOY is a "spotlight" award for the best
+    // skill player who isn't the league's QB. The MVP winner is excluded so OPOY goes to a
+    // DIFFERENT player. QBs get a HEAVY penalty here since MVP is their domain.
+    const mvpWinnerId = mvp[0] && mvp[0].player ? mvp[0].player.id : null;
     const opoy = players.map(p => {
       const s = p.seasonStats;
       let score = 0;
-      if (['QB','RB','WR','TE'].includes(p.position)) {
-        score = s.passingYards * 0.04 + s.passingTDs * 8 + s.rushingYards * 0.1 + s.rushingTDs * 7 + s.receivingYards * 0.1 + s.receivingTDs * 7;
+      // QBs eligible but heavily penalized (15% of normal) — Lamar 2019 / Brady 2007 type seasons
+      // can still win it
+      if (p.position === 'QB') {
+        score = (s.passingYards * 0.04 + s.passingTDs * 8 - s.interceptionsThrown * 5 + s.rushingYards * 0.08 + s.rushingTDs * 6) * 0.15;
+      } else if (p.position === 'RB') {
+        score = s.rushingYards * 0.16 + s.rushingTDs * 11 + s.receivingYards * 0.10 + s.receivingTDs * 8;
+      } else if (p.position === 'WR' || p.position === 'TE') {
+        score = s.receivingYards * 0.14 + s.receivingTDs * 11 + (s.receptions || 0) * 0.8;
       }
+      // Hard exclude the MVP winner — OPOY by definition goes to a different player
+      if (mvpWinnerId !== null && p.id === mvpWinnerId) score = 0;
+      // Same rookie penalty
+      if (p.yearsInLeague === 0) score *= 0.5;
       return { player: p, score };
     }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
 
+    // DPOY — Defensive Player of the Year. Position list FIXED — was using 'DL' which doesn't
+    // exist in this game (positions are EDGE, DT, LB, CB, S).
     const dpoy = players.map(p => {
       const s = p.seasonStats;
       let score = 0;
-      if (['DL','LB','CB','S'].includes(p.position)) {
-        score = s.sacks * 6 + s.interceptionsMade * 8 + s.tackles * 0.8;
-        if (p.position === 'DL') score *= 1.1;
+      if (['EDGE','DT','LB','CB','S'].includes(p.position)) {
+        score = s.sacks * 6 + s.interceptionsMade * 8 + s.tackles * 0.6 + (s.forcedFumbles || 0) * 5;
+        // EDGE/DT get pass-rush bonus
+        if (p.position === 'EDGE') score *= 1.15;
+        else if (p.position === 'DT') score *= 1.10;
       }
+      // Rookie DPOY penalty (Aaron Donald, Brian Bosworth-type wins are rare)
+      if (p.yearsInLeague === 0) score *= 0.7;
       return { player: p, score };
     }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
 
-    const oroy = players.filter(p => p.draftYear === this.state.year && ['QB','RB','WR','TE'].includes(p.position))
+    // OROY — Offensive Rookie of the Year. Rookies only.
+    const oroy = players.filter(p => p.yearsInLeague === 0 && ['QB','RB','WR','TE'].includes(p.position))
       .map(p => {
         const s = p.seasonStats;
-        const score = s.passingYards * 0.04 + s.passingTDs * 8 + s.rushingYards * 0.1 + s.rushingTDs * 7 + s.receivingYards * 0.1 + s.receivingTDs * 7;
+        let score = 0;
+        if (p.position === 'QB') {
+          score = s.passingYards * 0.04 + s.passingTDs * 7 - s.interceptionsThrown * 4 + s.rushingYards * 0.06 + s.rushingTDs * 5;
+        } else if (p.position === 'RB') {
+          score = s.rushingYards * 0.15 + s.rushingTDs * 10 + s.receivingYards * 0.08 + s.receivingTDs * 7;
+        } else {
+          score = s.receivingYards * 0.13 + s.receivingTDs * 10 + (s.receptions || 0) * 0.5;
+        }
         return { player: p, score };
       }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
 
-    const droy = players.filter(p => p.draftYear === this.state.year && ['DL','LB','CB','S'].includes(p.position))
+    // DROY — Defensive Rookie of the Year. Rookies only.
+    const droy = players.filter(p => p.yearsInLeague === 0 && ['EDGE','DT','LB','CB','S'].includes(p.position))
       .map(p => {
         const s = p.seasonStats;
-        const score = s.sacks * 6 + s.interceptionsMade * 8 + s.tackles * 0.8;
+        const score = s.sacks * 6 + s.interceptionsMade * 8 + s.tackles * 0.6 + (s.forcedFumbles || 0) * 5;
         return { player: p, score };
       }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
 
@@ -8011,6 +8261,100 @@ let game = {
     this.render();
   },
 
+  // NFL PLAYOFF WEEKLY RECAP — replaces the standard week recap when a playoff round was just
+  // simmed. Highlights all results from that round, with a link to the full bracket page.
+  // Round numbers in po.round have already been incremented by simPlayoffRound, so the just-played
+  // round is whichever results match the latest entries.
+  _renderNflPlayoffRecap(recap) {
+    const po = this.state.playoffs;
+    // Determine which round was just played. recap.games contains the round-N games that were
+    // simmed. We can use those games' .round to look up the round name.
+    const justPlayedRound = recap.games.length > 0 ? recap.games[0].round : 1;
+    const roundLabels = ['Wild Card', 'Divisional', 'Conference Championship', 'Super Bowl', 'Champion crowned'];
+    const roundName = roundLabels[justPlayedRound - 1] || 'Playoffs';
+    const userTeamId = this.getUserTeamId();
+    
+    let html = '<div class="page-header">' +
+      '<div class="page-title">NFL Playoffs · ' + roundName + '</div>' +
+      '<div class="page-subtitle">' + this.state.year + ' postseason · Round ' + justPlayedRound + ' results</div>' +
+      '</div>';
+    
+    // Super Bowl champion banner if SB was just played
+    if (justPlayedRound === 4 && po) {
+      const sbResult = po.results.find(r => r.conf === 'SB');
+      if (sbResult) {
+        const champ = this.state.teams[sbResult.homeScore > sbResult.awayScore ? sbResult.homeTeam : sbResult.awayTeam];
+        const runnerUp = this.state.teams[sbResult.homeScore > sbResult.awayScore ? sbResult.awayTeam : sbResult.homeTeam];
+        const cs = Math.max(sbResult.homeScore, sbResult.awayScore);
+        const ls = Math.min(sbResult.homeScore, sbResult.awayScore);
+        html += '<div style="background:linear-gradient(135deg,' + champ.primary + ',' + champ.primary + 'CC);color:#fff;padding:26px 24px;text-align:center;margin-bottom:18px">' +
+          '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">' + this.state.year + ' SUPER BOWL CHAMPION</div>' +
+          '<div style="font-size:34px;font-weight:800;margin-top:10px">🏆 ' + champ.city + ' ' + champ.name + ' 🏆</div>' +
+          '<div style="font-size:15px;opacity:0.92;margin-top:8px">Defeated ' + runnerUp.city + ' ' + runnerUp.name + ' ' + cs + '–' + ls + '</div>' +
+          '</div>';
+      }
+    }
+    
+    // User team banner (alive/out/win)
+    if (userTeamId !== null && userTeamId !== undefined && po) {
+      const userTeam = this.state.teams[userTeamId];
+      const userAlive = po.alive.AFC.includes(userTeamId) || po.alive.NFC.includes(userTeamId);
+      const userGame = recap.games.find(g => g.homeTeam === userTeamId || g.awayTeam === userTeamId);
+      if (userGame) {
+        const userIsHome = userGame.homeTeam === userTeamId;
+        const userScore = userIsHome ? userGame.homeScore : userGame.awayScore;
+        const oppScore = userIsHome ? userGame.awayScore : userGame.homeScore;
+        const oppId = userIsHome ? userGame.awayTeam : userGame.homeTeam;
+        const opp = this.state.teams[oppId];
+        const userWon = userScore > oppScore;
+        html += '<div class="user-game-banner ' + (userWon ? 'won' : 'lost') + '" onclick="game.showBoxScore(null,' + userGame.homeTeam + ',' + userGame.awayTeam + ',true)">' +
+          '<div class="user-game-banner-bar" style="background:' + userTeam.primary + '"></div>' +
+          '<div class="user-game-banner-main">' +
+          '<div class="user-game-banner-label">YOUR TEAM · ' + roundName.toUpperCase() + ' · ' + (userWon ? 'WIN' : 'ELIMINATED') + '</div>' +
+          '<div class="user-game-banner-title">' + userTeam.city + ' ' + userTeam.name + ' ' + userScore + ', ' + opp.city + ' ' + opp.name + ' ' + oppScore + '</div>' +
+          '<div class="user-game-banner-meta">' + (userAlive ? 'Advancing to ' + (roundLabels[justPlayedRound] || 'next round') : 'Season over') + '</div></div>' +
+          '<div class="user-game-banner-score ' + (userWon ? 'won' : 'lost') + '">' + userScore + '–' + oppScore + '</div>' +
+          '</div>';
+      }
+    }
+    
+    // Round results
+    html += '<div class="card"><div class="card-header"><div class="card-title">' + roundName + ' results</div>' +
+      '<div class="card-meta">' + recap.games.length + ' game' + (recap.games.length === 1 ? '' : 's') + ' played</div></div>' +
+      '<div style="padding:6px 0">';
+    
+    recap.games.forEach(g => {
+      const home = this.state.teams[g.homeTeam];
+      const away = this.state.teams[g.awayTeam];
+      const homeWon = g.homeScore > g.awayScore;
+      const confLabel = g.conf === 'SB' ? '🏆 SUPER BOWL' : g.conf;
+      
+      html += '<div style="padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer" onclick="game.showPlayoffBox(' + g.round + ',' + g.homeTeam + ',' + g.awayTeam + ')">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600;margin-bottom:6px">' + confLabel + '</div>' +
+        // Winner line
+        '<div style="display:flex;align-items:center;gap:12px;font-size:14px;font-weight:700">' +
+        '<span class="muted" style="font-family:var(--font-mono);font-size:11px;width:24px;font-weight:400">' + (homeWon ? '#' + g.homeSeed : '#' + g.awaySeed) + '</span>' +
+        '<div style="width:4px;height:24px;background:' + (homeWon ? home.primary : away.primary) + '"></div>' +
+        '<span style="flex:1">' + (homeWon ? home.city + ' ' + home.name : away.city + ' ' + away.name) + '</span>' +
+        '<span style="font-family:var(--font-mono);font-size:18px">' + (homeWon ? g.homeScore : g.awayScore) + '</span>' +
+        '</div>' +
+        // Loser line
+        '<div style="display:flex;align-items:center;gap:12px;font-size:13px;margin-top:6px;opacity:0.55">' +
+        '<span class="muted" style="font-family:var(--font-mono);font-size:11px;width:24px">' + (homeWon ? '#' + g.awaySeed : '#' + g.homeSeed) + '</span>' +
+        '<div style="width:4px;height:24px;background:' + (homeWon ? away.primary : home.primary) + '"></div>' +
+        '<span style="flex:1">' + (homeWon ? away.city + ' ' + away.name : home.city + ' ' + home.name) + '</span>' +
+        '<span style="font-family:var(--font-mono);font-size:16px;font-weight:600">' + (homeWon ? g.awayScore : g.homeScore) + '</span>' +
+        '</div>' +
+        '</div>';
+    });
+    html += '</div></div>';
+    
+    // Link to full bracket
+    html += '<div style="text-align:center;margin:14px 0"><button class="btn btn-success" onclick="game.currentView=\'playoffs\';game.render()">View full bracket →</button></div>';
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
   renderPlayoffs() {
     const po = this.state.playoffs;
     if (!po) { this.renderStandings(); return; }
@@ -8019,11 +8363,25 @@ let game = {
     const currentLabel = roundLabels[po.round - 1] || 'Playoffs';
     
     let html = '<div class="page-header">' +
-      '<div class="page-title">' + this.state.year + ' Playoffs</div>' +
-      '<div class="page-subtitle">' + currentLabel + ' · click any game to view box score</div>' +
+      '<div class="page-title">' + this.state.year + ' NFL Playoffs</div>' +
+      '<div class="page-subtitle">' + currentLabel + ' · Tap a team to view their page</div>' +
       '</div>';
     
-    // User team prominent banner if alive or recently played
+    // CHAMPION BANNER (if SB complete)
+    const sbResult = po.results.find(r => r.conf === 'SB');
+    if (sbResult) {
+      const champ = this.state.teams[sbResult.homeScore > sbResult.awayScore ? sbResult.homeTeam : sbResult.awayTeam];
+      const runnerUp = this.state.teams[sbResult.homeScore > sbResult.awayScore ? sbResult.awayTeam : sbResult.homeTeam];
+      const cs = Math.max(sbResult.homeScore, sbResult.awayScore);
+      const ls = Math.min(sbResult.homeScore, sbResult.awayScore);
+      html += '<div style="background:linear-gradient(135deg,' + champ.primary + ',' + champ.primary + 'CC);color:#fff;padding:22px 24px;text-align:center;margin-bottom:18px">' +
+        '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">' + this.state.year + ' SUPER BOWL CHAMPION</div>' +
+        '<div style="font-size:30px;font-weight:800;margin-top:8px">🏆 ' + champ.city + ' ' + champ.name + ' 🏆</div>' +
+        '<div style="font-size:14px;opacity:0.92;margin-top:6px">Defeated ' + runnerUp.city + ' ' + runnerUp.name + ' ' + cs + '–' + ls + '</div>' +
+        '</div>';
+    }
+    
+    // User team banner (kept from prior version) — shows last game + alive status
     const userTeamId = this.state.userTeamId;
     if (userTeamId !== null && userTeamId !== undefined) {
       const userTeam = this.state.teams[userTeamId];
@@ -8047,7 +8405,6 @@ let game = {
           '<div class="user-game-banner-score ' + (userWon ? 'won' : 'lost') + '">' + userScore + '–' + oppScore + '</div>' +
           '</div>';
       } else if (!userAlive) {
-        // Wasn't in playoffs
         html += '<div class="user-game-banner bye">' +
           '<div class="user-game-banner-bar" style="background:' + userTeam.primary + '"></div>' +
           '<div><div class="user-game-banner-label">YOUR TEAM · MISSED PLAYOFFS</div>' +
@@ -8056,11 +8413,106 @@ let game = {
       }
     }
     
-    // Bracket — show seeds per conference, mark eliminated
+    // VISUAL BRACKET — AFC on left, NFC on right, Super Bowl in the middle.
+    // Each conference column has 3 sub-columns: WC / DIV / CONF, with games stacked vertically.
+    html += '<div class="card"><div class="card-header"><div class="card-title">Bracket</div>' +
+      '<div class="card-meta">AFC on the left, NFC on the right, Super Bowl in the middle</div></div>' +
+      '<div style="padding:18px 10px;overflow-x:auto"><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1.3fr 1fr 1fr 1fr;gap:10px;min-width:980px;align-items:start">';
+    
+    // Helper: build a game cell for the NFL bracket from the playoff results/games arrays.
+    const buildNflBracketCell = (conf, round, slot) => {
+      // First look for a played game matching this conf/round/slot
+      const result = po.results.find(r => r.conf === conf && r.round === round && r._slot === slot);
+      if (result) {
+        const home = this.state.teams[result.homeTeam];
+        const away = this.state.teams[result.awayTeam];
+        const homeWon = result.homeScore > result.awayScore;
+        return this._renderBracketGame({
+          hi: { seed: result.homeSeed, abbr: home.abbr },
+          lo: { seed: result.awaySeed, abbr: away.abbr },
+          winnerAbbr: homeWon ? home.abbr : away.abbr,
+          winnerScore: Math.max(result.homeScore, result.awayScore),
+          loserScore: Math.min(result.homeScore, result.awayScore),
+          played: true
+        });
+      }
+      // Look for unplayed game (current round's games are on po.games)
+      const upcoming = po.games.find(g => g.conf === conf && g.round === round && !g.played && g._slot === slot);
+      if (upcoming) {
+        const home = this.state.teams[upcoming.homeTeam];
+        const away = this.state.teams[upcoming.awayTeam];
+        return this._renderBracketGame({
+          hi: { seed: upcoming.homeSeed, abbr: home.abbr },
+          lo: { seed: upcoming.awaySeed, abbr: away.abbr },
+          played: false
+        });
+      }
+      // No game yet — show empty placeholder
+      return this._renderBracketGame({ hi: { seed: '?', name: 'TBD' }, lo: { seed: '?', name: 'TBD' }, played: false });
+    };
+    
+    // Assign slot numbers to games on the fly. Wild Card round: 3 games per conf (slots 1,2,3).
+    // Divisional: 2 games per conf (slots 1, 2). Conf championship: 1 game per conf (slot 1).
+    // Slot ordering by descending home seed so the bracket "tree" looks natural.
+    this._assignNflPlayoffSlots(po);
+    
+    // Column 1: AFC Wild Card (3 games)
+    html += '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600;margin-bottom:10px;text-align:center">AFC · WILD CARD</div>';
+    [1, 2, 3].forEach(slot => { html += buildNflBracketCell('AFC', 1, slot); });
+    html += '</div>';
+    
+    // Column 2: AFC Divisional (2 games)
+    html += '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600;margin-bottom:10px;text-align:center">AFC · DIVISIONAL</div>';
+    [1, 2].forEach(slot => { html += buildNflBracketCell('AFC', 2, slot); });
+    html += '</div>';
+    
+    // Column 3: AFC Championship (1 game)
+    html += '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600;margin-bottom:10px;text-align:center">AFC · CHAMPIONSHIP</div>';
+    html += buildNflBracketCell('AFC', 3, 1);
+    html += '</div>';
+    
+    // Column 4: Super Bowl (centered, emphasized)
+    html += '<div><div style="font-size:10px;color:var(--accent);letter-spacing:0.8px;font-weight:700;margin-bottom:10px;text-align:center">🏆 SUPER BOWL</div>';
+    const sb = po.results.find(r => r.conf === 'SB') || po.games.find(g => g.conf === 'SB');
+    if (sb) {
+      const home = this.state.teams[sb.homeTeam];
+      const away = this.state.teams[sb.awayTeam];
+      const homeWon = sb.played && sb.homeScore > sb.awayScore;
+      html += this._renderBracketGame({
+        hi: { seed: sb.homeSeed, abbr: home.abbr },
+        lo: { seed: sb.awaySeed, abbr: away.abbr },
+        winnerAbbr: sb.played ? (homeWon ? home.abbr : away.abbr) : null,
+        winnerScore: sb.played ? Math.max(sb.homeScore, sb.awayScore) : 0,
+        loserScore: sb.played ? Math.min(sb.homeScore, sb.awayScore) : 0,
+        played: sb.played, isTitle: true
+      });
+    } else {
+      html += this._renderBracketGame({ hi: { seed: '?', name: 'AFC champion' }, lo: { seed: '?', name: 'NFC champion' }, played: false, isTitle: true });
+    }
+    html += '</div>';
+    
+    // Column 5: NFC Championship (1 game)
+    html += '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600;margin-bottom:10px;text-align:center">NFC · CHAMPIONSHIP</div>';
+    html += buildNflBracketCell('NFC', 3, 1);
+    html += '</div>';
+    
+    // Column 6: NFC Divisional (2 games)
+    html += '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600;margin-bottom:10px;text-align:center">NFC · DIVISIONAL</div>';
+    [1, 2].forEach(slot => { html += buildNflBracketCell('NFC', 2, slot); });
+    html += '</div>';
+    
+    // Column 7: NFC Wild Card (3 games)
+    html += '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600;margin-bottom:10px;text-align:center">NFC · WILD CARD</div>';
+    [1, 2, 3].forEach(slot => { html += buildNflBracketCell('NFC', 1, slot); });
+    html += '</div>';
+    
+    html += '</div></div></div>';
+    
+    // SEEDS TABLE (under the bracket)
     ['AFC', 'NFC'].forEach(conf => {
       const seeds = conf === 'AFC' ? po.afcSeeds : po.nfcSeeds;
       const alive = new Set(po.alive[conf]);
-      html += '<div class="card"><div class="card-header"><div class="card-title">' + conf + ' bracket</div></div>' +
+      html += '<div class="card"><div class="card-header"><div class="card-title">' + conf + ' seeds</div></div>' +
         '<table><thead><tr><th style="width:50px">SEED</th><th>Team</th><th class="text-center">RECORD</th><th class="text-center">STATUS</th></tr></thead><tbody>';
       seeds.forEach(s => {
         const team = this.state.teams[s.teamId];
@@ -8069,7 +8521,6 @@ let game = {
         let status;
         if (isAlive) status = '<span class="win">ALIVE</span>';
         else {
-          // Find which round they lost
           const loss = po.results.find(r => r.loserId === s.teamId);
           status = '<span class="muted">Out · ' + (loss ? roundLabels[loss.round - 1] : '—') + '</span>';
         }
@@ -8082,50 +8533,31 @@ let game = {
       html += '</tbody></table></div>';
     });
     
-    // Current round matchups
-    if (po.games.length > 0 && !po.games[0].played) {
-      html += '<div class="card"><div class="card-header"><div class="card-title">' + currentLabel + ' matchups</div><div class="card-meta">' + po.games.length + ' games on tap</div></div>';
-      po.games.forEach(g => {
-        const home = this.state.teams[g.homeTeam];
-        const away = this.state.teams[g.awayTeam];
-        const confLabel = g.conf === 'SB' ? '★ SUPER BOWL ★' : g.conf;
-        html += '<div class="game-row" style="padding:14px 16px">' +
-          '<div class="team-side away" style="cursor:pointer" onclick="game.showTeam(' + away.id + ')">' +
-          '<span class="team-name-inline">' + (g.awaySeed ? '(' + g.awaySeed + ') ' : '') + away.city + ' ' + away.name + '</span>' +
-          '<span class="team-abbr">' + away.abbr + '</span></div>' +
-          '<div class="score"><span class="at">' + confLabel + '</span></div>' +
-          '<div class="team-side" style="cursor:pointer" onclick="game.showTeam(' + home.id + ')"><span class="team-abbr">' + home.abbr + '</span>' +
-          '<span class="team-name-inline">' + (g.homeSeed ? '(' + g.homeSeed + ') ' : '') + home.city + ' ' + home.name + '</span></div></div>';
-      });
-      html += '</div>';
-    }
-    
-    // Previous round results
-    if (po.results.length > 0) {
-      html += '<div class="card"><div class="card-header"><div class="card-title">Results so far</div></div>';
-      po.results.forEach(r => {
-        const home = this.state.teams[r.homeTeam];
-        const away = this.state.teams[r.awayTeam];
-        const homeWon = r.homeScore > r.awayScore;
-        const roundLabel = roundLabels[r.round - 1];
-        const confLabel = r.conf === 'SB' ? '★ SUPER BOWL' : r.conf + ' · ' + roundLabel;
-        html += '<div class="game-row" onclick="game.showPlayoffBox(' + r.round + ',' + r.homeTeam + ',' + r.awayTeam + ')" style="cursor:pointer">' +
-          '<div class="team-side away">' +
-          '<span class="team-name-inline ' + (!homeWon ? 'winner' : 'loser') + '">' + (r.awaySeed ? '(' + r.awaySeed + ') ' : '') + away.city + ' ' + away.name + '</span>' +
-          '<span class="team-abbr">' + away.abbr + '</span></div>' +
-          '<div class="score">' +
-          '<span class="' + (!homeWon ? 'winner' : 'loser') + '">' + r.awayScore + '</span>' +
-          '<span class="at"> – </span>' +
-          '<span class="' + (homeWon ? 'winner' : 'loser') + '">' + r.homeScore + '</span>' +
-          '<div style="font-size:9px;color:var(--text-dim);margin-top:2px">' + confLabel + '</div>' +
-          '</div>' +
-          '<div class="team-side"><span class="team-abbr">' + home.abbr + '</span>' +
-          '<span class="team-name-inline ' + (homeWon ? 'winner' : 'loser') + '">' + (r.homeSeed ? '(' + r.homeSeed + ') ' : '') + home.city + ' ' + home.name + '</span></div></div>';
-      });
-      html += '</div>';
-    }
-    
     document.getElementById('content').innerHTML = html;
+  },
+  
+  // Assign a stable `_slot` number to each NFL playoff game so the visual bracket can locate
+  // them by (conf, round, slot). Slots run 1..N per conf-round (ordered by descending homeSeed
+  // so higher-seeded games render on top of the column visually).
+  _assignNflPlayoffSlots(po) {
+    if (!po) return;
+    // Skip if already assigned
+    const needsSlots = po.games.some(g => g._slot === undefined) || po.results.some(r => r._slot === undefined);
+    if (!needsSlots) return;
+    
+    ['AFC', 'NFC', 'SB'].forEach(conf => {
+      [1, 2, 3, 4].forEach(round => {
+        // Find all games for this conf+round (across games + results)
+        const gamesInBucket = [];
+        po.games.forEach(g => { if (g.conf === conf && g.round === round) gamesInBucket.push({ ref: g, type: 'game' }); });
+        po.results.forEach(r => { if (r.conf === conf && r.round === round) gamesInBucket.push({ ref: r, type: 'result' }); });
+        // Sort by descending homeSeed (higher seed = higher in bracket column)
+        gamesInBucket.sort((a, b) => (a.ref.homeSeed || 99) - (b.ref.homeSeed || 99));
+        gamesInBucket.forEach((g, i) => {
+          if (g.ref._slot === undefined) g.ref._slot = i + 1;
+        });
+      });
+    });
   },
 
   // Special box score lookup for playoff games (not in regular schedule)
@@ -9044,7 +9476,8 @@ let game = {
           collegeSchool: prospect.school,
           collegeGrade: prospect.prospectGrade,
           declaredEarly: !!prospect.declaredEarly,
-          legacyOf: prospect.legacyOf || null
+          legacyOf: prospect.legacyOf || null,
+          fromProspectId: prospect.id
         };
         this.state.players.push(newPlayer);
         graduateRookies.push(newPlayer);
@@ -9198,6 +9631,23 @@ let game = {
 
   render() {
     if (!this.state) return;
+    // Default navTab based on player career stage. Player in college → college tab; everywhere
+    // else (NFL career, coach, agent, dynasty) → NFL tab. Only sets the default ONCE per stage
+    // transition so the user can still manually flip tabs and have it stick.
+    const stage = this.state.career && this.state.career.careerStage;
+    const mode = this.state.career && this.state.career.mode;
+    const expectedDefault = (mode === 'player' && stage === 'college') ? 'college' : 'nfl';
+    if (this._lastStageDefault !== expectedDefault) {
+      this.navTab = expectedDefault;
+      this._lastStageDefault = expectedDefault;
+      // Also default the view to a college view if we just entered college stage and the
+      // current view is an NFL view (e.g. "schedule" when user is in college doesn't make sense)
+      if (expectedDefault === 'college' && this.currentView && this._viewBelongsToTab(this.currentView) === 'nfl') {
+        // Switch to a sensible college landing view
+        this.currentView = 'mycareer';
+      }
+    }
+    
     // Snapshot previous view state for back navigation. We track currentView + a few key
     // filter/context fields that affect what the user sees. We only push when a NEW view
     // is being rendered — not when re-rendering the same view (e.g. filter toggles).
@@ -9247,6 +9697,7 @@ let game = {
       case 'players': this.renderPlayers(); break;
       case 'statistics': this.renderStatistics(); break;
       case 'awards': this.renderAwards(); break;
+      case 'pinnedplayers': this.renderPinnedPlayers(); break;
       case 'myteam': this.renderMyTeam(); break;
       case 'capspace': this.renderCapSpace(); break;
       case 'staff': this.renderStaff(); break;
@@ -9319,6 +9770,13 @@ let game = {
       const celebration = this._pendingUserDraftCelebration;
       this._pendingUserDraftCelebration = null;
       try { this.showDraftCelebration(celebration); } catch (e) { /* defensive */ }
+    }
+    // FORCED PRE-DRAFT FLOW — when the user declares for the draft, they MUST sequentially
+    // experience: combine reveal popup → each team interview → draft anticipation. The flow
+    // can't be skipped by simming weeks. The popup queue here owns the progression.
+    if (this.state && this.state.career && this.state.career.preDraftFlowActive && !this._preDraftPopupShown) {
+      this._preDraftPopupShown = true;
+      try { this.showPreDraftFlow(); } catch (e) { /* defensive */ }
     }
   },
   
@@ -11405,6 +11863,14 @@ let game = {
     }
     const recap = this.state.lastWeekRecap;
     if (!recap) { this.renderStandings(); return; }
+    
+    // PLAYOFF RECAP — when a playoff round was just simmed, show a bracket-focused recap
+    // with the round's results prominently displayed and a link to the full bracket.
+    if (recap.isPlayoff) {
+      this._renderNflPlayoffRecap(recap);
+      return;
+    }
+    
     // Use the career-mode-aware team accessor so coach and player careers also get the highlight.
     const userTeamId = this.getUserTeamId();
     
@@ -11628,10 +12094,82 @@ let game = {
 
   // College weekly recap — replaces the NFL recap when the user is in college player career stage.
   // Shows the user's school's game first, then top 10 ranked games, then all other games.
+  // CFP WEEKLY RECAP — shown after weeks 13-16 of the college season. Highlights the games
+  // played in the current round, plus a thumbnail bracket showing all results so far.
+  // The "Full bracket" button links to the visual bracket page for the deep view.
+  _renderCFPWeeklyRecap(collegeWeek) {
+    const bracket = this.state.cfpBracket;
+    const roundNames = { 13: 'First Round', 14: 'Quarterfinals', 15: 'Semifinals', 16: 'National Championship' };
+    const roundKey = { 13: 'firstRound', 14: 'quarterfinals', 15: 'semifinals', 16: 'titleGame' };
+    const roundName = roundNames[collegeWeek];
+    const games = roundKey[collegeWeek] === 'titleGame'
+      ? (bracket.titleGame ? [bracket.titleGame] : [])
+      : (bracket[roundKey[collegeWeek]] || []);
+    
+    let html = '<div class="page-header">' +
+      '<div class="page-title">CFP · ' + roundName + '</div>' +
+      '<div class="page-subtitle">' + this.state.year + ' College Football Playoff · Week ' + collegeWeek + '</div>' +
+      '</div>';
+    
+    // Title game = championship banner if complete
+    if (collegeWeek === 16 && bracket.titleGame) {
+      const t = bracket.titleGame;
+      const winnerMeta = COLLEGE_SCHOOLS.find(s => s.abbr === t.winnerAbbr);
+      const wColor = winnerMeta ? winnerMeta.primary : '#c8a047';
+      html += '<div style="background:linear-gradient(135deg,' + wColor + ',' + wColor + 'CC);color:#fff;padding:26px 24px;text-align:center;margin-bottom:18px">' +
+        '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">' + this.state.year + ' NATIONAL CHAMPION</div>' +
+        '<div style="font-size:34px;font-weight:800;margin-top:10px">🏆 ' + t.winnerName + ' 🏆</div>' +
+        '<div style="font-size:15px;opacity:0.92;margin-top:8px">Defeated ' + t.loserName + ' ' + t.winnerScore + '–' + t.loserScore + '</div>' +
+        '</div>';
+    }
+    
+    // This week's games
+    html += '<div class="card"><div class="card-header"><div class="card-title">' + roundName + ' results</div>' +
+      '<div class="card-meta">' + games.length + ' game' + (games.length === 1 ? '' : 's') + ' played</div></div>' +
+      '<div style="padding:6px 0">';
+    games.forEach(g => {
+      const winnerMeta = COLLEGE_SCHOOLS.find(s => s.abbr === g.winnerAbbr);
+      const loserMeta = COLLEGE_SCHOOLS.find(s => s.abbr === g.loserAbbr);
+      const wColor = winnerMeta ? winnerMeta.primary : '#888';
+      const lColor = loserMeta ? loserMeta.primary : '#888';
+      html += '<div style="padding:14px 18px;border-bottom:1px solid var(--border)">' +
+        '<div style="display:flex;align-items:center;gap:12px;font-size:14px">' +
+        '<div style="flex:1;display:flex;align-items:center;gap:10px">' +
+        '<span class="muted" style="font-family:var(--font-mono);font-size:11px;width:24px">#' + g.winnerSeed + '</span>' +
+        '<div style="width:4px;height:24px;background:' + wColor + '"></div>' +
+        '<strong style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + g.winnerAbbr + '\')">' + g.winnerName + '</strong>' +
+        '<span style="font-family:var(--font-mono);font-weight:700;font-size:18px;margin-left:auto">' + g.winnerScore + '</span>' +
+        '</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:12px;font-size:13px;margin-top:6px;opacity:0.55">' +
+        '<div style="flex:1;display:flex;align-items:center;gap:10px">' +
+        '<span class="muted" style="font-family:var(--font-mono);font-size:11px;width:24px">#' + g.loserSeed + '</span>' +
+        '<div style="width:4px;height:24px;background:' + lColor + '"></div>' +
+        '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + g.loserAbbr + '\')">' + g.loserName + '</span>' +
+        '<span style="font-family:var(--font-mono);font-weight:600;font-size:16px;margin-left:auto">' + g.loserScore + '</span>' +
+        '</div>' +
+        '</div>' +
+        '</div>';
+    });
+    html += '</div></div>';
+    
+    // Link to the full bracket view
+    html += '<div style="text-align:center;margin:14px 0"><button class="btn btn-success" onclick="game.currentView=\'collegeplayoffs\';game.render()">View full bracket →</button></div>';
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
   renderCollegeWeeklyRecap() {
     const collegeWeek = this.state.collegeWeek || 0;
     const userPlayer = this.getUserPlayer();
     const userSchool = userPlayer ? userPlayer.school : null;
+    
+    // CFP WEEKS — weeks 13-16 are playoff rounds. Show the bracket round results prominently
+    // instead of the regular-season recap layout.
+    if (collegeWeek >= 13 && collegeWeek <= 16 && this.state.cfpBracket) {
+      this._renderCFPWeeklyRecap(collegeWeek);
+      return;
+    }
     
     let html = '<div class="page-header">' +
       '<div class="page-title">Week ' + collegeWeek + ' college recap</div>' +
@@ -12522,6 +13060,14 @@ let game = {
     
     html += '</div></div>';
     
+    // Pin button — same as on the player card. Allows tracking prospects through college and
+    // into the NFL (we resolve them across the prospect→player transition).
+    const isPinned = this.isPlayerPinned(p.id);
+    html += '<div style="padding:12px 20px;border-bottom:1px solid var(--border)">' +
+      '<button class="btn btn-sm" style="background:' + (isPinned ? 'var(--accent)' : 'transparent') + ';color:' + (isPinned ? '#fff' : 'var(--text)') + ';border:1px solid ' + (isPinned ? 'var(--accent)' : 'var(--border)') + '" onclick="game.togglePin(\'' + p.id + '\',true)">' +
+      (isPinned ? '★ Pinned · Tap to unpin' : '☆ Pin prospect') + '</button>' +
+      '</div>';
+    
     html += '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)">' +
       '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Prospect grade</div><div style="font-size:24px;font-weight:600;font-family:var(--font-mono)"><span class="rating ' + rc + '">' + p.prospectGrade.toFixed(1) + '</span></div></div>' +
       '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Draft projection</div><div style="font-size:14px;font-weight:600;padding-top:6px">' + projectedRound + '</div></div>' +
@@ -12667,6 +13213,152 @@ let game = {
   },
 
   // PLAYER DETAIL with contract section
+  // ============================================================
+  // PINNED PLAYERS — user can pin any player or prospect to a watchlist.
+  // ============================================================
+  // Storage: state.pinnedIds is an array of player IDs (numbers for NFL/college players,
+  // string "cp_..." for college prospects). We use an array instead of a Set so it serializes
+  // cleanly via JSON.stringify for saves.
+  // Cross-stage tracking: when a prospect transitions to an NFL player (in convertProspectToPlayer
+  // and the graduate-rookie path), we set newPlayer.fromProspectId = prospect.id. So if a user
+  // pinned the prospect "cp_1234", we can find the resulting NFL player by scanning for
+  // fromProspectId. The Pinned Players page handles this resolution automatically.
+  
+  // Check if a player or prospect is pinned. Accepts numeric NFL player IDs or "cp_..." prospect IDs.
+  isPlayerPinned(id) {
+    if (!this.state || !this.state.pinnedIds) return false;
+    return this.state.pinnedIds.indexOf(id) !== -1;
+  },
+  
+  // Toggle pin on a player or prospect. isProspect=true for prospect IDs (string).
+  // Re-renders the current view so the button label updates immediately.
+  togglePin(id, isProspect) {
+    if (!this.state.pinnedIds) this.state.pinnedIds = [];
+    const idx = this.state.pinnedIds.indexOf(id);
+    if (idx === -1) {
+      this.state.pinnedIds.push(id);
+    } else {
+      this.state.pinnedIds.splice(idx, 1);
+    }
+    this.saveGame();
+    // Re-render the current card so the button updates. We handle player and prospect cards.
+    if (isProspect) {
+      this.showProspectCard(id);
+    } else {
+      this.showPlayer(id);
+    }
+  },
+  
+  // Render the Pinned Players sidebar page — lists all pinned players (and prospects), showing
+  // their current status (active/retired, team/free agent, college year, etc). Each row links
+  // to the appropriate card. We also surface "moved on" status: prospect → NFL player resolution,
+  // retirement, free agency.
+  renderPinnedPlayers() {
+    const pinnedIds = this.state.pinnedIds || [];
+    let html = '<div class="page-header"><div class="page-title">Pinned players</div>' +
+      '<div class="page-subtitle">' + pinnedIds.length + ' player' + (pinnedIds.length === 1 ? '' : 's') + ' tracked · Tap a name to view their current card</div></div>';
+    
+    if (pinnedIds.length === 0) {
+      html += '<div class="empty-state">No pinned players yet. Open any player or prospect card and tap "Pin" to add them here.</div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+    
+    // Resolve each pinned ID into either a prospect or an NFL player.
+    // For prospect IDs that have since graduated, find the resulting NFL player via fromProspectId.
+    const rows = [];
+    pinnedIds.forEach(id => {
+      if (typeof id === 'string' && id.indexOf('cp_') === 0) {
+        // Prospect ID — first try to find them in the current college prospect pool
+        const prospect = (this.state.collegeProspects || []).find(p => p.id === id);
+        if (prospect) {
+          rows.push({ kind: 'prospect', prospect, id });
+          return;
+        }
+        // Prospect has graduated — find the NFL player who came from this prospect
+        const player = this.state.players.find(p => p.fromProspectId === id);
+        if (player) {
+          rows.push({ kind: 'player', player, id, wasProspect: true });
+          return;
+        }
+        // Lost track — show as missing
+        rows.push({ kind: 'missing', id });
+      } else {
+        // NFL player ID (numeric)
+        const player = this.state.players[id];
+        if (player) {
+          rows.push({ kind: 'player', player, id });
+        } else {
+          rows.push({ kind: 'missing', id });
+        }
+      }
+    });
+    
+    html += '<div class="card"><table><thead><tr>' +
+      '<th>Name</th><th>Pos</th><th>Status</th><th>Team / School</th>' +
+      '<th class="text-right">OVR / Grade</th><th class="text-right">Age</th><th></th>' +
+      '</tr></thead><tbody>';
+    
+    rows.forEach(row => {
+      if (row.kind === 'missing') {
+        html += '<tr><td colspan="7" class="muted" style="font-style:italic">— Player no longer in league (data lost) — <button class="btn btn-sm" onclick="game.togglePin(' + (typeof row.id === 'string' ? "'" + row.id + "'" : row.id) + ',' + (typeof row.id === 'string') + ')">Unpin</button></td></tr>';
+        return;
+      }
+      if (row.kind === 'prospect') {
+        const p = row.prospect;
+        const gradeClass = p.prospectGrade >= 90 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 70 ? 'good' : 'avg';
+        const schoolMeta = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+        const ageByYear = { 'Freshman': 18, 'Sophomore': 19, 'Junior': 20, 'Senior': 21 };
+        html += '<tr>' +
+          '<td><span style="cursor:pointer;text-decoration:underline;font-weight:600" onclick="game.showProspectCard(\'' + p.id + '\')">' + p.name + '</span></td>' +
+          '<td>' + p.position + '</td>' +
+          '<td><span class="muted" style="font-size:11px">' + p.year + ' (college)</span></td>' +
+          '<td>' + (schoolMeta ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + p.school + '\')">' + schoolMeta.name + '</span>' : p.school) + '</td>' +
+          '<td class="text-right mono-num"><span class="rating ' + gradeClass + '">' + p.prospectGrade.toFixed(1) + '</span></td>' +
+          '<td class="text-right mono-num">~' + (ageByYear[p.year] || 19) + '</td>' +
+          '<td class="text-right"><button class="btn btn-sm" onclick="event.stopPropagation();game.togglePin(\'' + p.id + '\',true);game.renderPinnedPlayers()">Unpin</button></td>' +
+          '</tr>';
+        return;
+      }
+      // Player row
+      const p = row.player;
+      const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
+      let statusText, statusColor;
+      if (p.retired) {
+        statusText = 'Retired' + (p.hofInducted ? ' · HOF' : '');
+        statusColor = 'var(--text-muted)';
+      } else if (team) {
+        statusText = 'Active';
+        statusColor = 'var(--success)';
+      } else {
+        statusText = 'Free Agent';
+        statusColor = 'var(--warning)';
+      }
+      // For an injured player, override status with injury text
+      if (p.injury && p.injury.weeksRemaining > 0 && !p.retired) {
+        statusText = 'Injured · ' + p.injury.type;
+        statusColor = 'var(--danger)';
+      }
+      const teamCell = team
+        ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</span>'
+        : (p.retired ? '—' : 'Free Agent');
+      const rc = this.ratingClass(p.rating);
+      html += '<tr>' +
+        '<td><span style="cursor:pointer;text-decoration:underline;font-weight:600" onclick="game.showPlayer(' + p.id + ')">' + p.name + '</span>' +
+        (row.wasProspect ? ' <span class="muted" style="font-size:10px">(drafted)</span>' : '') + '</td>' +
+        '<td>' + p.position + '</td>' +
+        '<td><span style="color:' + statusColor + ';font-size:11px;font-weight:600">' + statusText + '</span></td>' +
+        '<td>' + teamCell + '</td>' +
+        '<td class="text-right mono-num"><span class="rating ' + rc + '">' + p.rating + '</span></td>' +
+        '<td class="text-right mono-num">' + p.age + '</td>' +
+        '<td class="text-right"><button class="btn btn-sm" onclick="event.stopPropagation();game.togglePin(' + p.id + ',false);game.renderPinnedPlayers()">Unpin</button></td>' +
+        '</tr>';
+    });
+    
+    html += '</tbody></table></div>';
+    document.getElementById('content').innerHTML = html;
+  },
+  
   showPlayer(pid) {
     const p = this.state.players[pid];
     if (!p) return;
@@ -12679,11 +13371,19 @@ let game = {
       ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</span>'
       : (p.retired ? 'Retired' : 'Free Agent');
     
+    // Pin button — lets the user track any player (their own team, another team, college, retired).
+    // Useful in player career: a QB pinning their star WR so they can find them 8 years later.
+    // Useful in coach/dynasty: pinning a hot prospect to follow them through college and the draft.
+    const isPinned = this.isPlayerPinned(p.id);
+    const pinBtn = '<button class="btn btn-sm" style="margin-top:8px;background:' + (isPinned ? 'var(--accent)' : 'transparent') + ';color:' + (isPinned ? '#fff' : 'var(--text)') + ';border:1px solid ' + (isPinned ? 'var(--accent)' : 'var(--border)') + '" onclick="game.togglePin(' + p.id + ',false)">' +
+      (isPinned ? '★ Pinned · Tap to unpin' : '☆ Pin player') + '</button>';
+    
     let html = '<div class="player-detail-header">' +
       '<div class="player-face-large">' + pixelFaceSVG(p.faceSeed) + '</div>' +
       '<div><div class="player-name-big">' + p.name + '</div>' +
       '<div class="player-meta">#' + p.jerseyNumber + ' · ' + p.position + ' · Age ' + p.age + ' · ' + teamLabel + '</div>' +
       '<span class="rating ' + rc + '" style="font-size:14px;padding:4px 10px">OVR ' + p.rating + '</span>' +
+      pinBtn +
       '</div></div>' +
       '<div class="player-detail-body">';
 
@@ -14083,6 +14783,232 @@ let game = {
   // based on the current AP Top 25 + conference champion logic.
   // Modern CFP format: 5 highest-ranked conference champs get auto-bids, plus 7 at-large.
   renderCollegePlayoffPicture() {
+    // ROUTING: If the CFP bracket has been built (week 13+ of college season), show the live
+    // visual bracket with completed games highlighted. Otherwise, fall back to the projection
+    // view based on the current AP poll.
+    if (this.state.cfpBracket && this.state.cfpBracket.seeds) {
+      return this.renderCFPVisualBracket();
+    }
+    return this.renderCFPProjection();
+  },
+  
+  // VISUAL BRACKET — left-to-right tree showing all four rounds. Completed games show the score
+  // and highlight the winner. Future rounds show "TBD" or the seed if known from prior round.
+  // This is the page users see during weeks 13-16 of the college season as the bracket plays out.
+  renderCFPVisualBracket() {
+    const bracket = this.state.cfpBracket;
+    const seeds = bracket.seeds;
+    const titleGame = bracket.titleGame;
+    
+    // Determine current round by what's been simmed
+    let currentRound;
+    if (titleGame) currentRound = 'COMPLETE';
+    else if (bracket.semifinals) currentRound = 'TITLE';
+    else if (bracket.quarterfinals) currentRound = 'SEMIFINALS';
+    else if (bracket.firstRound) currentRound = 'QUARTERFINALS';
+    else currentRound = 'FIRST ROUND';
+    
+    let html = '<div class="page-header"><div class="page-title">' + this.state.year + ' College Football Playoff</div>' +
+      '<div class="page-subtitle">' + (currentRound === 'COMPLETE'
+        ? 'Tournament complete · ' + titleGame.winnerName + ' wins the national championship'
+        : 'Current round: ' + currentRound + ' · Sim the next week to advance the bracket') + '</div></div>';
+    
+    // CHAMPION BANNER (if complete)
+    if (titleGame) {
+      const winnerMeta = COLLEGE_SCHOOLS.find(s => s.abbr === titleGame.winnerAbbr);
+      const wColor = winnerMeta ? winnerMeta.primary : '#c8a047';
+      html += '<div style="background:linear-gradient(135deg,' + wColor + ',' + wColor + 'CC);color:#fff;padding:22px 24px;text-align:center;margin-bottom:18px">' +
+        '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">' + this.state.year + ' NATIONAL CHAMPION</div>' +
+        '<div style="font-size:30px;font-weight:800;margin-top:8px">🏆 ' + titleGame.winnerName + ' 🏆</div>' +
+        '<div style="font-size:14px;opacity:0.92;margin-top:6px">Defeated ' + titleGame.loserName + ' ' + titleGame.winnerScore + '–' + titleGame.loserScore + '</div>' +
+        '</div>';
+    }
+    
+    // VISUAL BRACKET — CSS grid with 4 columns (First Round / QF / SF / Title)
+    // For each round, we render game cells stacked vertically. Each cell shows two teams,
+    // with the winner highlighted in bold + accent color.
+    html += '<div class="card"><div class="card-header"><div class="card-title">Bracket</div>' +
+      '<div class="card-meta">Tap a school to view their page</div></div>' +
+      '<div style="padding:18px 14px;overflow-x:auto"><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;min-width:780px">';
+    
+    // Column 1: First Round headers + games
+    html += '<div>';
+    html += '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600;margin-bottom:10px;text-align:center">FIRST ROUND</div>';
+    if (bracket.firstRound) {
+      bracket.firstRound.forEach(g => {
+        html += this._renderBracketGame({
+          hi: { seed: g.hiSeed, abbr: seeds.find(s => s.seed === g.hiSeed) ? seeds.find(s => s.seed === g.hiSeed).abbr : null },
+          lo: { seed: g.loSeed, abbr: seeds.find(s => s.seed === g.loSeed) ? seeds.find(s => s.seed === g.loSeed).abbr : null },
+          winnerSeed: g.winnerSeed, loserSeed: g.loserSeed,
+          winnerAbbr: g.winnerAbbr, loserAbbr: g.loserAbbr,
+          winnerName: g.winnerName, loserName: g.loserName,
+          winnerScore: g.winnerScore, loserScore: g.loserScore,
+          played: true
+        });
+      });
+    } else {
+      // Show projected matchups (5v12, 6v11, 7v10, 8v9)
+      [[4, 11], [5, 10], [6, 9], [7, 8]].forEach(([hiIdx, loIdx]) => {
+        html += this._renderBracketGame({
+          hi: seeds[hiIdx], lo: seeds[loIdx], played: false
+        });
+      });
+    }
+    html += '</div>';
+    
+    // Column 2: Quarterfinals (top 4 seeds + bye spacers)
+    html += '<div>';
+    html += '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600;margin-bottom:10px;text-align:center">QUARTERFINALS</div>';
+    if (bracket.quarterfinals) {
+      bracket.quarterfinals.forEach(g => {
+        html += this._renderBracketGame({
+          hi: { seed: g.hiSeed, abbr: seeds.find(s => s.seed === g.hiSeed) ? seeds.find(s => s.seed === g.hiSeed).abbr : null },
+          lo: { seed: g.loSeed, abbr: seeds.find(s => s.seed === g.loSeed) ? seeds.find(s => s.seed === g.loSeed).abbr : null },
+          winnerSeed: g.winnerSeed, loserSeed: g.loserSeed,
+          winnerAbbr: g.winnerAbbr, loserAbbr: g.loserAbbr,
+          winnerName: g.winnerName, loserName: g.loserName,
+          winnerScore: g.winnerScore, loserScore: g.loserScore,
+          played: true
+        });
+      });
+    } else {
+      // Show the top 4 seeds awaiting their opponent
+      [0, 1, 2, 3].forEach(idx => {
+        html += this._renderBracketGame({
+          hi: seeds[idx],
+          lo: { seed: '?', abbr: null, name: 'First-round winner' },
+          played: false
+        });
+      });
+    }
+    html += '</div>';
+    
+    // Column 3: Semifinals
+    html += '<div>';
+    html += '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600;margin-bottom:10px;text-align:center">SEMIFINALS</div>';
+    if (bracket.semifinals) {
+      bracket.semifinals.forEach(g => {
+        html += this._renderBracketGame({
+          hi: { seed: g.winnerSeed, abbr: g.winnerAbbr },
+          lo: { seed: g.loserSeed, abbr: g.loserAbbr },
+          winnerSeed: g.winnerSeed, loserSeed: g.loserSeed,
+          winnerAbbr: g.winnerAbbr, loserAbbr: g.loserAbbr,
+          winnerName: g.winnerName, loserName: g.loserName,
+          winnerScore: g.winnerScore, loserScore: g.loserScore,
+          played: true
+        });
+      });
+    } else {
+      html += this._renderBracketGame({ hi: { seed: '?', name: 'QF winner' }, lo: { seed: '?', name: 'QF winner' }, played: false });
+      html += this._renderBracketGame({ hi: { seed: '?', name: 'QF winner' }, lo: { seed: '?', name: 'QF winner' }, played: false });
+    }
+    html += '</div>';
+    
+    // Column 4: National Title
+    html += '<div>';
+    html += '<div style="font-size:10px;color:var(--accent);letter-spacing:0.8px;font-weight:700;margin-bottom:10px;text-align:center">🏆 NATIONAL TITLE</div>';
+    if (titleGame) {
+      html += this._renderBracketGame({
+        hi: { seed: titleGame.winnerSeed, abbr: titleGame.winnerAbbr },
+        lo: { seed: titleGame.loserSeed, abbr: titleGame.loserAbbr },
+        winnerSeed: titleGame.winnerSeed, loserSeed: titleGame.loserSeed,
+        winnerAbbr: titleGame.winnerAbbr, loserAbbr: titleGame.loserAbbr,
+        winnerName: titleGame.winnerName, loserName: titleGame.loserName,
+        winnerScore: titleGame.winnerScore, loserScore: titleGame.loserScore,
+        played: true, isTitle: true
+      });
+    } else {
+      html += this._renderBracketGame({ hi: { seed: '?', name: 'SF winner' }, lo: { seed: '?', name: 'SF winner' }, played: false, isTitle: true });
+    }
+    html += '</div>';
+    
+    html += '</div></div></div>';
+    
+    // SEEDS TABLE (compact, beneath the bracket)
+    html += '<div class="card"><div class="card-header"><div class="card-title">Seeds</div>' +
+      '<div class="card-meta">Top 4 seeds had first-round byes</div></div>' +
+      '<table><thead><tr><th>SEED</th><th>SCHOOL</th><th class="text-center">CONF</th><th class="text-right">RECORD</th></tr></thead><tbody>';
+    seeds.forEach(s => {
+      const meta = COLLEGE_SCHOOLS.find(sc => sc.abbr === s.abbr);
+      const conf = meta && COLLEGE_CONFERENCES[meta.conference] ? COLLEGE_CONFERENCES[meta.conference].name : (s.conference || '—');
+      const seedCls = s.seed <= 4 ? 'rating elite' : s.seed <= 8 ? 'rating great' : 'rating good';
+      html += '<tr style="cursor:pointer" onclick="game.showCollegeCard(\'' + s.abbr + '\')">' +
+        '<td><span class="' + seedCls + '">#' + s.seed + '</span>' + (s.seed <= 4 ? ' <span style="font-size:9px;color:var(--text-muted)">BYE</span>' : '') + '</td>' +
+        '<td><div style="display:flex;align-items:center;gap:8px">' +
+        '<div style="width:4px;height:20px;background:' + (meta ? meta.primary : '#888') + '"></div>' +
+        '<strong>' + (meta ? meta.name : s.abbr) + '</strong></div></td>' +
+        '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + conf + '</td>' +
+        '<td class="text-right mono-num">' + s.wins + '-' + s.losses + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    document.getElementById('content').innerHTML = html;
+  },
+  
+  // Render a single bracket game cell. Used for both college and NFL brackets.
+  // game = { hi: {seed, abbr, name?}, lo: {seed, abbr, name?}, played, winnerSeed?, winnerAbbr?, ... }
+  _renderBracketGame(g) {
+    const hiMeta = g.hi && g.hi.abbr ? (COLLEGE_SCHOOLS.find(s => s.abbr === g.hi.abbr) || this.state.teams.find(t => t.abbr === g.hi.abbr)) : null;
+    const loMeta = g.lo && g.lo.abbr ? (COLLEGE_SCHOOLS.find(s => s.abbr === g.lo.abbr) || this.state.teams.find(t => t.abbr === g.lo.abbr)) : null;
+    
+    const hiName = hiMeta ? (hiMeta.name || (hiMeta.city + ' ' + hiMeta.name)) : (g.hi && g.hi.name) || (g.hi && g.hi.abbr) || 'TBD';
+    const loName = loMeta ? (loMeta.name || (loMeta.city + ' ' + loMeta.name)) : (g.lo && g.lo.name) || (g.lo && g.lo.abbr) || 'TBD';
+    const hiColor = hiMeta ? hiMeta.primary : '#888';
+    const loColor = loMeta ? loMeta.primary : '#888';
+    const hiSeed = g.hi ? g.hi.seed : '?';
+    const loSeed = g.lo ? g.lo.seed : '?';
+    
+    // Winner detection
+    const hiWon = g.played && g.winnerAbbr === (g.hi && g.hi.abbr);
+    const loWon = g.played && g.winnerAbbr === (g.lo && g.lo.abbr);
+    
+    const hiStyle = hiWon
+      ? 'font-weight:700'
+      : (g.played ? 'opacity:0.55' : '');
+    const loStyle = loWon
+      ? 'font-weight:700'
+      : (g.played ? 'opacity:0.55' : '');
+    
+    const clickHandler = (abbr) => {
+      if (!abbr) return '';
+      // College schools vs NFL teams use different show functions
+      const isCollege = COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
+      if (isCollege) return 'onclick="game.showCollegeCard(\'' + abbr + '\')" style="cursor:pointer"';
+      const nflTeam = this.state.teams.find(t => t.abbr === abbr);
+      if (nflTeam) return 'onclick="game.showTeam(' + nflTeam.id + ')" style="cursor:pointer"';
+      return '';
+    };
+    
+    // Title game gets a slight emphasis
+    const border = g.isTitle ? '2px solid var(--accent)' : '1px solid var(--border)';
+    const bg = g.isTitle ? 'var(--surface-2)' : 'var(--surface)';
+    
+    let html = '<div style="background:' + bg + ';border:' + border + ';margin-bottom:12px;font-size:11px">';
+    
+    // Top team
+    html += '<div ' + clickHandler(g.hi && g.hi.abbr) + ' style="padding:8px 10px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);' + hiStyle + '">' +
+      '<span style="opacity:0.5;font-family:var(--font-mono);width:18px;font-size:10px">' + (typeof hiSeed === 'number' ? '#' + hiSeed : '?') + '</span>' +
+      '<span style="width:3px;height:14px;background:' + hiColor + ';flex-shrink:0"></span>' +
+      '<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + hiName + '</span>' +
+      (g.played ? '<span style="font-family:var(--font-mono);font-weight:600">' + (hiWon ? g.winnerScore : g.loserScore) + '</span>' : '') +
+      '</div>';
+    
+    // Bottom team
+    html += '<div ' + clickHandler(g.lo && g.lo.abbr) + ' style="padding:8px 10px;display:flex;align-items:center;gap:8px;' + loStyle + '">' +
+      '<span style="opacity:0.5;font-family:var(--font-mono);width:18px;font-size:10px">' + (typeof loSeed === 'number' ? '#' + loSeed : '?') + '</span>' +
+      '<span style="width:3px;height:14px;background:' + loColor + ';flex-shrink:0"></span>' +
+      '<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + loName + '</span>' +
+      (g.played ? '<span style="font-family:var(--font-mono);font-weight:600">' + (loWon ? g.winnerScore : g.loserScore) + '</span>' : '') +
+      '</div>';
+    
+    html += '</div>';
+    return html;
+  },
+  
+  // PROJECTION VIEW — fallback when the CFP bracket hasn't been built yet (during reg season).
+  // Shows the projected 12-team field based on current AP poll.
+  renderCFPProjection() {
     let html = '<div class="page-header"><div class="page-title">College Football Playoff picture</div>' +
       '<div class="page-subtitle">Projected 12-team CFP bracket · ' + this.state.year + ' season</div></div>';
     
@@ -14092,7 +15018,7 @@ let game = {
       return;
     }
     
-    // Build CFP-style bracket: 5 conf champs (top-ranked from each P5 conf) + 7 at-large.
+    // Build CFP-style projection: 5 conf champs (top-ranked from each P5 conf) + 7 at-large.
     const apPoll = this.state.apPoll;
     const seenConf = new Set();
     const champBids = [];
@@ -14102,7 +15028,6 @@ let game = {
     apPoll.forEach(t => {
       const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
       if (!meta) return;
-      // P5 conferences each get one auto-bid (their top-ranked team)
       if (P5Confs.includes(meta.conference) && !seenConf.has(meta.conference) && champBids.length < 5) {
         seenConf.add(meta.conference);
         champBids.push({ ...t, conference: meta.conference, bidType: 'CHAMP' });
@@ -14111,17 +15036,15 @@ let game = {
       }
     });
     
-    // Combine + reseed by AP rank
     const bracket = [...champBids, ...atLarges].sort((a, b) => a.rank - b.rank).slice(0, 12);
     
-    // Add G5 access bid (highest-ranked G5 not already in)
+    // G5 access bid
     const G5Confs = ['AAC', 'MW', 'SBC', 'MAC', 'CUSA'];
     const g5Bid = apPoll.find(t => {
       const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
       return meta && G5Confs.includes(meta.conference) && !bracket.find(b => b.abbr === t.abbr);
     });
     if (g5Bid && bracket.length === 12) {
-      // G5 access — bump out the lowest at-large
       const lowestAtLarge = [...bracket].reverse().find(b => b.bidType === 'AT-LARGE');
       if (lowestAtLarge) {
         const idx = bracket.indexOf(lowestAtLarge);
@@ -14130,9 +15053,8 @@ let game = {
       }
     }
     
-    // Render the bracket as seeds 1-12
-    html += '<div class="card"><div class="card-header"><div class="card-title">12-team field</div>' +
-      '<div class="card-meta">Top 4 seeds get first-round bye</div></div>' +
+    html += '<div class="card"><div class="card-header"><div class="card-title">Projected 12-team field</div>' +
+      '<div class="card-meta">Final bracket sets after week 12 · Top 4 seeds get first-round bye</div></div>' +
       '<table><thead><tr>' +
       '<th>SEED</th><th>SCHOOL</th><th class="text-center">CONF</th><th class="text-center">RECORD</th><th class="text-right">BID</th>' +
       '</tr></thead><tbody>';
@@ -14147,8 +15069,7 @@ let game = {
         '<td><span class="' + seedCls + '">#' + seed + '</span>' + (seed <= 4 ? ' <span style="font-size:9px;color:var(--text-muted)">BYE</span>' : '') + '</td>' +
         '<td><div style="display:flex;align-items:center;gap:8px">' +
         '<div style="width:4px;height:20px;background:' + (meta ? meta.primary : '#888') + '"></div>' +
-        '<strong>' + (meta ? meta.name : t.abbr) + '</strong>' +
-        '</div></td>' +
+        '<strong>' + (meta ? meta.name : t.abbr) + '</strong></div></td>' +
         '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + conf + '</td>' +
         '<td class="text-center mono-num">' + t.record + '</td>' +
         '<td class="text-right" style="font-size:10px;font-weight:600;color:' + bidColor + ';letter-spacing:0.5px">' + t.bidType + '</td>' +
@@ -14156,14 +15077,11 @@ let game = {
     });
     html += '</tbody></table></div>';
     
-    // First-round matchups (seeds 5-12 play in week 1; 1-4 get byes)
+    // Projected first-round matchups
     if (bracket.length === 12) {
-      html += '<div class="card"><div class="card-header"><div class="card-title">First-round matchups</div>' +
-        '<div class="card-meta">Quarterfinals after this round</div></div>' +
+      html += '<div class="card"><div class="card-header"><div class="card-title">Projected first-round matchups</div></div>' +
         '<div style="padding:14px 16px">';
-      // 5 vs 12, 6 vs 11, 7 vs 10, 8 vs 9
-      const matchups = [[5, 12], [6, 11], [7, 10], [8, 9]];
-      matchups.forEach(([hi, lo]) => {
+      [[5, 12], [6, 11], [7, 10], [8, 9]].forEach(([hi, lo]) => {
         const a = bracket[hi - 1], b = bracket[lo - 1];
         const aMeta = COLLEGE_SCHOOLS.find(s => s.abbr === a.abbr);
         const bMeta = COLLEGE_SCHOOLS.find(s => s.abbr === b.abbr);
@@ -14178,26 +15096,6 @@ let game = {
           '</div></div>';
       });
       html += '</div></div>';
-    }
-    
-    // "On the bubble" — next 5 teams that didn't make it
-    const inBracket = new Set(bracket.map(t => t.abbr));
-    const bubble = apPoll.filter(t => !inBracket.has(t.abbr)).slice(0, 5);
-    if (bubble.length > 0) {
-      html += '<div class="card"><div class="card-header"><div class="card-title">On the bubble</div>' +
-        '<div class="card-meta">Top 5 just outside the field</div></div>' +
-        '<table><thead><tr><th>RK</th><th>SCHOOL</th><th class="text-center">CONF</th><th class="text-right">RECORD</th></tr></thead><tbody>';
-      bubble.forEach(t => {
-        const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
-        const conf = meta ? COLLEGE_CONFERENCES[meta.conference].name : '—';
-        html += '<tr style="cursor:pointer" onclick="game.showCollegeCard(\'' + t.abbr + '\')">' +
-          '<td class="mono-num">#' + t.rank + '</td>' +
-          '<td><strong>' + (meta ? meta.name : t.abbr) + '</strong></td>' +
-          '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + conf + '</td>' +
-          '<td class="text-right mono-num">' + t.record + '</td>' +
-          '</tr>';
-      });
-      html += '</tbody></table></div>';
     }
     
     document.getElementById('content').innerHTML = html;
@@ -15055,6 +15953,89 @@ let game = {
       '<div class="muted" style="font-size:12px">You\'ve completed your third year of college eligibility. You have a choice: enter the NFL Draft now, or come back for one more year and try to climb the boards.</div>' +
       '</div>';
     
+    // TEAM CONTEXT — show who's leaving from the user's school + projected record next year.
+    // This helps the user weigh whether returning makes sense (good supporting cast = stay;
+    // mass exodus = declare).
+    const userSchool = userPlayer.school;
+    const teammatePool = (this.state.collegeProspects || []).filter(p => p.school === userSchool && p.id !== userPlayer.id);
+    
+    // SENIORS — will definitely graduate (auto-leave)
+    const departingSeniors = teammatePool.filter(p => p.year === 'Senior');
+    
+    // JUNIORS who will likely declare early — same logic as advanceCollegeSeason auto-roll
+    // (≥95: 85%, ≥90: 70%, ≥88: 50%, ≥85: 25%). We surface the high-probability ones.
+    const likelyDecls = teammatePool.filter(p => p.year === 'Junior' && p.prospectGrade >= 85);
+    
+    // Combine into "departing" list, sorted by grade
+    const departing = [...departingSeniors, ...likelyDecls].sort((a, b) => b.prospectGrade - a.prospectGrade);
+    
+    // Project next year's record. Strength = sum of top-22 prospect grades on the roster minus
+    // those who are departing. Compare to current strength to project win delta.
+    const currentRoster = (this.state.collegeProspects || []).filter(p => p.school === userSchool);
+    const departingIds = new Set(departing.map(p => p.id));
+    const returningRoster = currentRoster.filter(p => !departingIds.has(p.id));
+    
+    // Add the user's grade IF they stay (Option B); otherwise exclude
+    const sumTopN = (roster, n) => {
+      const sorted = [...roster].sort((a, b) => b.prospectGrade - a.prospectGrade).slice(0, n);
+      return sorted.reduce((sum, p) => sum + p.prospectGrade, 0);
+    };
+    const currentStrength = sumTopN(currentRoster, 22);
+    const strengthIfStay = sumTopN(returningRoster, 22); // user is in returningRoster (not in departing)
+    // If declaring: user leaves too. Project strength = returning minus user.
+    const strengthIfLeave = sumTopN(returningRoster.filter(p => p.id !== userPlayer.id), 22);
+    
+    // Current record this year
+    const currentStandings = this.state.collegeStandings && this.state.collegeStandings[userSchool];
+    const currentWins = currentStandings ? currentStandings.wins : 0;
+    const currentLosses = currentStandings ? currentStandings.losses : 0;
+    
+    // Project next year's wins: scale by strength ratio
+    const winsIfStay = Math.round(currentWins * (strengthIfStay / Math.max(1, currentStrength)));
+    const winsIfLeave = Math.round(currentWins * (strengthIfLeave / Math.max(1, currentStrength)));
+    const lossesIfStay = Math.max(0, 12 - winsIfStay);
+    const lossesIfLeave = Math.max(0, 12 - winsIfLeave);
+    
+    const schoolMeta = COLLEGE_SCHOOLS.find(s => s.abbr === userSchool);
+    const schoolName = schoolMeta ? schoolMeta.name : userSchool;
+    const schoolColor = schoolMeta ? schoolMeta.primary : '#888';
+    
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:12px">' +
+      '<div style="font-weight:700;font-size:13px;margin-bottom:10px;display:flex;align-items:center;gap:8px">' +
+      '<div style="width:4px;height:18px;background:' + schoolColor + '"></div>' +
+      schoolName + ' · Team context' +
+      '</div>';
+    
+    // Projected next-year record comparison
+    body += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">' + schoolName.toUpperCase() + ' IF YOU STAY</div>' +
+      '<div style="font-size:18px;font-weight:700;font-family:var(--font-mono);margin-top:4px">' + winsIfStay + '–' + lossesIfStay + '</div>' +
+      '<div class="muted" style="font-size:10px;margin-top:2px">Projected record</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">' + schoolName.toUpperCase() + ' IF YOU LEAVE</div>' +
+      '<div style="font-size:18px;font-weight:700;font-family:var(--font-mono);margin-top:4px">' + winsIfLeave + '–' + lossesIfLeave + '</div>' +
+      '<div class="muted" style="font-size:10px;margin-top:2px">Without you in the lineup</div></div>' +
+      '</div>';
+    
+    // Teammates leaving list
+    if (departing.length > 0) {
+      body += '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600;margin-bottom:6px">TEAMMATES LEAVING (' + departing.length + ')</div>' +
+        '<div style="max-height:140px;overflow-y:auto">';
+      departing.slice(0, 12).forEach(p => {
+        const gradeColor = p.prospectGrade >= 90 ? 'var(--accent)' : p.prospectGrade >= 80 ? 'var(--text)' : 'var(--text-muted)';
+        const reason = p.year === 'Senior' ? 'Graduating' : 'Likely declare';
+        body += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11px">' +
+          '<div style="flex:1"><strong>' + p.name + '</strong> <span class="muted">(' + p.position + ', ' + p.year + ')</span></div>' +
+          '<span style="color:' + gradeColor + ';font-family:var(--font-mono);font-weight:600;min-width:38px;text-align:right">' + p.prospectGrade.toFixed(1) + '</span>' +
+          '<span class="muted" style="font-size:10px;min-width:80px;text-align:right">' + reason + '</span>' +
+          '</div>';
+      });
+      if (departing.length > 12) body += '<div class="muted" style="text-align:center;font-size:10px;padding-top:4px">…and ' + (departing.length - 12) + ' more</div>';
+      body += '</div>';
+    } else {
+      body += '<div class="muted" style="font-size:11px;font-style:italic">No notable seniors or early-declare candidates among your teammates. Most of the roster will be back next year.</div>';
+    }
+    body += '</div>';
+    
     // OPTION A: Declare now
     body += '<div style="background:var(--surface);padding:16px;margin-bottom:12px">' +
       '<div style="font-weight:700;font-size:14px;margin-bottom:8px;color:var(--accent)">Option A: Declare for the NFL Draft</div>' +
@@ -15129,6 +16110,340 @@ let game = {
     closeModal();
     this.render();
     this.saveGame();
+  },
+
+  // FORCED PRE-DRAFT FLOW — dispatches to the right popup based on user's current step.
+  // Steps: combine_reveal → interviews → awaiting_draft → null.
+  // Each step shows a mandatory modal the user must engage with before sim resumes.
+  // Sim is gated on this flow via _gatePreDraftFlow() (called by simWeek).
+  showPreDraftFlow() {
+    const userPlayer = this._getDeclaredUserProspect();
+    if (!userPlayer) {
+      // Edge case: couldn't find them — clear the flow
+      this.state.career.preDraftFlowActive = false;
+      this._preDraftPopupShown = false;
+      return;
+    }
+    const step = userPlayer.preDraftStep || 'combine_reveal';
+    
+    if (step === 'combine_reveal') {
+      this.showCombineRevealPopup(userPlayer);
+    } else if (step === 'interviews') {
+      this.showInterviewsLandingPopup(userPlayer);
+    } else if (step === 'awaiting_draft') {
+      this.showDraftAnticipationPopup(userPlayer);
+    } else {
+      // Complete — clear the flag
+      this.state.career.preDraftFlowActive = false;
+      this._preDraftPopupShown = false;
+    }
+  },
+  
+  // Helper: locate the user player wherever they are in the prospect/draft pipeline.
+  // The user is in 'declared' stage, meaning they should be in pendingDraftClass.
+  _getDeclaredUserProspect() {
+    const id = this.state.career && this.state.career.declaredIdentity;
+    if (!id) return null;
+    return (this.state.pendingDraftClass || []).find(p =>
+      p.name === id.name &&
+      p.school === id.school &&
+      p.position === id.position
+    );
+  },
+  
+  // STEP 1: Combine reveal — shows the drill results with dramatic flair. Forced modal.
+  showCombineRevealPopup(player) {
+    const cr = player.combineResults;
+    if (!cr) {
+      // Bug guard — skip to interviews
+      player.preDraftStep = 'interviews';
+      this._preDraftPopupShown = false;
+      this.showPreDraftFlow();
+      return;
+    }
+    const stockText = cr.gradeAdjust > 0 ? 'STOCK UP' : cr.gradeAdjust < 0 ? 'STOCK DOWN' : 'NEUTRAL';
+    const stockColor = cr.gradeAdjust > 0 ? 'var(--success)' : cr.gradeAdjust < 0 ? 'var(--danger)' : 'var(--warning)';
+    
+    let body = '<div style="background:var(--surface);padding:18px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;color:var(--text-muted)">NFL COMBINE · INDIANAPOLIS</div>' +
+      '<div style="font-size:22px;font-weight:700;margin-top:8px">' + player.name + '</div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-top:4px">' + player.position + ' · ' + player.school + '</div>' +
+      '<div style="margin-top:14px;font-size:18px;font-weight:700;color:' + stockColor + '">' + stockText + ' · ' + (cr.gradeAdjust > 0 ? '+' : '') + cr.gradeAdjust.toFixed(1) + ' grade</div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-top:4px">New prospect grade: ' + player.prospectGrade.toFixed(1) + '</div>' +
+      '</div>';
+    
+    // Drill results grid
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:10px;letter-spacing:0.6px;font-weight:600;color:var(--text-muted);margin-bottom:10px">DRILL RESULTS</div>';
+    cr.drills.forEach(d => {
+      const pct = d.percentile;
+      const barColor = pct >= 80 ? 'var(--success)' : pct >= 60 ? 'var(--accent)' : pct >= 40 ? 'var(--warning)' : 'var(--danger)';
+      body += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12px">' +
+        '<div style="flex:1"><strong>' + d.name + '</strong></div>' +
+        '<div style="font-family:var(--font-mono);font-weight:600;min-width:60px;text-align:right">' + d.result + '</div>' +
+        '<div style="width:80px;height:5px;background:var(--surface-2)"><div style="width:' + pct + '%;height:100%;background:' + barColor + '"></div></div>' +
+        '<span class="muted" style="font-size:10px;min-width:30px">' + pct + 'th</span>' +
+        '</div>';
+    });
+    body += '</div>';
+    
+    // Scout takeaway
+    body += '<div style="background:var(--surface-2);padding:14px 16px;margin-bottom:14px;font-size:12px;font-style:italic;line-height:1.5;border-left:2px solid var(--accent)">' + cr.narrative + '</div>';
+    
+    body += '<button class="btn btn-success" style="width:100%" onclick="game._advancePreDraftStep(\'interviews\')">Continue to team interviews →</button>';
+    
+    this.showModal('Combine results · ' + player.name, body);
+  },
+  
+  // STEP 2: Interviews landing — shows the list of teams interested, user picks which to do.
+  // After they complete all interviews (or skip remaining), advance to draft anticipation.
+  showInterviewsLandingPopup(player) {
+    const interviews = player.teamInterviews || [];
+    const completed = interviews.filter(i => i.completed).length;
+    const remaining = interviews.length - completed;
+    
+    let body = '<div style="background:var(--surface);padding:16px;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;color:var(--text-muted)">PRE-DRAFT VISITS</div>' +
+      '<div style="font-size:14px;margin-top:6px;line-height:1.5">' + interviews.length + ' NFL teams want to meet with you before the draft. How you handle these conversations will affect your stock and where teams view you on their board.</div>' +
+      '<div class="muted" style="font-size:12px;margin-top:8px">' + completed + ' of ' + interviews.length + ' complete · ' + remaining + ' remaining</div>' +
+      '</div>';
+    
+    // List of teams
+    body += '<div style="background:var(--surface);margin-bottom:14px;max-height:300px;overflow-y:auto">';
+    interviews.forEach((interview, idx) => {
+      const team = this.state.teams[interview.teamId];
+      if (!team) return;
+      let statusText, statusColor;
+      if (interview.completed) {
+        const interest = interview.finalInterest;
+        if (interest >= 80) { statusText = 'HIGH INTEREST'; statusColor = 'var(--success)'; }
+        else if (interest >= 60) { statusText = 'INTERESTED'; statusColor = 'var(--accent)'; }
+        else if (interest >= 40) { statusText = 'NEUTRAL'; statusColor = 'var(--warning)'; }
+        else { statusText = 'COOLED OFF'; statusColor = 'var(--danger)'; }
+      } else {
+        statusText = 'SCHEDULED';
+        statusColor = 'var(--text-muted)';
+      }
+      body += '<div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px">' +
+        '<div style="display:flex;align-items:center;gap:10px;flex:1">' +
+        '<div style="width:3px;height:28px;background:' + team.primary + '"></div>' +
+        '<div><div style="font-weight:600;font-size:13px">' + team.city + ' ' + team.name + '</div>' +
+        '<div class="muted" style="font-size:11px">' + interview.questions.length + ' questions</div></div></div>' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+        '<span style="font-size:9px;letter-spacing:0.5px;font-weight:700;color:' + statusColor + '">' + statusText + '</span>' +
+        (interview.completed
+          ? '<span class="muted" style="font-size:10px">Done</span>'
+          : '<button class="btn btn-sm btn-success" onclick="game._startForcedInterview(' + idx + ')">Begin</button>') +
+        '</div></div>';
+    });
+    body += '</div>';
+    
+    // Action buttons — must complete at least one interview before advancing
+    if (completed === 0) {
+      body += '<div class="muted" style="font-size:11px;text-align:center;margin-bottom:10px">Begin at least one interview to continue to draft day.</div>';
+      body += '<button class="btn" disabled style="width:100%;opacity:0.5">Continue to Draft Day →</button>';
+    } else {
+      const skipBtn = remaining > 0
+        ? '<button class="btn" style="width:48%" onclick="game._advancePreDraftStep(\'awaiting_draft\')">Skip remaining · Draft Day →</button>'
+        : '<button class="btn btn-success" style="width:100%" onclick="game._advancePreDraftStep(\'awaiting_draft\')">Continue to Draft Day →</button>';
+      body += '<div style="display:flex;gap:8px">' + skipBtn + '</div>';
+    }
+    
+    this.showModal('Team interviews · ' + player.name, body);
+  },
+  
+  // Hook for the interview question UI to call when the user clicks "Begin" on a team.
+  // We override the existing startInterview() flow to make sure when the user finishes ALL
+  // interviews, the landing popup re-renders. Otherwise we let the existing flow take over.
+  _startForcedInterview(idx) {
+    const player = this._getDeclaredUserProspect();
+    if (!player) return;
+    // Set up the active interview using the existing system, but mark as "forced" so we
+    // can re-render the landing when done.
+    this._forcedInterviewActive = true;
+    this._activeInterview = { idx, questionIdx: 0, answers: [], player };
+    this._renderForcedInterviewQuestion();
+  },
+  
+  _renderForcedInterviewQuestion() {
+    const ai = this._activeInterview;
+    if (!ai || !ai.player) return;
+    const interview = ai.player.teamInterviews[ai.idx];
+    const team = this.state.teams[interview.teamId];
+    const q = interview.questions[ai.questionIdx];
+    if (!q) {
+      // Done — score the interview and return to landing
+      this._completeForcedInterview();
+      return;
+    }
+    let body = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:12px;border-left:3px solid ' + team.primary + '">' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">QUESTION ' + (ai.questionIdx + 1) + ' OF ' + interview.questions.length + '</div>' +
+      '<div style="margin-top:6px;font-size:14px;line-height:1.5">' + q.prompt + '</div></div>';
+    body += '<div style="display:flex;flex-direction:column;gap:8px">';
+    q.options.forEach((opt, i) => {
+      body += '<button class="btn" style="text-align:left;padding:12px 14px;justify-content:flex-start;line-height:1.4;height:auto;white-space:normal" onclick="game._answerForcedInterviewQuestion(' + i + ')">' + opt.text + '</button>';
+    });
+    body += '</div>';
+    this.showModal('Interview · ' + team.city + ' ' + team.name, body);
+  },
+  
+  _answerForcedInterviewQuestion(optionIdx) {
+    const ai = this._activeInterview;
+    if (!ai) return;
+    const interview = ai.player.teamInterviews[ai.idx];
+    const q = interview.questions[ai.questionIdx];
+    const opt = q.options[optionIdx];
+    ai.answers.push({ questionIdx: ai.questionIdx, optionIdx, effect: opt.effect });
+    ai.questionIdx++;
+    this._renderForcedInterviewQuestion();
+  },
+  
+  _completeForcedInterview() {
+    const ai = this._activeInterview;
+    if (!ai) return;
+    const player = ai.player;
+    const interview = player.teamInterviews[ai.idx];
+    const team = this.state.teams[interview.teamId];
+    
+    // Score: GOOD=+12, NEUTRAL=0, BAD=-10. Base 50.
+    let interest = 50;
+    ai.answers.forEach(a => {
+      if (a.effect === 'GOOD') interest += 12;
+      else if (a.effect === 'BAD') interest -= 10;
+    });
+    interest = Math.max(10, Math.min(95, interest));
+    interview.answers = ai.answers;
+    interview.completed = true;
+    interview.finalInterest = interest;
+    
+    // Cumulative grade impact across all completed interviews (cap ±1.5)
+    const totalCompleted = player.teamInterviews.filter(i => i.completed);
+    const avgInterest = totalCompleted.reduce((s, i) => s + i.finalInterest, 0) / Math.max(1, totalCompleted.length);
+    const gradeBump = ((avgInterest - 50) / 50) * 1.5;
+    if (player._interviewBump !== undefined) {
+      player.prospectGrade -= player._interviewBump;
+    }
+    player._interviewBump = gradeBump;
+    player.prospectGrade = Math.max(40, Math.min(99, player.prospectGrade + gradeBump));
+    
+    // Outcome modal
+    let outcomeText, outcomeColor;
+    if (interest >= 80) { outcomeText = 'STRONG IMPRESSION'; outcomeColor = 'var(--success)'; }
+    else if (interest >= 60) { outcomeText = 'POSITIVE'; outcomeColor = 'var(--accent)'; }
+    else if (interest >= 40) { outcomeText = 'NEUTRAL'; outcomeColor = 'var(--warning)'; }
+    else { outcomeText = 'NEGATIVE'; outcomeColor = 'var(--danger)'; }
+    
+    const goodCount = ai.answers.filter(a => a.effect === 'GOOD').length;
+    const badCount = ai.answers.filter(a => a.effect === 'BAD').length;
+    
+    let body = '<div style="background:var(--surface);padding:18px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:0.6px;font-weight:600;color:var(--text-muted)">INTERVIEW RESULT</div>' +
+      '<div style="font-size:24px;font-weight:700;margin-top:8px;color:' + outcomeColor + '">' + outcomeText + '</div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-top:6px">' + team.city + ' ' + team.name + ' · Interest: ' + interest + '%</div>' +
+      '</div>';
+    
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;text-align:center">' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">STRONG</div><div style="font-size:22px;font-weight:700;color:var(--success)">' + goodCount + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">NEUTRAL</div><div style="font-size:22px;font-weight:700">' + (ai.answers.length - goodCount - badCount) + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">WEAK</div><div style="font-size:22px;font-weight:700;color:var(--danger)">' + badCount + '</div></div>' +
+      '</div>';
+    
+    body += '<div class="muted" style="font-size:12px;text-align:center;margin-bottom:14px">Current draft grade: ' + player.prospectGrade.toFixed(1) + ' (' + (gradeBump > 0 ? '+' : '') + gradeBump.toFixed(2) + ' from interviews)</div>';
+    body += '<button class="btn btn-success" style="width:100%" onclick="game._returnToInterviewsLanding()">Back to interview list →</button>';
+    
+    this.showModal('Interview complete', body);
+    this._activeInterview = null;
+    this.saveGame();
+  },
+  
+  _returnToInterviewsLanding() {
+    const player = this._getDeclaredUserProspect();
+    if (!player) return;
+    this.showInterviewsLandingPopup(player);
+  },
+  
+  // Advance the user to the next step of the forced pre-draft flow.
+  _advancePreDraftStep(nextStep) {
+    const player = this._getDeclaredUserProspect();
+    if (!player) {
+      this.state.career.preDraftFlowActive = false;
+      this._preDraftPopupShown = false;
+      closeModal();
+      this.render();
+      return;
+    }
+    player.preDraftStep = nextStep;
+    this._preDraftPopupShown = false;
+    closeModal();
+    this.saveGame();
+    if (nextStep === 'awaiting_draft' || nextStep === 'interviews') {
+      this.showPreDraftFlow();
+    } else {
+      this.render();
+    }
+  },
+  
+  // STEP 3: Draft anticipation popup — final modal before the user sims into draft day.
+  // Shows their final draft grade + projected slot + which teams have highest interest.
+  // After dismissal, the forced flow is complete. The next sim will trigger the actual draft.
+  showDraftAnticipationPopup(player) {
+    const grade = player.prospectGrade;
+    let projection;
+    if (grade >= 95) projection = 'TOP 5 PICK';
+    else if (grade >= 90) projection = 'TOP 15 PICK';
+    else if (grade >= 85) projection = 'ROUND 1';
+    else if (grade >= 78) projection = 'ROUNDS 1-2';
+    else if (grade >= 72) projection = 'ROUNDS 2-3';
+    else if (grade >= 65) projection = 'ROUNDS 3-5';
+    else if (grade >= 58) projection = 'ROUNDS 5-7';
+    else projection = 'UDFA POSSIBLE';
+    
+    // Top 3 interested teams
+    const interviews = player.teamInterviews || [];
+    const interestSorted = [...interviews].filter(i => i.completed).sort((a, b) => b.finalInterest - a.finalInterest);
+    const topInterested = interestSorted.slice(0, 3);
+    
+    let body = '<div style="background:linear-gradient(135deg,var(--accent),var(--accent-dim,#444));color:#fff;padding:24px 22px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">DRAFT DAY IS NEXT</div>' +
+      '<div style="font-size:24px;font-weight:800;margin-top:10px">' + player.name + '</div>' +
+      '<div style="font-size:13px;opacity:0.92;margin-top:4px">' + player.position + ' · ' + player.school + '</div>' +
+      '<div style="font-size:14px;margin-top:14px;font-weight:600">Final draft grade: ' + grade.toFixed(1) + '</div>' +
+      '<div style="font-size:18px;font-weight:700;margin-top:4px">Projected: ' + projection + '</div>' +
+      '</div>';
+    
+    if (topInterested.length > 0) {
+      body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+        '<div style="font-size:10px;letter-spacing:0.6px;font-weight:600;color:var(--text-muted);margin-bottom:10px">HIGHEST INTEREST</div>';
+      topInterested.forEach(i => {
+        const team = this.state.teams[i.teamId];
+        if (!team) return;
+        body += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12px">' +
+          '<div style="width:3px;height:18px;background:' + team.primary + '"></div>' +
+          '<span style="flex:1"><strong>' + team.city + ' ' + team.name + '</strong></span>' +
+          '<span style="font-family:var(--font-mono);font-weight:600">' + i.finalInterest + '%</span>' +
+          '</div>';
+      });
+      body += '</div>';
+    }
+    
+    body += '<div style="background:var(--surface-2);padding:14px 16px;margin-bottom:14px;font-size:12px;line-height:1.5;color:var(--text-muted);font-style:italic;border-left:2px solid var(--accent)">' +
+      'You\'ve done everything you can. The combine\'s done. The interviews are done. Now it\'s up to the GMs and head coaches. Sim the next week to advance to draft night.' +
+      '</div>';
+    
+    body += '<button class="btn btn-success" style="width:100%" onclick="game._completePreDraftFlow()">I\'m ready · Begin Draft Day</button>';
+    
+    this.showModal('Draft anticipation', body);
+  },
+  
+  // Complete the pre-draft flow — clear the active flag, dismiss modal.
+  _completePreDraftFlow() {
+    const player = this._getDeclaredUserProspect();
+    if (player) player.preDraftStep = null;
+    this.state.career.preDraftFlowActive = false;
+    this._preDraftPopupShown = false;
+    closeModal();
+    this.saveGame();
+    this.render();
   },
 
   // DRAFT NIGHT CELEBRATION — fires when the user player is selected in the NFL Draft.
@@ -15618,10 +16933,13 @@ let game = {
     top25.forEach((t, i) => {
       const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
       const primary = meta ? meta.primary : '#888';
+      // School name click closes the modal and navigates to the school card. Modal must close
+      // first since the modal overlay otherwise sits on top of the school card.
+      const clickHandler = 'closeModal();game.showCollegeCard(\'' + t.abbr + '\')';
       html += '<div style="display:flex;align-items:baseline;gap:8px;padding:3px 0">' +
         '<span style="opacity:0.5;width:22px;text-align:right;font-family:var(--font-mono);font-size:11px">' + (i + 1) + '</span>' +
         '<span style="width:3px;height:11px;background:' + primary + ';display:inline-block;flex-shrink:0"></span>' +
-        '<span style="cursor:pointer;text-decoration:underline;flex:1">' + (meta ? meta.name : t.name) + '</span>' +
+        '<span style="cursor:pointer;text-decoration:underline;flex:1" onclick="' + clickHandler + '">' + (meta ? meta.name : t.name) + '</span>' +
         '<span class="muted" style="font-family:var(--font-mono);font-size:11px">' + t.record + '</span>' +
         '</div>';
     });
@@ -15630,6 +16948,8 @@ let game = {
   },
   
   // Active Heisman race — top 5-6 candidates by current score. Highlight the user if present.
+  // Player names are clickable to the prospect card (modal closes first since the card opens
+  // its own modal).
   _buildPopupHeismanRace(userPlayer) {
     if (typeof this.getHeismanRace !== 'function') return null;
     const race = this.getHeismanRace(6);
@@ -15647,9 +16967,10 @@ let game = {
       else prodStr = (s.receptions || 0) + '-' + (s.recYds || 0).toLocaleString() + '-' + (s.recTDs || 0);
       const schoolMeta = COLLEGE_SCHOOLS.find(sc => sc.abbr === p.school);
       const bg = isUser ? 'background:var(--surface-2);border-left:3px solid var(--accent);padding-left:8px' : '';
+      const nameClick = 'closeModal();game.showProspectCard(\'' + p.id + '\')';
       html += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px;' + bg + '">' +
         '<div><span style="opacity:0.5;font-family:var(--font-mono);width:18px;display:inline-block">' + (i + 1) + '</span> ' +
-        '<strong>' + p.name + '</strong>' + (isUser ? ' <span style="color:var(--accent);font-size:10px;font-weight:700">YOU</span>' : '') + ' ' +
+        '<strong style="cursor:pointer;text-decoration:underline" onclick="' + nameClick + '">' + p.name + '</strong>' + (isUser ? ' <span style="color:var(--accent);font-size:10px;font-weight:700">YOU</span>' : '') + ' ' +
         '<span class="muted">(' + p.position + ', ' + (schoolMeta ? schoolMeta.abbr : p.school) + ')</span></div>' +
         '<div><span style="font-family:var(--font-mono);font-size:11px">' + prodStr + '</span> ' +
         '<span style="font-weight:700;margin-left:8px">' + Math.round(entry.score) + '</span></div>' +
@@ -15660,6 +16981,7 @@ let game = {
   },
   
   // NFL conference/division standings snapshot — bottom section for NFL game popups.
+  // Team names are clickable to the team page (modal closes first).
   _buildPopupNflStandings(userTeamId) {
     const userTeam = this.state.teams[userTeamId];
     if (!userTeam) return null;
@@ -15675,10 +16997,11 @@ let game = {
     divTeams.forEach((t, i) => {
       const isUser = t.id === userTeam.id;
       const bg = isUser ? 'background:var(--surface-2);border-left:3px solid var(--accent);padding-left:8px' : '';
+      const nameClick = 'closeModal();game.showTeam(' + t.id + ')';
       html += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:baseline;font-size:12px;' + bg + '">' +
         '<div><span style="opacity:0.5;font-family:var(--font-mono);width:18px;display:inline-block">' + (i + 1) + '</span> ' +
         '<span style="width:3px;height:11px;background:' + t.primary + ';display:inline-block;vertical-align:middle;margin-right:6px"></span>' +
-        '<strong>' + t.city + ' ' + t.name + '</strong>' + (isUser ? ' <span style="color:var(--accent);font-size:10px;font-weight:700">YOU</span>' : '') + '</div>' +
+        '<strong style="cursor:pointer;text-decoration:underline" onclick="' + nameClick + '">' + t.city + ' ' + t.name + '</strong>' + (isUser ? ' <span style="color:var(--accent);font-size:10px;font-weight:700">YOU</span>' : '') + '</div>' +
         '<div style="font-family:var(--font-mono)">' + t.wins + '-' + t.losses + '</div>' +
         '</div>';
     });
