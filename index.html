@@ -348,7 +348,7 @@ select { font-family: inherit; }
       <div class="user-team-tag" id="userTeamTag" style="display:none">—</div>
     </div>
     <div class="header-actions">
-      <button class="btn" onclick="game.saveGame();alert('Saved to slot ' + (game.activeSlot || 1) + '.');">Save</button>
+      <button class="btn" onclick="game.saveGame(); var s = game.lastSaveStatus(); if (s.error === 'STORAGE_FULL') { alert('Save failed: browser storage is full. Try deleting other save slots or clearing browser data.'); } else if (s.error) { alert('Save failed. See console for details.'); } else { alert('Saved to slot ' + (game.activeSlot || 1) + '. (' + Math.round(s.sizeBytes/1024) + 'KB)'); }">Save</button>
       <button class="btn" onclick="if(confirm('Return to slot picker? Unsaved changes will be lost — click Save first if you want to keep progress.')){game.showSlotPicker();}">Slots</button>
       <button class="btn btn-primary" onclick="game.simWeek()" id="simBtn" style="display:none">Simulate Week →</button>
     </div>
@@ -421,7 +421,7 @@ select { font-family: inherit; }
             <span class="nav-group-chevron">▶</span>
           </div>
           <div class="nav-group-items">
-            <div class="nav-item" data-view="college"><span>Top 25 Teams</span></div>
+            <div class="nav-item" data-view="collegetop25"><span>Top 25 Teams</span></div>
             <div class="nav-item" data-view="prospects"><span>Top 100 Prospects</span></div>
             <div class="nav-item" data-view="collegehistory"><span>College History</span></div>
             <div class="nav-item" data-view="collegehof"><span>College HOF</span></div>
@@ -781,67 +781,142 @@ function getEffectiveAging(position, archetype, peakOvr) {
 // Range: 60 (mid-major) to 95 (blue blood). Tweaked each year.
 // ============================================================
 const COLLEGE_SCHOOLS = [
-  // Blue bloods (90-95) — perennial top-10
-  { name: 'Alabama', abbr: 'ALA', primary: '#9E1B32', prestige: 95 },
-  { name: 'Georgia', abbr: 'UGA', primary: '#BA0C2F', prestige: 94 },
-  { name: 'Ohio State', abbr: 'OSU', primary: '#BB0000', prestige: 93 },
-  { name: 'Michigan', abbr: 'MICH', primary: '#00274C', prestige: 91 },
-  { name: 'Texas', abbr: 'TEX', primary: '#BF5700', prestige: 90 },
-  { name: 'LSU', abbr: 'LSU', primary: '#461D7C', prestige: 90 },
-  // Elite (85-89) — usually top-15
-  { name: 'Oklahoma', abbr: 'OU', primary: '#841617', prestige: 87 },
-  { name: 'Notre Dame', abbr: 'ND', primary: '#0C2340', prestige: 87 },
-  { name: 'Penn State', abbr: 'PSU', primary: '#041E42', prestige: 86 },
-  { name: 'Clemson', abbr: 'CLEM', primary: '#F66733', prestige: 86 },
-  { name: 'Oregon', abbr: 'ORE', primary: '#154733', prestige: 85 },
-  { name: 'USC', abbr: 'USC', primary: '#990000', prestige: 85 },
-  // Strong (78-84) — bowl regulars
-  { name: 'Florida', abbr: 'FLA', primary: '#0021A5', prestige: 83 },
-  { name: 'Tennessee', abbr: 'TENN', primary: '#FF8200', prestige: 82 },
-  { name: 'Miami', abbr: 'MIA', primary: '#F47321', prestige: 81 },
-  { name: 'Texas A&M', abbr: 'TAMU', primary: '#500000', prestige: 81 },
-  { name: 'Florida State', abbr: 'FSU', primary: '#782F40', prestige: 80 },
-  { name: 'Auburn', abbr: 'AUB', primary: '#0C2340', prestige: 80 },
-  { name: 'Ole Miss', abbr: 'MISS', primary: '#CE1126', prestige: 79 },
-  { name: 'Wisconsin', abbr: 'WIS', primary: '#C5050C', prestige: 78 },
-  // Mid-tier (72-77)
-  { name: 'Iowa', abbr: 'IOWA', primary: '#FFCD00', prestige: 76 },
-  { name: 'Utah', abbr: 'UTAH', primary: '#CC0000', prestige: 76 },
-  { name: 'Washington', abbr: 'WASH', primary: '#4B2E83', prestige: 76 },
-  { name: 'Kentucky', abbr: 'UK', primary: '#0033A0', prestige: 75 },
-  { name: 'NC State', abbr: 'NCST', primary: '#CC0000', prestige: 74 },
-  { name: 'Michigan State', abbr: 'MSU', primary: '#18453B', prestige: 74 },
-  { name: 'Arkansas', abbr: 'ARK', primary: '#9D2235', prestige: 74 },
-  { name: 'Louisville', abbr: 'LOU', primary: '#AD0000', prestige: 73 },
-  { name: 'Mississippi State', abbr: 'MSST', primary: '#660000', prestige: 73 },
-  { name: 'Pittsburgh', abbr: 'PITT', primary: '#003594', prestige: 73 },
-  { name: 'Texas Tech', abbr: 'TTU', primary: '#CC0000', prestige: 72 },
-  { name: 'Iowa State', abbr: 'ISU', primary: '#C8102E', prestige: 72 },
-  // Solid (68-71)
-  { name: 'Minnesota', abbr: 'MINN', primary: '#7A0019', prestige: 71 },
-  { name: 'Cincinnati', abbr: 'CINN', primary: '#E00122', prestige: 71 },
-  { name: 'North Carolina', abbr: 'UNC', primary: '#7BAFD4', prestige: 70 },
-  { name: 'Baylor', abbr: 'BAY', primary: '#003015', prestige: 70 },
-  { name: 'TCU', abbr: 'TCU', primary: '#4D1979', prestige: 70 },
-  { name: 'Maryland', abbr: 'MD', primary: '#E03A3E', prestige: 69 },
-  { name: 'Boston College', abbr: 'BC', primary: '#8A100B', prestige: 69 },
-  { name: 'West Virginia', abbr: 'WVU', primary: '#002855', prestige: 69 },
-  { name: 'Virginia Tech', abbr: 'VT', primary: '#630031', prestige: 68 },
-  { name: 'South Carolina', abbr: 'SCAR', primary: '#73000A', prestige: 68 },
-  // Below average (62-67) — UVA starts here for the easter egg
-  { name: 'Virginia', abbr: 'UVA', primary: '#232D4B', prestige: 62, risingProgram: true },
-  { name: 'Duke', abbr: 'DUKE', primary: '#003087', prestige: 65 },
-  { name: 'Vanderbilt', abbr: 'VAN', primary: '#866D4B', prestige: 62 },
-  { name: 'Indiana', abbr: 'IND', primary: '#990000', prestige: 64 },
-  { name: 'Illinois', abbr: 'ILL', primary: '#13294B', prestige: 65 },
-  { name: 'Purdue', abbr: 'PUR', primary: '#CEB888', prestige: 65 },
-  { name: 'Stanford', abbr: 'STAN', primary: '#8C1515', prestige: 66 },
-  { name: 'California', abbr: 'CAL', primary: '#003262', prestige: 65 },
-  { name: 'Arizona State', abbr: 'ASU', primary: '#8C1D40', prestige: 67 },
-  { name: 'Arizona', abbr: 'ARIZ', primary: '#003366', prestige: 65 },
-  { name: 'Kansas State', abbr: 'KSU', primary: '#512888', prestige: 67 },
-  { name: 'Houston', abbr: 'HOU', primary: '#C8102E', prestige: 66 }
+  // ============ SEC ============
+  { name: 'Alabama', abbr: 'ALA', primary: '#9E1B32', prestige: 95, conference: 'SEC' },
+  { name: 'Georgia', abbr: 'UGA', primary: '#BA0C2F', prestige: 94, conference: 'SEC' },
+  { name: 'LSU', abbr: 'LSU', primary: '#461D7C', prestige: 90, conference: 'SEC' },
+  { name: 'Texas', abbr: 'TEX', primary: '#BF5700', prestige: 90, conference: 'SEC' },
+  { name: 'Oklahoma', abbr: 'OU', primary: '#841617', prestige: 87, conference: 'SEC' },
+  { name: 'Tennessee', abbr: 'TENN', primary: '#FF8200', prestige: 82, conference: 'SEC' },
+  { name: 'Texas A&M', abbr: 'TAMU', primary: '#500000', prestige: 81, conference: 'SEC' },
+  { name: 'Florida', abbr: 'FLA', primary: '#0021A5', prestige: 83, conference: 'SEC' },
+  { name: 'Auburn', abbr: 'AUB', primary: '#0C2340', prestige: 80, conference: 'SEC' },
+  { name: 'Ole Miss', abbr: 'MISS', primary: '#CE1126', prestige: 79, conference: 'SEC' },
+  { name: 'Arkansas', abbr: 'ARK', primary: '#9D2235', prestige: 74, conference: 'SEC' },
+  { name: 'Mississippi State', abbr: 'MSST', primary: '#660000', prestige: 73, conference: 'SEC' },
+  { name: 'Kentucky', abbr: 'UK', primary: '#0033A0', prestige: 75, conference: 'SEC' },
+  { name: 'Missouri', abbr: 'MIZ', primary: '#F1B82D', prestige: 72, conference: 'SEC' },
+  { name: 'South Carolina', abbr: 'SCAR', primary: '#73000A', prestige: 68, conference: 'SEC' },
+  { name: 'Vanderbilt', abbr: 'VAN', primary: '#866D4B', prestige: 62, conference: 'SEC' },
+  
+  // ============ Big Ten ============
+  { name: 'Ohio State', abbr: 'OSU', primary: '#BB0000', prestige: 93, conference: 'B10' },
+  { name: 'Michigan', abbr: 'MICH', primary: '#00274C', prestige: 91, conference: 'B10' },
+  { name: 'Penn State', abbr: 'PSU', primary: '#041E42', prestige: 86, conference: 'B10' },
+  { name: 'USC', abbr: 'USC', primary: '#990000', prestige: 85, conference: 'B10' },
+  { name: 'Oregon', abbr: 'ORE', primary: '#154733', prestige: 85, conference: 'B10' },
+  { name: 'Wisconsin', abbr: 'WIS', primary: '#C5050C', prestige: 78, conference: 'B10' },
+  { name: 'Iowa', abbr: 'IOWA', primary: '#FFCD00', prestige: 76, conference: 'B10' },
+  { name: 'Washington', abbr: 'WASH', primary: '#4B2E83', prestige: 76, conference: 'B10' },
+  { name: 'Michigan State', abbr: 'MSU', primary: '#18453B', prestige: 74, conference: 'B10' },
+  { name: 'UCLA', abbr: 'UCLA', primary: '#2D68C4', prestige: 71, conference: 'B10' },
+  { name: 'Minnesota', abbr: 'MINN', primary: '#7A0019', prestige: 71, conference: 'B10' },
+  { name: 'Maryland', abbr: 'MD', primary: '#E03A3E', prestige: 69, conference: 'B10' },
+  { name: 'Illinois', abbr: 'ILL', primary: '#13294B', prestige: 65, conference: 'B10' },
+  { name: 'Indiana', abbr: 'IND', primary: '#990000', prestige: 64, conference: 'B10' },
+  { name: 'Purdue', abbr: 'PUR', primary: '#CEB888', prestige: 65, conference: 'B10' },
+  { name: 'Nebraska', abbr: 'NEB', primary: '#E41C38', prestige: 68, conference: 'B10' },
+  { name: 'Northwestern', abbr: 'NW', primary: '#4E2A84', prestige: 62, conference: 'B10' },
+  { name: 'Rutgers', abbr: 'RUT', primary: '#CC0033', prestige: 60, conference: 'B10' },
+  
+  // ============ ACC ============
+  { name: 'Clemson', abbr: 'CLEM', primary: '#F66733', prestige: 86, conference: 'ACC' },
+  { name: 'Miami', abbr: 'MIA', primary: '#F47321', prestige: 81, conference: 'ACC' },
+  { name: 'Florida State', abbr: 'FSU', primary: '#782F40', prestige: 80, conference: 'ACC' },
+  { name: 'NC State', abbr: 'NCST', primary: '#CC0000', prestige: 74, conference: 'ACC' },
+  { name: 'Louisville', abbr: 'LOU', primary: '#AD0000', prestige: 73, conference: 'ACC' },
+  { name: 'Pittsburgh', abbr: 'PITT', primary: '#003594', prestige: 73, conference: 'ACC' },
+  { name: 'North Carolina', abbr: 'UNC', primary: '#7BAFD4', prestige: 70, conference: 'ACC' },
+  { name: 'Virginia Tech', abbr: 'VT', primary: '#630031', prestige: 68, conference: 'ACC' },
+  { name: 'Boston College', abbr: 'BC', primary: '#8A100B', prestige: 69, conference: 'ACC' },
+  { name: 'Wake Forest', abbr: 'WAKE', primary: '#9E7E38', prestige: 67, conference: 'ACC' },
+  { name: 'Duke', abbr: 'DUKE', primary: '#003087', prestige: 65, conference: 'ACC' },
+  { name: 'Syracuse', abbr: 'SYR', primary: '#F76900', prestige: 64, conference: 'ACC' },
+  { name: 'Georgia Tech', abbr: 'GT', primary: '#B3A369', prestige: 65, conference: 'ACC' },
+  { name: 'Virginia', abbr: 'UVA', primary: '#232D4B', prestige: 62, risingProgram: true, conference: 'ACC' },
+  { name: 'Stanford', abbr: 'STAN', primary: '#8C1515', prestige: 66, conference: 'ACC' },
+  { name: 'California', abbr: 'CAL', primary: '#003262', prestige: 65, conference: 'ACC' },
+  { name: 'SMU', abbr: 'SMU', primary: '#C8102E', prestige: 67, conference: 'ACC' },
+  
+  // ============ Big 12 ============
+  { name: 'Utah', abbr: 'UTAH', primary: '#CC0000', prestige: 76, conference: 'B12' },
+  { name: 'Kansas State', abbr: 'KSU', primary: '#512888', prestige: 67, conference: 'B12' },
+  { name: 'Texas Tech', abbr: 'TTU', primary: '#CC0000', prestige: 72, conference: 'B12' },
+  { name: 'Iowa State', abbr: 'ISU', primary: '#C8102E', prestige: 72, conference: 'B12' },
+  { name: 'Baylor', abbr: 'BAY', primary: '#003015', prestige: 70, conference: 'B12' },
+  { name: 'TCU', abbr: 'TCU', primary: '#4D1979', prestige: 70, conference: 'B12' },
+  { name: 'Cincinnati', abbr: 'CINN', primary: '#E00122', prestige: 71, conference: 'B12' },
+  { name: 'West Virginia', abbr: 'WVU', primary: '#002855', prestige: 69, conference: 'B12' },
+  { name: 'Houston', abbr: 'HOU', primary: '#C8102E', prestige: 66, conference: 'B12' },
+  { name: 'UCF', abbr: 'UCF', primary: '#000000', prestige: 68, conference: 'B12' },
+  { name: 'Arizona State', abbr: 'ASU', primary: '#8C1D40', prestige: 67, conference: 'B12' },
+  { name: 'Arizona', abbr: 'ARIZ', primary: '#003366', prestige: 65, conference: 'B12' },
+  { name: 'Colorado', abbr: 'COL', primary: '#CFB87C', prestige: 68, conference: 'B12' },
+  { name: 'BYU', abbr: 'BYU', primary: '#002E5D', prestige: 67, conference: 'B12' },
+  { name: 'Oklahoma State', abbr: 'OKST', primary: '#FF7300', prestige: 71, conference: 'B12' },
+  { name: 'Kansas', abbr: 'KU', primary: '#0051BA', prestige: 62, conference: 'B12' },
+  
+  // ============ Notre Dame (Indep) ============
+  { name: 'Notre Dame', abbr: 'ND', primary: '#0C2340', prestige: 87, conference: 'IND' },
+  
+  // ============ AAC ============
+  { name: 'Memphis', abbr: 'MEM', primary: '#003087', prestige: 64, conference: 'AAC' },
+  { name: 'Tulane', abbr: 'TUL', primary: '#418FDE', prestige: 63, conference: 'AAC' },
+  { name: 'South Florida', abbr: 'USF', primary: '#006747', prestige: 60, conference: 'AAC' },
+  { name: 'Navy', abbr: 'NAVY', primary: '#00205B', prestige: 62, conference: 'AAC' },
+  { name: 'Army', abbr: 'ARMY', primary: '#000000', prestige: 60, conference: 'AAC' },
+  { name: 'East Carolina', abbr: 'ECU', primary: '#592A8A', prestige: 58, conference: 'AAC' },
+  { name: 'Tulsa', abbr: 'TLSA', primary: '#002D72', prestige: 56, conference: 'AAC' },
+  { name: 'Temple', abbr: 'TEM', primary: '#9D2235', prestige: 55, conference: 'AAC' },
+  
+  // ============ Mountain West ============
+  { name: 'Boise State', abbr: 'BOIS', primary: '#0033A0', prestige: 68, conference: 'MW' },
+  { name: 'Air Force', abbr: 'AF', primary: '#003087', prestige: 62, conference: 'MW' },
+  { name: 'San Diego State', abbr: 'SDST', primary: '#A6192E', prestige: 60, conference: 'MW' },
+  { name: 'Fresno State', abbr: 'FRES', primary: '#DB0032', prestige: 61, conference: 'MW' },
+  { name: 'Wyoming', abbr: 'WYO', primary: '#492F24', prestige: 56, conference: 'MW' },
+  { name: 'Colorado State', abbr: 'CSU', primary: '#1E4D2B', prestige: 56, conference: 'MW' },
+  { name: 'UNLV', abbr: 'UNLV', primary: '#CF0A2C', prestige: 55, conference: 'MW' },
+  { name: 'Hawaii', abbr: 'HAW', primary: '#024731', prestige: 54, conference: 'MW' },
+  
+  // ============ Sun Belt ============
+  { name: 'James Madison', abbr: 'JMU', primary: '#450084', prestige: 60, conference: 'SBC' },
+  { name: 'Appalachian State', abbr: 'APP', primary: '#000000', prestige: 62, conference: 'SBC' },
+  { name: 'Coastal Carolina', abbr: 'CCAR', primary: '#006F71', prestige: 58, conference: 'SBC' },
+  { name: 'Troy', abbr: 'TROY', primary: '#8A2432', prestige: 56, conference: 'SBC' },
+  { name: 'Marshall', abbr: 'MAR', primary: '#00B140', prestige: 58, conference: 'SBC' },
+  { name: 'South Alabama', abbr: 'SALA', primary: '#00205B', prestige: 54, conference: 'SBC' },
+  { name: 'Old Dominion', abbr: 'ODU', primary: '#003057', prestige: 53, conference: 'SBC' },
+  { name: 'Georgia Southern', abbr: 'GSOU', primary: '#011E41', prestige: 54, conference: 'SBC' },
+  
+  // ============ MAC ============
+  { name: 'Toledo', abbr: 'TOL', primary: '#15397F', prestige: 56, conference: 'MAC' },
+  { name: 'Ohio', abbr: 'OHIO', primary: '#00694E', prestige: 55, conference: 'MAC' },
+  { name: 'Northern Illinois', abbr: 'NIU', primary: '#CC0000', prestige: 54, conference: 'MAC' },
+  { name: 'Buffalo', abbr: 'BUFF', primary: '#005BBB', prestige: 52, conference: 'MAC' },
+  { name: 'Miami (OH)', abbr: 'MOH', primary: '#B61E2E', prestige: 53, conference: 'MAC' },
+  { name: 'Western Michigan', abbr: 'WMU', primary: '#6C4023', prestige: 52, conference: 'MAC' },
+  
+  // ============ Conference USA ============
+  { name: 'Liberty', abbr: 'LIB', primary: '#990000', prestige: 60, conference: 'CUSA' },
+  { name: 'Western Kentucky', abbr: 'WKU', primary: '#C60C30', prestige: 54, conference: 'CUSA' },
+  { name: 'UTSA', abbr: 'UTSA', primary: '#0C2340', prestige: 56, conference: 'CUSA' },
+  { name: 'New Mexico State', abbr: 'NMST', primary: '#891216', prestige: 50, conference: 'CUSA' }
 ];
+
+// Conference display info (for standings/UI)
+const COLLEGE_CONFERENCES = {
+  'SEC': { name: 'SEC', tier: 'P5' },
+  'B10': { name: 'Big Ten', tier: 'P5' },
+  'ACC': { name: 'ACC', tier: 'P5' },
+  'B12': { name: 'Big 12', tier: 'P5' },
+  'IND': { name: 'Independent', tier: 'P5' },
+  'AAC': { name: 'American', tier: 'G5' },
+  'MW':  { name: 'Mountain West', tier: 'G5' },
+  'SBC': { name: 'Sun Belt', tier: 'G5' },
+  'MAC': { name: 'MAC', tier: 'G5' },
+  'CUSA':{ name: 'Conference USA', tier: 'G5' }
+};
 
 const COLLEGE_YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior'];
 
@@ -1248,7 +1323,10 @@ let game = {
           playerCareerNav.innerHTML =
             '<div class="nav-title">Your Career</div>' +
             '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>' +
-            '<div class="nav-item" data-view="myschool"><span class="nav-icon">▲</span><span>My School</span></div>';
+            '<div class="nav-item" data-view="myschool"><span class="nav-icon">▲</span><span>My School</span></div>' +
+            '<div class="nav-item" data-view="myschoolschedule"><span class="nav-icon">▣</span><span>Schedule</span></div>' +
+            '<div class="nav-item" data-view="myschoolstandings"><span class="nav-icon">≡</span><span>Standings</span></div>' +
+            '<div class="nav-item" data-view="collegeplayoffs"><span class="nav-icon">◆</span><span>Playoff Picture</span></div>';
         } else if (userPlayer && stage === 'declared') {
           playerCareerNav.innerHTML =
             '<div class="nav-title">Your Career</div>' +
@@ -1489,6 +1567,7 @@ let game = {
       this.generateAllPlayers();
       this.generatePlayerFAPool();
       this.generateSchedule();
+      this.generateCollegeSchedule();
       this.addHeadline({ title:'2026 season kicks off', body:'A new league begins in present day. Salary cap: ' + formatMoney(getSalaryCap(2026)) + '.' });
       document.getElementById('simBtn').style.display = '';
       this.updateUserTag();
@@ -2505,9 +2584,17 @@ let game = {
     const injuryProneness = this.rollInjuryProneness();
     // Injury-prone reduces grade slightly: from 50 baseline, every +10 proneness costs ~0.4 grade.
     // Iron-man players (low proneness) get a small bump.
-    const adjustedGrade = grade - (injuryProneness - 50) * 0.04;
+    let adjustedGrade = grade - (injuryProneness - 50) * 0.04;
+    // Position discount for specialists: real NFL draft boards almost never have K/P in top 100.
+    // Knock their grade so they sort below skill-position players of similar raw ability.
+    if (position === 'K' || position === 'P') {
+      adjustedGrade -= 20;
+    }
+    // Compact ID: per-state counter scales much smaller than full-entropy UUID-style strings.
+    if (this.state.prospectIdCounter === undefined) this.state.prospectIdCounter = 0;
+    this.state.prospectIdCounter++;
     return {
-      id: 'prospect_' + Math.random().toString(36).slice(2, 11) + '_' + Date.now() + '_' + Math.floor(Math.random() * 100000),
+      id: 'cp_' + this.state.prospectIdCounter,
       name: this.generateName(this.state.year),
       school: this.pickSchoolWeightedByPrestige(grade),
       position,
@@ -2526,24 +2613,63 @@ let game = {
     return Math.round(25 + roll * 65); // 25-90 range
   },
 
-  // Seed initial college prospect pool: ~120 prospects across all 4 class years
+  // Per-school roster composition (matches NFL — easier for analytics & UI consistency)
+  COLLEGE_ROSTER_COMPOSITION: {
+    QB: 3, RB: 4, WR: 7, TE: 3,
+    OT: 3, OG: 4, C: 2,
+    EDGE: 4, DT: 3, LB: 8, CB: 6, S: 4,
+    K: 1, P: 1
+  },
+
+  // Seed initial college player pool: every school gets a 53-player roster (102 × 53 ≈ 5,400 players).
+  // Each school's players are graded relative to school prestige — top schools have higher-grade rosters.
+  // This replaces the old 120-player random pool with full per-school depth.
   generateCollegeProspectPool() {
     if (!this.state.collegeProspects) this.state.collegeProspects = [];
-    const positions = POSITIONS_FOR_DRAFT;
-    // 30 prospects per class year × 4 years = 120 total
-    // Generate a realistic distribution: most prospects 55-80, some elite 85-99
-    COLLEGE_YEARS.forEach(yearLabel => {
-      for (let i = 0; i < 30; i++) {
-        const pos = positions[Math.floor(Math.random() * positions.length)];
-        // Roll grade with realistic distribution
-        let grade;
-        const r = Math.random();
-        if (r < 0.05) grade = 92 + Math.random() * 8;  // 5% elite (92-99.9)
-        else if (r < 0.20) grade = 82 + Math.random() * 10; // 15% great (82-92)
-        else if (r < 0.50) grade = 70 + Math.random() * 12; // 30% solid (70-82)
-        else grade = 50 + Math.random() * 20; // 50% mid (50-70)
-        this.state.collegeProspects.push(this.generateProspect(yearLabel, pos, grade));
-      }
+    const composition = this.COLLEGE_ROSTER_COMPOSITION;
+    
+    COLLEGE_SCHOOLS.forEach(school => {
+      const prestige = school.prestige; // 50-95 range
+      
+      // Build a 53-player roster for this school
+      Object.entries(composition).forEach(([position, count]) => {
+        for (let i = 0; i < count; i++) {
+          // Class year — roughly 25% freshman, 25% sophomore, 25% junior, 25% senior
+          // Slight bias toward upperclassmen for starters (i < 2 in depth chart)
+          let year;
+          const yearRoll = Math.random();
+          if (i < 1) {
+            // Starter — bias toward jr/sr (more experienced)
+            year = yearRoll < 0.40 ? 'Senior' : yearRoll < 0.75 ? 'Junior' : yearRoll < 0.90 ? 'Sophomore' : 'Freshman';
+          } else if (i < count / 2) {
+            // Mid-depth — balanced
+            year = COLLEGE_YEARS[Math.floor(Math.random() * 4)];
+          } else {
+            // Depth — bias toward freshman/sophomore
+            year = yearRoll < 0.40 ? 'Freshman' : yearRoll < 0.75 ? 'Sophomore' : yearRoll < 0.90 ? 'Junior' : 'Senior';
+          }
+          
+          // Grade: anchored to school prestige with depth-chart penalty
+          // Starter (i === 0): prestige ± 8. Each step down depth chart loses 2-3 grade points.
+          // This produces rosters where top schools have ~90 starters and ~75 backups,
+          // and lower-tier schools have ~70 starters and ~50 backups.
+          const depthPenalty = i * 2.5;
+          const noise = (Math.random() - 0.5) * 14; // ±7 random variance
+          let grade = prestige + noise - depthPenalty;
+          
+          // Class-year adjustment — seniors are slightly more developed, freshmen less so
+          if (year === 'Senior') grade += 2;
+          else if (year === 'Junior') grade += 0.5;
+          else if (year === 'Freshman') grade -= 2.5;
+          
+          // Clamp to realistic college range
+          grade = Math.max(40, Math.min(99, grade));
+          
+          const prospect = this.generateProspect(year, position, grade);
+          prospect.school = school.abbr; // override the prestige-weighted picker — we want THIS school
+          this.state.collegeProspects.push(prospect);
+        }
+      });
     });
   },
 
@@ -2635,19 +2761,38 @@ let game = {
     const gradIds = new Set(graduates.map(g => g.id));
     this.state.collegeProspects = this.state.collegeProspects.filter(p => !gradIds.has(p.id));
     
-    // ===== NEW FRESHMAN CLASS =====
-    // Distribution: more elite prospects go to elite schools (handled via pickSchoolWeightedByPrestige)
-    const positions = POSITIONS_FOR_DRAFT;
-    for (let i = 0; i < 30; i++) {
-      const pos = positions[Math.floor(Math.random() * positions.length)];
-      let grade;
-      const r = Math.random();
-      if (r < 0.05) grade = 92 + Math.random() * 8;
-      else if (r < 0.20) grade = 82 + Math.random() * 10;
-      else if (r < 0.50) grade = 70 + Math.random() * 12;
-      else grade = 50 + Math.random() * 20;
-      this.state.collegeProspects.push(this.generateProspect('Freshman', pos, grade));
-    }
+    // ===== NEW FRESHMAN CLASS — refill each school back toward 53-player roster =====
+    // After graduation, each school is short ~13-16 players. Add new freshmen of matching
+    // positions to bring each roster back to ~53. Freshman grade is anchored to school prestige
+    // (top schools recruit better — same logic as initial pool generation).
+    const composition = this.COLLEGE_ROSTER_COMPOSITION;
+    COLLEGE_SCHOOLS.forEach(school => {
+      const prestige = (this.state.collegePrestige && this.state.collegePrestige[school.abbr] !== undefined)
+        ? this.state.collegePrestige[school.abbr]
+        : school.prestige;
+      // Per-position count currently at this school
+      const currentByPos = {};
+      this.state.collegeProspects.filter(p => p.school === school.abbr).forEach(p => {
+        currentByPos[p.position] = (currentByPos[p.position] || 0) + 1;
+      });
+      // Fill any position deficit with freshmen
+      Object.entries(composition).forEach(([position, target]) => {
+        const have = currentByPos[position] || 0;
+        const need = Math.max(0, target - have);
+        for (let i = 0; i < need; i++) {
+          // Freshman grade: school prestige ± 8, with a depth penalty
+          // The "depth slot" they're filling matters less for freshmen — they're at the bottom
+          // by default, so apply a depth penalty similar to the bottom of the roster.
+          const noise = (Math.random() - 0.5) * 14;
+          const depthPenalty = (have + i) * 1.5;
+          let grade = prestige + noise - depthPenalty - 2.5; // -2.5 for being a freshman
+          grade = Math.max(40, Math.min(99, grade));
+          const fresh = this.generateProspect('Freshman', position, grade);
+          fresh.school = school.abbr;
+          this.state.collegeProspects.push(fresh);
+        }
+      });
+    });
     
     // Stash graduates for the upcoming draft
     this.state.pendingDraftClass = graduates;
@@ -2656,33 +2801,55 @@ let game = {
   },
 
   simCollegeSeason() {
-    // Strength based on dynamic prestige + season noise.
-    // Top schools (prestige 90+) reliably win ~10-12 games; lower tiers more variable.
+    // PRIORITY PATH: if weekly sim ran, use the accumulated standings. Otherwise fall back to
+    // the legacy single-shot sim (used for very early-game state before weekly sim is initialized).
     const prestigeMap = this.state.collegePrestige || {};
-    const schools = COLLEGE_SCHOOLS.map(s => {
-      const currentPrestige = prestigeMap[s.abbr] !== undefined ? prestigeMap[s.abbr] : s.prestige;
-      // Strength = prestige with seasonal noise (±10)
-      const strength = currentPrestige + (Math.random() - 0.5) * 20;
-      return {
-        abbr: s.abbr,
-        name: s.name,
-        primary: s.primary,
-        prestige: currentPrestige,
-        strength,
-        wins: 0, losses: 0
-      };
-    });
+    let schools;
+    const haveWeeklyData = this.state.collegeStandings && Object.keys(this.state.collegeStandings).length > 0
+                          && Object.values(this.state.collegeStandings).some(s => s.wins + s.losses > 0);
     
-    // Each school plays 12 games against a mix of opponents weighted toward similar prestige
-    schools.forEach(s => {
-      for (let i = 0; i < 12; i++) {
-        const opp = schools[Math.floor(Math.random() * schools.length)];
-        if (opp.abbr === s.abbr) continue;
-        const winProb = s.strength / (s.strength + opp.strength);
-        if (Math.random() < winProb) s.wins++;
-      }
-      s.losses = 12 - s.wins;
-    });
+    if (haveWeeklyData) {
+      // Build schools array from accumulated weekly standings
+      schools = COLLEGE_SCHOOLS.map(s => {
+        const st = this.state.collegeStandings[s.abbr] || { wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0 };
+        const currentPrestige = prestigeMap[s.abbr] !== undefined ? prestigeMap[s.abbr] : s.prestige;
+        const pointDiff = st.pointsFor - st.pointsAgainst;
+        // Strength = prestige + pointDiff (success indicator) — used for tiebreaks & playoff seeding
+        const strength = currentPrestige + pointDiff * 0.05;
+        return {
+          abbr: s.abbr,
+          name: s.name,
+          primary: s.primary,
+          prestige: currentPrestige,
+          strength,
+          wins: st.wins,
+          losses: st.losses
+        };
+      });
+    } else {
+      // Legacy fallback: single-shot sim
+      schools = COLLEGE_SCHOOLS.map(s => {
+        const currentPrestige = prestigeMap[s.abbr] !== undefined ? prestigeMap[s.abbr] : s.prestige;
+        const strength = currentPrestige + (Math.random() - 0.5) * 10;
+        return {
+          abbr: s.abbr,
+          name: s.name,
+          primary: s.primary,
+          prestige: currentPrestige,
+          strength,
+          wins: 0, losses: 0
+        };
+      });
+      schools.forEach(s => {
+        for (let i = 0; i < 12; i++) {
+          const opp = schools[Math.floor(Math.random() * schools.length)];
+          if (opp.abbr === s.abbr) continue;
+          const winProb = s.strength / (s.strength + opp.strength);
+          if (Math.random() < winProb) s.wins++;
+        }
+        s.losses = 12 - s.wins;
+      });
+    }
     schools.sort((a, b) => b.wins - a.wins || b.strength - a.strength);
     
     const top4 = schools.slice(0, 4);
@@ -2763,7 +2930,274 @@ let game = {
     return { name: this.generateName(this.state.year), school: school.abbr, position: 'QB' };
   },
 
-  // Update college HOF with top 25 grades of all time. Tracks prospect, NFL career so far.
+  // ============================================================
+  // COLLEGE WEEKLY SIM — runs in parallel with NFL weekly sim
+  // ============================================================
+  // College season: 12 weeks regular season + conference championships (week 13) + playoffs (14-15) + title (16)
+  // For now: 12 weeks regular season. Bowl/playoff structure added later.
+  COLLEGE_SEASON_WEEKS: 12,
+
+  // Generate a 12-game schedule for every school. 8 conference + 4 non-conf is typical CFB.
+  // For mid-tier conferences with <8 teams, we fill with non-conf matchups.
+  generateCollegeSchedule() {
+    const schedule = []; // array of { week, home, away, played, homeScore, awayScore, topPerformers }
+    const schools = COLLEGE_SCHOOLS;
+    const byConference = {};
+    schools.forEach(s => {
+      if (!byConference[s.conference]) byConference[s.conference] = [];
+      byConference[s.conference].push(s);
+    });
+    
+    // Track each school's scheduled opponents to prevent duplicates
+    const scheduled = {}; // abbr -> Set of opponent abbrs
+    schools.forEach(s => scheduled[s.abbr] = new Set());
+    
+    // Per-week games tracker (each school plays at most 1 game per week)
+    const weeklyGames = {}; // week -> Set of abbrs playing
+    for (let w = 1; w <= this.COLLEGE_SEASON_WEEKS; w++) weeklyGames[w] = new Set();
+    
+    // Helper: try to add a game at any available week. Returns true if scheduled.
+    const tryScheduleGame = (a, b) => {
+      if (scheduled[a].has(b)) return false; // already played each other
+      // Find a week where both are free
+      for (let w = 1; w <= this.COLLEGE_SEASON_WEEKS; w++) {
+        if (!weeklyGames[w].has(a) && !weeklyGames[w].has(b)) {
+          // Random home/away
+          const homeIsA = Math.random() < 0.5;
+          schedule.push({
+            week: w,
+            home: homeIsA ? a : b,
+            away: homeIsA ? b : a,
+            played: false,
+            homeScore: 0,
+            awayScore: 0,
+            isConference: COLLEGE_SCHOOLS.find(s => s.abbr === a).conference === COLLEGE_SCHOOLS.find(s => s.abbr === b).conference
+          });
+          weeklyGames[w].add(a);
+          weeklyGames[w].add(b);
+          scheduled[a].add(b);
+          scheduled[b].add(a);
+          return true;
+        }
+      }
+      return false;
+    };
+    
+    // PASS 1: Conference round-robin (or partial round-robin for big conferences)
+    // Target 8 conference games per school where possible.
+    Object.entries(byConference).forEach(([conf, members]) => {
+      const TARGET_CONF_GAMES = Math.min(8, members.length - 1);
+      // Shuffle members for fairness
+      const shuffled = members.slice().sort(() => Math.random() - 0.5);
+      // Each school plays the next N members in the shuffled list (cyclic)
+      shuffled.forEach((a, i) => {
+        // Try to fill up to TARGET_CONF_GAMES
+        let count = 0;
+        let offset = 1;
+        while (count < TARGET_CONF_GAMES && offset < shuffled.length) {
+          const b = shuffled[(i + offset) % shuffled.length];
+          if (b.abbr !== a.abbr && tryScheduleGame(a.abbr, b.abbr)) count++;
+          offset++;
+        }
+      });
+    });
+    
+    // PASS 2: Fill non-conference games. Each school targets 12 total games.
+    const TARGET_TOTAL = 12;
+    schools.forEach(school => {
+      const current = scheduled[school.abbr].size;
+      const need = TARGET_TOTAL - current;
+      let attempts = 0;
+      let added = 0;
+      while (added < need && attempts < 50) {
+        attempts++;
+        // Pick a random opponent from any conference (avoid same school)
+        const opp = schools[Math.floor(Math.random() * schools.length)];
+        if (opp.abbr === school.abbr) continue;
+        if (tryScheduleGame(school.abbr, opp.abbr)) added++;
+      }
+    });
+    
+    this.state.collegeSchedule = schedule;
+    this.state.collegeWeek = 0;
+    // Initialize standings: 0-0 for each school, plus conference record
+    this.state.collegeStandings = {};
+    COLLEGE_SCHOOLS.forEach(s => {
+      this.state.collegeStandings[s.abbr] = { wins: 0, losses: 0, confWins: 0, confLosses: 0, pointsFor: 0, pointsAgainst: 0 };
+    });
+    // Clear the AP poll — will be repopulated after week 1
+    this.state.apPoll = null;
+  },
+
+  // Sim one college week. Called from the main simWeek() so college and NFL stay in sync.
+  // Returns the list of games played this week.
+  simCollegeWeek() {
+    if (!this.state.collegeSchedule) return [];
+    if (this.state.collegeWeek >= this.COLLEGE_SEASON_WEEKS) return [];
+    this.state.collegeWeek++;
+    const week = this.state.collegeWeek;
+    const games = this.state.collegeSchedule.filter(g => g.week === week && !g.played);
+    games.forEach(g => this.simCollegeGame(g));
+    // Recompute the AP poll based on accumulated records
+    this.recomputeAPPoll();
+    return games;
+  },
+
+  // Sim one college game. Sets homeScore/awayScore, picks top performers, updates standings.
+  simCollegeGame(g) {
+    const prestigeMap = this.state.collegePrestige || {};
+    const homePrest = prestigeMap[g.home] !== undefined ? prestigeMap[g.home] : (COLLEGE_SCHOOLS.find(s => s.abbr === g.home) || {prestige: 70}).prestige;
+    const awayPrest = prestigeMap[g.away] !== undefined ? prestigeMap[g.away] : (COLLEGE_SCHOOLS.find(s => s.abbr === g.away) || {prestige: 70}).prestige;
+    
+    // Strength: prestige + home field bonus + noise. Noise ±5 produces realistic upset rate.
+    const HOME_FIELD = 3;
+    const homeStr = homePrest + HOME_FIELD + (Math.random() - 0.5) * 10;
+    const awayStr = awayPrest + (Math.random() - 0.5) * 10;
+    
+    // Score generation — CFB averages 28-30 points/game; spreads correlate with strength gap.
+    // Base score for "average team in average game": 24. Adjust by strength differential.
+    const strDiff = homeStr - awayStr;
+    const homeBase = 24 + Math.floor(strDiff * 0.4) + Math.floor(Math.random() * 12);
+    const awayBase = 24 - Math.floor(strDiff * 0.4) + Math.floor(Math.random() * 12);
+    let homeScore = Math.max(7, Math.min(63, homeBase));
+    let awayScore = Math.max(7, Math.min(63, awayBase));
+    // Round to valid football scores (CFB: avoid 1, 2 for simplicity)
+    homeScore = this.roundToCollegeScore(homeScore);
+    awayScore = this.roundToCollegeScore(awayScore);
+    // Prevent ties (CFB has OT — winner determined by strength tiebreaker)
+    if (homeScore === awayScore) {
+      if (homeStr >= awayStr) homeScore += 3; else awayScore += 3;
+    }
+    
+    g.homeScore = homeScore;
+    g.awayScore = awayScore;
+    g.played = true;
+    g.topPerformers = this.pickGameTopPerformers(g.home, g.away, homeScore, awayScore);
+    
+    // Update standings
+    const homeWin = homeScore > awayScore;
+    const homeStands = this.state.collegeStandings[g.home];
+    const awayStands = this.state.collegeStandings[g.away];
+    if (homeStands && awayStands) {
+      homeStands.pointsFor += homeScore;
+      homeStands.pointsAgainst += awayScore;
+      awayStands.pointsFor += awayScore;
+      awayStands.pointsAgainst += homeScore;
+      if (homeWin) {
+        homeStands.wins++;
+        awayStands.losses++;
+        if (g.isConference) { homeStands.confWins++; awayStands.confLosses++; }
+      } else {
+        awayStands.wins++;
+        homeStands.losses++;
+        if (g.isConference) { awayStands.confWins++; homeStands.confLosses++; }
+      }
+    }
+  },
+
+  // Round to a realistic CFB final score (avoid 1, 2, 4, 5 since those are mechanically impossible).
+  // Valid: 0, 3, 6, 7, 8, 9, 10, 11+ (all combinations of TDs, FGs, safeties).
+  roundToCollegeScore(s) {
+    // Most realistic: anything 7+ is fine. Below 7, snap to 0, 3, 6.
+    if (s < 1.5) return 0;
+    if (s < 4.5) return 3;
+    if (s < 6.5) return 6;
+    return Math.round(s);
+  },
+
+  // Pick offensive + defensive top performers for a college game.
+  // Returns { homeOff, homeDef, awayOff, awayDef } — each an object { name, position, stat }
+  pickGameTopPerformers(homeAbbr, awayAbbr, homeScore, awayScore) {
+    const pickFor = (schoolAbbr, side) => {
+      const roster = (this.state.collegeProspects || []).filter(p => p.school === schoolAbbr);
+      if (roster.length === 0) return null;
+      if (side === 'offense') {
+        // Best graded skill-position player. QB/RB/WR/TE.
+        const skill = roster.filter(p => ['QB','RB','WR','TE'].includes(p.position));
+        skill.sort((a, b) => b.prospectGrade - a.prospectGrade);
+        const p = skill[0] || roster[0];
+        // Stat line based on position
+        const stat = this.generateCollegeStatLine(p, schoolAbbr === homeAbbr ? homeScore : awayScore);
+        return { name: p.name, position: p.position, stat, prospectId: p.id };
+      } else {
+        // Best graded defender. EDGE/LB/CB/S.
+        const def = roster.filter(p => ['EDGE','LB','CB','S','DT'].includes(p.position));
+        def.sort((a, b) => b.prospectGrade - a.prospectGrade);
+        const p = def[0] || roster[0];
+        const tackles = 5 + Math.floor(Math.random() * 8);
+        const sacks = p.position === 'EDGE' || p.position === 'DT' ? Math.floor(Math.random() * 3) : 0;
+        const ints = p.position === 'CB' || p.position === 'S' ? (Math.random() < 0.18 ? 1 : 0) : 0;
+        const parts = [];
+        parts.push(tackles + ' tackles');
+        if (sacks > 0) parts.push(sacks + ' sack' + (sacks > 1 ? 's' : ''));
+        if (ints > 0) parts.push(ints + ' INT');
+        return { name: p.name, position: p.position, stat: parts.join(', '), prospectId: p.id };
+      }
+    };
+    return {
+      homeOff: pickFor(homeAbbr, 'offense'),
+      homeDef: pickFor(homeAbbr, 'defense'),
+      awayOff: pickFor(awayAbbr, 'offense'),
+      awayDef: pickFor(awayAbbr, 'defense')
+    };
+  },
+
+  // Generate a stat line string for a college offensive player based on their position and team score.
+  generateCollegeStatLine(p, teamScore) {
+    // Scale stats with team score — high-scoring games have big individual lines
+    const scoreFactor = teamScore / 28; // 1.0 = average game, 1.5 = ~42pt game
+    if (p.position === 'QB') {
+      const yds = Math.round((200 + Math.random() * 180) * scoreFactor);
+      const tds = Math.min(6, Math.floor(scoreFactor * (1 + Math.random() * 3)));
+      const ints = Math.random() < 0.35 ? 1 : 0;
+      return yds + ' pass yds, ' + tds + ' TD' + (tds === 1 ? '' : 's') + (ints > 0 ? ', ' + ints + ' INT' : '');
+    } else if (p.position === 'RB') {
+      const yds = Math.round((70 + Math.random() * 130) * scoreFactor);
+      const tds = Math.floor(scoreFactor * Math.random() * 2.5);
+      return yds + ' rush yds, ' + tds + ' TD' + (tds === 1 ? '' : 's');
+    } else if (p.position === 'WR' || p.position === 'TE') {
+      const yds = Math.round((50 + Math.random() * 110) * scoreFactor);
+      const recs = 4 + Math.floor(Math.random() * 6);
+      const tds = Math.random() < 0.5 * scoreFactor ? Math.ceil(Math.random() * 2) : 0;
+      return recs + ' rec, ' + yds + ' yds' + (tds > 0 ? ', ' + tds + ' TD' : '');
+    }
+    return '—';
+  },
+
+  // Recompute the AP Top 25 based on current standings + prestige.
+  // Real AP uses voter intuition (record + strength of schedule + eye test). Approximate with:
+  //   score = (wins * 100) - (losses * 110) + prestige * 0.5 + pointDiff * 0.05
+  recomputeAPPoll() {
+    if (!this.state.collegeStandings) return;
+    const prestigeMap = this.state.collegePrestige || {};
+    const ranked = COLLEGE_SCHOOLS.map(s => {
+      const st = this.state.collegeStandings[s.abbr] || { wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0 };
+      const prestige = prestigeMap[s.abbr] !== undefined ? prestigeMap[s.abbr] : s.prestige;
+      const pointDiff = st.pointsFor - st.pointsAgainst;
+      const score = st.wins * 100 - st.losses * 110 + prestige * 0.5 + pointDiff * 0.05;
+      return {
+        abbr: s.abbr,
+        name: s.name,
+        wins: st.wins,
+        losses: st.losses,
+        confWins: st.confWins,
+        confLosses: st.confLosses,
+        prestige: Math.round(prestige),
+        score
+      };
+    });
+    ranked.sort((a, b) => b.score - a.score);
+    this.state.apPoll = ranked.slice(0, 25).map((r, i) => ({
+      rank: i + 1,
+      abbr: r.abbr,
+      name: r.name,
+      record: r.wins + '-' + r.losses,
+      confRecord: r.confWins + '-' + r.confLosses,
+      prestige: r.prestige
+    }));
+  },
+
+
   updateCollegeHOF(prospect, playerId) {
     if (!this.state.collegeHOF) this.state.collegeHOF = [];
     // Each entry: { prospectName, school, position, prospectGrade, classYear, playerId }
@@ -3101,6 +3535,7 @@ let game = {
       });
       
       this.generateSchedule();
+      this.generateCollegeSchedule();
       this.addHeadline({
         title: this.state.year + ' draft concludes',
         body: '7 rounds, 224 picks. ' + this.state.year + ' season begins.'
@@ -3114,6 +3549,7 @@ let game = {
       this.allocateStartupContracts();
       this.generatePlayerFAPool();
       this.generateSchedule();
+      this.generateCollegeSchedule();
       this.addHeadline({
         title: 'Inaugural draft concludes',
         body: 'All 32 teams have completed their 53-round drafts. Salary cap: ' + formatMoney(getSalaryCap(this.state.year)) + '.'
@@ -3754,6 +4190,11 @@ let game = {
     this.state.week++;
     const weekGames = this.state.schedule.filter(g => g.week === this.state.week && !g.played);
     weekGames.forEach(g => this.simGame(g));
+    // Sim parallel college week if college schedule exists. College runs 12 weeks vs NFL's 18,
+    // so college season finishes earlier in the year — that's fine, it just sits idle after week 12.
+    if (this.state.collegeSchedule && this.state.collegeWeek < this.COLLEGE_SEASON_WEEKS) {
+      this.simCollegeWeek();
+    }
     this.generateWeeklyHeadlines();
     if (Math.random() < 0.08) this.generateScandal();
     this.state.lastWeekRecap = this.buildWeekRecap(weekGames);
@@ -6064,12 +6505,17 @@ let game = {
       case 'staff': this.renderStaff(); break;
       case 'freeagents': this.renderFreeAgents(); break;
       case 'college': this.renderCollege(); break;
+      case 'collegetop25': this.renderCollegeTop25Teams(); break;
       case 'prospects': this.renderProspects(); break;
       case 'collegehistory': this.renderCollegeHistoryPage(); break;
       case 'collegehof': this.renderCollegeHOFPage(); break;
       case 'playoffpicture': this.renderPlayoffPicture(); break;
       case 'teamhistory': this.renderTeamHistory(); break;
       case 'myschool': this.renderMySchool(); break;
+      case 'myschoolschedule': this.renderMySchoolSchedule(); break;
+      case 'myschoolstandings': this.renderMySchoolStandings(); break;
+      case 'collegeplayoffs': this.renderCollegePlayoffPicture(); break;
+      case 'collegeboxscore': this.renderCollegeBoxScore(); break;
       case 'combine': this.renderCombine(); break;
       case 'trades': this.renderTrades(); break;
       case 'mycareer': this.renderMyCareer(); break;
@@ -7725,6 +8171,11 @@ let game = {
 
   // RECAP
   renderRecap() {
+    // College-stage players see a college-focused recap. Everyone else sees NFL.
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'college') {
+      this.renderCollegeWeeklyRecap();
+      return;
+    }
     const recap = this.state.lastWeekRecap;
     if (!recap) { this.renderStandings(); return; }
     // Use the career-mode-aware team accessor so coach and player careers also get the highlight.
@@ -7946,6 +8397,136 @@ let game = {
     });
     html += '</div></div>';
     document.getElementById('content').innerHTML = html;
+  },
+
+  // College weekly recap — replaces the NFL recap when the user is in college player career stage.
+  // Shows the user's school's game first, then top 10 ranked games, then all other games.
+  renderCollegeWeeklyRecap() {
+    const collegeWeek = this.state.collegeWeek || 0;
+    const userPlayer = this.getUserPlayer();
+    const userSchool = userPlayer ? userPlayer.school : null;
+    
+    let html = '<div class="page-header">' +
+      '<div class="page-title">Week ' + collegeWeek + ' college recap</div>' +
+      '<div class="page-subtitle">' + this.state.year + ' season · college football</div>' +
+      '</div>';
+    
+    if (collegeWeek === 0) {
+      html += '<div class="empty-state">College season starts at week 1. Click Sim Week to begin.</div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+    
+    const weekGames = (this.state.collegeSchedule || []).filter(g => g.week === collegeWeek && g.played);
+    
+    // User's school game banner
+    const userGame = userSchool ? weekGames.find(g => g.home === userSchool || g.away === userSchool) : null;
+    if (userGame && userSchool) {
+      const school = COLLEGE_SCHOOLS.find(s => s.abbr === userSchool);
+      const userIsHome = userGame.home === userSchool;
+      const oppAbbr = userIsHome ? userGame.away : userGame.home;
+      const opp = COLLEGE_SCHOOLS.find(s => s.abbr === oppAbbr);
+      const userScore = userIsHome ? userGame.homeScore : userGame.awayScore;
+      const oppScore = userIsHome ? userGame.awayScore : userGame.homeScore;
+      const won = userScore > oppScore;
+      const wonClass = won ? 'var(--success)' : 'var(--danger)';
+      
+      html += '<div class="user-game-banner" style="display:block;cursor:pointer" onclick="game.currentView=\'myschool\';game.render()">' +
+        '<div class="user-game-banner-bar" style="background:' + (school ? school.primary : '#888') + '"></div>' +
+        '<div style="padding:16px 20px">' +
+        '<div class="user-game-banner-label" style="color:' + wonClass + ';margin-bottom:6px">YOUR SCHOOL · ' + (won ? 'WIN' : 'LOSS') + '</div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+        '<div>' +
+        '<div style="font-size:20px;font-weight:600">' + (school ? school.name : userSchool) + ' ' + (userIsHome ? 'vs' : '@') + ' ' + (opp ? opp.name : oppAbbr) + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">' + (userIsHome ? 'Home' : 'Away') + ' game</div>' +
+        '</div>' +
+        '<div style="font-size:28px;font-weight:700;font-family:var(--font-mono)">' + userScore + '–' + oppScore + '</div>' +
+        '</div>';
+      // Top performers from the game
+      if (userGame.topPerformers) {
+        const off = userIsHome ? userGame.topPerformers.homeOff : userGame.topPerformers.awayOff;
+        const def = userIsHome ? userGame.topPerformers.homeDef : userGame.topPerformers.awayDef;
+        if (off) {
+          html += '<div style="font-size:12px;color:var(--text-muted);padding-top:8px;border-top:1px solid var(--border)">' +
+            '<strong>' + off.name + '</strong> (' + off.position + '): ' + off.stat;
+          if (def) html += ' · <strong>' + def.name + '</strong> (' + def.position + '): ' + def.stat;
+          html += '</div>';
+        }
+      }
+      html += '</div></div>';
+    }
+    
+    // Top 10 games (involving ranked teams)
+    const topAbbrs = new Set();
+    if (this.state.apPoll) {
+      this.state.apPoll.slice(0, 10).forEach(t => topAbbrs.add(t.abbr));
+    }
+    const rankedGames = weekGames.filter(g => 
+      (topAbbrs.has(g.home) || topAbbrs.has(g.away)) &&
+      g.home !== userSchool && g.away !== userSchool  // exclude user's game (already shown)
+    );
+    
+    if (rankedGames.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Top 10 results</div>' +
+        '<div class="card-meta">' + rankedGames.length + ' games with ranked teams</div></div>' +
+        '<div class="games-grid">';
+      rankedGames.slice(0, 12).forEach(g => {
+        html += this.renderCollegeGameCard(g);
+      });
+      html += '</div></div>';
+    }
+    
+    // All other games
+    const otherGames = weekGames.filter(g => 
+      !rankedGames.includes(g) &&
+      g.home !== userSchool && g.away !== userSchool
+    );
+    if (otherGames.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">All other games</div>' +
+        '<div class="card-meta">' + otherGames.length + ' games this week</div></div>' +
+        '<div class="games-grid">';
+      otherGames.forEach(g => {
+        html += this.renderCollegeGameCard(g);
+      });
+      html += '</div></div>';
+    }
+    
+    // AP poll snapshot
+    if (this.state.apPoll && this.state.apPoll.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Current AP Top 25</div></div>' +
+        '<div style="padding:12px 16px;display:grid;grid-template-columns:repeat(5,1fr);gap:8px;font-size:12px">';
+      this.state.apPoll.slice(0, 25).forEach(t => {
+        const isUser = t.abbr === userSchool;
+        html += '<div onclick="game.showCollegeCard(\'' + t.abbr + '\')" style="cursor:pointer;display:flex;justify-content:space-between;padding:4px 6px' + (isUser ? ';background:var(--surface-2);font-weight:600' : '') + '">' +
+          '<span><span class="muted">#' + t.rank + '</span> ' + t.abbr + '</span>' +
+          '<span class="mono-num muted">' + t.record + '</span>' +
+          '</div>';
+      });
+      html += '</div></div>';
+    }
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // Render a single college game card for the recap grid
+  renderCollegeGameCard(g) {
+    const home = COLLEGE_SCHOOLS.find(s => s.abbr === g.home);
+    const away = COLLEGE_SCHOOLS.find(s => s.abbr === g.away);
+    const homePoll = this.state.apPoll ? this.state.apPoll.find(t => t.abbr === g.home) : null;
+    const awayPoll = this.state.apPoll ? this.state.apPoll.find(t => t.abbr === g.away) : null;
+    const homeRankPrefix = homePoll ? '#' + homePoll.rank + ' ' : '';
+    const awayRankPrefix = awayPoll ? '#' + awayPoll.rank + ' ' : '';
+    // Whole card clickable → box score. Inner team-name clicks bubble-stop to allow team navigation.
+    const cardClick = 'game.viewingCollegeGame={week:' + g.week + ',home:\'' + g.home + '\',away:\'' + g.away + '\'};game.currentView=\'collegeboxscore\';game.render()';
+    return '<div class="game-card" style="cursor:pointer" onclick="' + cardClick + '">' +
+      '<div class="game-team"><span class="team-color-bar" style="background:' + (away ? away.primary : '#888') + '"></span>' +
+      '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showCollegeCard(\'' + g.away + '\')">' + awayRankPrefix + g.away + '</span>' +
+      '<span class="mono-num">' + g.awayScore + '</span></div>' +
+      '<div class="game-team"><span class="team-color-bar" style="background:' + (home ? home.primary : '#888') + '"></span>' +
+      '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showCollegeCard(\'' + g.home + '\')">' + homeRankPrefix + g.home + '</span>' +
+      '<span class="mono-num">' + g.homeScore + '</span></div>' +
+      '<div class="game-meta">FINAL</div>' +
+      '</div>';
   },
 
   // Generate the matchup preview card for the user's next game. Returns HTML string.
@@ -8583,20 +9164,43 @@ let game = {
       html += '</div></div>';
     }
     
-    // Current prospects on roster (top 8)
+    // Current roster — full depth chart organized by position
     if (currentProspects.length > 0) {
-      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
-        '<div class="section-label">Current prospects · ' + currentProspects.length + ' on roster</div>' +
-        '<table style="margin-top:8px"><thead><tr><th>Name</th><th class="text-center">POS</th><th class="text-center">YEAR</th><th class="text-right">GRADE</th></tr></thead><tbody>';
-      currentProspects.slice(0, 8).forEach(p => {
-        const rc = p.prospectGrade >= 90 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 70 ? 'good' : 'avg';
-        html += '<tr onclick="game.showProspectCard(\'' + p.id + '\')" style="cursor:pointer">' +
-          '<td><strong>' + p.name + '</strong></td>' +
-          '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
-          '<td class="text-center" style="font-size:12px;color:var(--text-muted)">' + p.year + '</td>' +
-          '<td class="text-right"><span class="rating ' + rc + '">' + p.prospectGrade.toFixed(1) + '</span></td></tr>';
+      const byPos = {};
+      currentProspects.forEach(p => {
+        if (!byPos[p.position]) byPos[p.position] = [];
+        byPos[p.position].push(p);
       });
-      html += '</tbody></table></div>';
+      // Sort each position group by grade (top of depth chart first)
+      Object.keys(byPos).forEach(pos => byPos[pos].sort((a, b) => b.prospectGrade - a.prospectGrade));
+      
+      // Show in standard depth-chart order
+      const posOrder = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
+      
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">Depth chart · ' + currentProspects.length + ' on roster</div>' +
+        '<div style="margin-top:10px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px">';
+      
+      posOrder.forEach(pos => {
+        const players = byPos[pos];
+        if (!players || players.length === 0) return;
+        html += '<div style="background:var(--surface);padding:10px 12px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">' +
+          '<span style="font-size:11px;font-weight:700;letter-spacing:0.5px">' + pos + '</span>' +
+          '<span style="font-size:10px;color:var(--text-muted)">' + players.length + ' deep</span>' +
+          '</div>';
+        players.forEach((p, idx) => {
+          const rc = p.prospectGrade >= 90 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 70 ? 'good' : 'avg';
+          const isStarter = idx === 0;
+          html += '<div onclick="event.stopPropagation();game.showProspectCard(\'' + p.id + '\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:12px' + (isStarter ? ';font-weight:600' : ';opacity:0.85') + '">' +
+            '<span>' + (isStarter ? '<span style="color:var(--accent);font-size:9px;margin-right:4px">●</span>' : '<span style="color:var(--text-muted);font-size:9px;margin-right:4px;font-family:var(--font-mono)">' + (idx+1) + '.</span>') + p.name + ' <span class="muted" style="font-size:10px">(' + (p.year === 'Freshman' ? 'Fr' : p.year === 'Sophomore' ? 'So' : p.year === 'Junior' ? 'Jr' : 'Sr') + ')</span></span>' +
+            '<span class="rating ' + rc + '" style="font-size:11px">' + p.prospectGrade.toFixed(1) + '</span>' +
+            '</div>';
+        });
+        html += '</div>';
+      });
+      
+      html += '</div></div>';
     }
     
     // NFL alumni — active first, then notable retired
@@ -9768,20 +10372,45 @@ let game = {
         '<div style="padding:16px;font-family:var(--font-mono);font-size:14px">' + champYears.reverse().join(' · ') + '</div></div>';
     }
     
-    // Top teammates
+    // Full depth chart organized by position
     if (teammates.length > 0) {
-      html += '<div class="card"><div class="card-header"><div class="card-title">Top teammates</div>' +
-        '<div class="card-meta">' + teammates.length + ' other prospects</div></div>' +
-        '<table><thead><tr><th>Name</th><th class="text-center">POS</th><th class="text-center">YEAR</th><th class="text-right">GRADE</th></tr></thead><tbody>';
-      teammates.slice(0, 10).forEach(p => {
-        const rc = p.prospectGrade >= 90 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 70 ? 'good' : 'avg';
-        html += '<tr onclick="game.showProspectCard(\'' + p.id + '\')" style="cursor:pointer">' +
-          '<td><strong>' + p.name + '</strong></td>' +
-          '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
-          '<td class="text-center" style="font-size:12px;color:var(--text-muted)">' + p.year + '</td>' +
-          '<td class="text-right"><span class="rating ' + rc + '">' + p.prospectGrade.toFixed(1) + '</span></td></tr>';
+      // teammates is players excluding the user — add the user back in so the chart is complete
+      const userPlayer = this.getUserPlayer();
+      const fullRoster = teammates.concat(userPlayer ? [userPlayer] : []);
+      const byPos = {};
+      fullRoster.forEach(p => {
+        if (!byPos[p.position]) byPos[p.position] = [];
+        byPos[p.position].push(p);
       });
-      html += '</tbody></table></div>';
+      Object.keys(byPos).forEach(pos => byPos[pos].sort((a, b) => b.prospectGrade - a.prospectGrade));
+      
+      const posOrder = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
+      
+      html += '<div class="card"><div class="card-header"><div class="card-title">Depth chart</div>' +
+        '<div class="card-meta">' + fullRoster.length + ' players on the roster</div></div>' +
+        '<div style="padding:14px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px">';
+      
+      posOrder.forEach(pos => {
+        const players = byPos[pos];
+        if (!players || players.length === 0) return;
+        html += '<div style="background:var(--surface);padding:10px 12px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">' +
+          '<span style="font-size:11px;font-weight:700;letter-spacing:0.5px">' + pos + '</span>' +
+          '<span style="font-size:10px;color:var(--text-muted)">' + players.length + ' deep</span>' +
+          '</div>';
+        players.forEach((p, idx) => {
+          const rc = p.prospectGrade >= 90 ? 'elite' : p.prospectGrade >= 80 ? 'great' : p.prospectGrade >= 70 ? 'good' : 'avg';
+          const isStarter = idx === 0;
+          const isUser = userPlayer && p.id === userPlayer.id;
+          html += '<div onclick="game.showProspectCard(\'' + p.id + '\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:12px' + (isStarter ? ';font-weight:600' : ';opacity:0.85') + (isUser ? ';color:var(--accent)' : '') + '">' +
+            '<span>' + (isStarter ? '<span style="color:var(--accent);font-size:9px;margin-right:4px">●</span>' : '<span style="color:var(--text-muted);font-size:9px;margin-right:4px;font-family:var(--font-mono)">' + (idx+1) + '.</span>') + p.name + (isUser ? ' <span style="font-size:9px;color:var(--accent)">[YOU]</span>' : '') + ' <span class="muted" style="font-size:10px">(' + (p.year === 'Freshman' ? 'Fr' : p.year === 'Sophomore' ? 'So' : p.year === 'Junior' ? 'Jr' : 'Sr') + ')</span></span>' +
+            '<span class="rating ' + rc + '" style="font-size:11px">' + p.prospectGrade.toFixed(1) + '</span>' +
+            '</div>';
+        });
+        html += '</div>';
+      });
+      
+      html += '</div></div>';
     }
     
     // Active NFL alumni
@@ -9800,6 +10429,382 @@ let game = {
       });
       html += '</tbody></table></div>';
     }
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // MY SCHOOL SCHEDULE — show the user's school's 12-game schedule with results.
+  // Each played game is clickable → box score. Future games show opponent + week.
+  renderMySchoolSchedule() {
+    const userPlayer = this.getUserPlayer();
+    if (!userPlayer || !userPlayer.school) {
+      this.currentView = 'mycareer'; this.render(); return;
+    }
+    const userSchool = userPlayer.school;
+    const school = COLLEGE_SCHOOLS.find(s => s.abbr === userSchool);
+    const standings = this.state.collegeStandings ? this.state.collegeStandings[userSchool] : null;
+    
+    let html = '<div class="page-header"><div class="page-title">' + (school ? school.name : userSchool) + ' schedule</div>' +
+      '<div class="page-subtitle">' + this.state.year + ' season' +
+      (standings ? ' · ' + standings.wins + '-' + standings.losses + ' (' + standings.confWins + '-' + standings.confLosses + ' conf)' : '') +
+      '</div></div>';
+    
+    // Pull all games involving this school
+    const allGames = (this.state.collegeSchedule || []).filter(g => g.home === userSchool || g.away === userSchool);
+    allGames.sort((a, b) => a.week - b.week);
+    
+    if (allGames.length === 0) {
+      html += '<div class="empty-state">No schedule yet. The season hasn\'t started.</div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+    
+    html += '<div class="card">' +
+      '<table><thead><tr>' +
+      '<th>WK</th><th>OPPONENT</th><th class="text-center">SITE</th><th class="text-center">CONF</th><th class="text-center">RESULT</th><th class="text-right">SCORE</th>' +
+      '</tr></thead><tbody>';
+    
+    allGames.forEach(g => {
+      const isHome = g.home === userSchool;
+      const oppAbbr = isHome ? g.away : g.home;
+      const opp = COLLEGE_SCHOOLS.find(s => s.abbr === oppAbbr);
+      const oppPoll = this.state.apPoll ? this.state.apPoll.find(t => t.abbr === oppAbbr) : null;
+      
+      let resultCell, scoreCell, rowClick = '';
+      if (g.played) {
+        const userScore = isHome ? g.homeScore : g.awayScore;
+        const oppScore = isHome ? g.awayScore : g.homeScore;
+        const won = userScore > oppScore;
+        const resultColor = won ? 'var(--success)' : 'var(--danger)';
+        resultCell = '<span style="color:' + resultColor + ';font-weight:600">' + (won ? 'W' : 'L') + '</span>';
+        scoreCell = '<span class="mono-num">' + userScore + '–' + oppScore + '</span>';
+        // Make the row clickable to view box score
+        rowClick = ' style="cursor:pointer" onclick="game.viewingCollegeGame={week:' + g.week + ',home:\'' + g.home + '\',away:\'' + g.away + '\'};game.currentView=\'collegeboxscore\';game.render()"';
+      } else {
+        resultCell = '<span class="muted">—</span>';
+        scoreCell = '<span class="muted">—</span>';
+      }
+      
+      html += '<tr' + rowClick + '>' +
+        '<td class="mono-num">' + g.week + '</td>' +
+        '<td>' +
+        (oppPoll ? '<span style="color:var(--text-muted);font-size:11px">#' + oppPoll.rank + ' </span>' : '') +
+        '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showCollegeCard(\'' + oppAbbr + '\')"><strong>' + (opp ? opp.name : oppAbbr) + '</strong></span>' +
+        '</td>' +
+        '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + (isHome ? 'HOME' : 'AWAY') + '</td>' +
+        '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + (g.isConference ? 'CONF' : '—') + '</td>' +
+        '<td class="text-center">' + resultCell + '</td>' +
+        '<td class="text-right">' + scoreCell + '</td>' +
+        '</tr>';
+    });
+    
+    html += '</tbody></table></div>';
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // MY SCHOOL STANDINGS — show the user's school's conference standings + national poll.
+  renderMySchoolStandings() {
+    const userPlayer = this.getUserPlayer();
+    if (!userPlayer || !userPlayer.school) {
+      this.currentView = 'mycareer'; this.render(); return;
+    }
+    const school = COLLEGE_SCHOOLS.find(s => s.abbr === userPlayer.school);
+    if (!school) {
+      this.currentView = 'mycareer'; this.render(); return;
+    }
+    const confKey = school.conference;
+    const confName = COLLEGE_CONFERENCES[confKey] ? COLLEGE_CONFERENCES[confKey].name : confKey;
+    
+    let html = '<div class="page-header"><div class="page-title">' + confName + ' standings</div>' +
+      '<div class="page-subtitle">' + this.state.year + ' season · ' + (this.state.collegeWeek || 0) + ' weeks played</div></div>';
+    
+    // Conference standings: pull all schools in same conference, sort by conf record then overall
+    const confSchools = COLLEGE_SCHOOLS.filter(s => s.conference === confKey);
+    const confStandings = confSchools.map(s => {
+      const st = (this.state.collegeStandings && this.state.collegeStandings[s.abbr]) || { wins: 0, losses: 0, confWins: 0, confLosses: 0, pointsFor: 0, pointsAgainst: 0 };
+      return { school: s, ...st };
+    });
+    confStandings.sort((a, b) => {
+      // Primary: conf win % (avoid div-by-zero)
+      const aConfGames = a.confWins + a.confLosses;
+      const bConfGames = b.confWins + b.confLosses;
+      const aConfPct = aConfGames > 0 ? a.confWins / aConfGames : 0;
+      const bConfPct = bConfGames > 0 ? b.confWins / bConfGames : 0;
+      if (Math.abs(aConfPct - bConfPct) > 0.001) return bConfPct - aConfPct;
+      // Secondary: overall wins
+      if (a.wins !== b.wins) return b.wins - a.wins;
+      // Tertiary: point diff
+      return (b.pointsFor - b.pointsAgainst) - (a.pointsFor - a.pointsAgainst);
+    });
+    
+    html += '<div class="card"><div class="card-header"><div class="card-title">' + confName + '</div>' +
+      '<div class="card-meta">' + confStandings.length + ' teams</div></div>' +
+      '<table><thead><tr>' +
+      '<th>SCHOOL</th>' +
+      '<th class="text-center">CONF</th>' +
+      '<th class="text-center">OVERALL</th>' +
+      '<th class="text-center">PF</th>' +
+      '<th class="text-center">PA</th>' +
+      '<th class="text-right">DIFF</th>' +
+      '</tr></thead><tbody>';
+    
+    confStandings.forEach(t => {
+      const isUser = t.school.abbr === userPlayer.school;
+      const diff = t.pointsFor - t.pointsAgainst;
+      const diffColor = diff > 0 ? 'var(--success)' : diff < 0 ? 'var(--danger)' : 'var(--text-muted)';
+      const poll = this.state.apPoll ? this.state.apPoll.find(p => p.abbr === t.school.abbr) : null;
+      html += '<tr style="cursor:pointer' + (isUser ? ';background:var(--surface-2)' : '') + '" onclick="game.showCollegeCard(\'' + t.school.abbr + '\')">' +
+        '<td>' +
+        (poll ? '<span class="muted" style="font-size:11px">#' + poll.rank + ' </span>' : '') +
+        '<strong>' + t.school.name + '</strong>' +
+        (isUser ? ' <span style="font-size:10px;color:var(--accent)">YOU</span>' : '') +
+        '</td>' +
+        '<td class="text-center mono-num">' + t.confWins + '–' + t.confLosses + '</td>' +
+        '<td class="text-center mono-num">' + t.wins + '–' + t.losses + '</td>' +
+        '<td class="text-center mono-num">' + t.pointsFor + '</td>' +
+        '<td class="text-center mono-num">' + t.pointsAgainst + '</td>' +
+        '<td class="text-right mono-num" style="color:' + diffColor + '">' + (diff > 0 ? '+' : '') + diff + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    // National AP poll snippet (top 25)
+    if (this.state.apPoll && this.state.apPoll.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">National AP Top 25</div></div>' +
+        '<table><thead><tr><th>RK</th><th>SCHOOL</th><th class="text-center">CONF</th><th class="text-center">RECORD</th></tr></thead><tbody>';
+      this.state.apPoll.slice(0, 25).forEach(t => {
+        const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
+        const tConf = meta ? COLLEGE_CONFERENCES[meta.conference].name : '—';
+        const isUser = t.abbr === userPlayer.school;
+        html += '<tr style="cursor:pointer' + (isUser ? ';background:var(--surface-2)' : '') + '" onclick="game.showCollegeCard(\'' + t.abbr + '\')">' +
+          '<td class="mono-num">#' + t.rank + '</td>' +
+          '<td><strong>' + (meta ? meta.name : t.abbr) + '</strong>' + (isUser ? ' <span style="font-size:10px;color:var(--accent)">YOU</span>' : '') + '</td>' +
+          '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + tConf + '</td>' +
+          '<td class="text-center mono-num">' + t.record + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // COLLEGE PLAYOFF PICTURE — show the projected 12-team College Football Playoff bracket
+  // based on the current AP Top 25 + conference champion logic.
+  // Modern CFP format: 5 highest-ranked conference champs get auto-bids, plus 7 at-large.
+  renderCollegePlayoffPicture() {
+    let html = '<div class="page-header"><div class="page-title">College Football Playoff picture</div>' +
+      '<div class="page-subtitle">Projected 12-team CFP bracket · ' + this.state.year + ' season</div></div>';
+    
+    if (!this.state.apPoll || this.state.apPoll.length === 0) {
+      html += '<div class="empty-state">Season hasn\'t started yet. The CFP bracket forms after week 1.</div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+    
+    // Build CFP-style bracket: 5 conf champs (top-ranked from each P5 conf) + 7 at-large.
+    const apPoll = this.state.apPoll;
+    const seenConf = new Set();
+    const champBids = [];
+    const atLarges = [];
+    const P5Confs = ['SEC', 'B10', 'ACC', 'B12', 'IND'];
+    
+    apPoll.forEach(t => {
+      const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
+      if (!meta) return;
+      // P5 conferences each get one auto-bid (their top-ranked team)
+      if (P5Confs.includes(meta.conference) && !seenConf.has(meta.conference) && champBids.length < 5) {
+        seenConf.add(meta.conference);
+        champBids.push({ ...t, conference: meta.conference, bidType: 'CHAMP' });
+      } else if (atLarges.length < 7) {
+        atLarges.push({ ...t, conference: meta.conference, bidType: 'AT-LARGE' });
+      }
+    });
+    
+    // Combine + reseed by AP rank
+    const bracket = [...champBids, ...atLarges].sort((a, b) => a.rank - b.rank).slice(0, 12);
+    
+    // Add G5 access bid (highest-ranked G5 not already in)
+    const G5Confs = ['AAC', 'MW', 'SBC', 'MAC', 'CUSA'];
+    const g5Bid = apPoll.find(t => {
+      const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
+      return meta && G5Confs.includes(meta.conference) && !bracket.find(b => b.abbr === t.abbr);
+    });
+    if (g5Bid && bracket.length === 12) {
+      // G5 access — bump out the lowest at-large
+      const lowestAtLarge = [...bracket].reverse().find(b => b.bidType === 'AT-LARGE');
+      if (lowestAtLarge) {
+        const idx = bracket.indexOf(lowestAtLarge);
+        bracket[idx] = { ...g5Bid, conference: COLLEGE_SCHOOLS.find(s => s.abbr === g5Bid.abbr).conference, bidType: 'G5 ACCESS' };
+        bracket.sort((a, b) => a.rank - b.rank);
+      }
+    }
+    
+    // Render the bracket as seeds 1-12
+    html += '<div class="card"><div class="card-header"><div class="card-title">12-team field</div>' +
+      '<div class="card-meta">Top 4 seeds get first-round bye</div></div>' +
+      '<table><thead><tr>' +
+      '<th>SEED</th><th>SCHOOL</th><th class="text-center">CONF</th><th class="text-center">RECORD</th><th class="text-right">BID</th>' +
+      '</tr></thead><tbody>';
+    
+    bracket.forEach((t, i) => {
+      const seed = i + 1;
+      const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
+      const conf = COLLEGE_CONFERENCES[t.conference] ? COLLEGE_CONFERENCES[t.conference].name : t.conference;
+      const seedCls = seed <= 4 ? 'rating elite' : seed <= 8 ? 'rating great' : 'rating good';
+      const bidColor = t.bidType === 'CHAMP' ? 'var(--success)' : t.bidType === 'G5 ACCESS' ? 'var(--info)' : 'var(--text-muted)';
+      html += '<tr style="cursor:pointer" onclick="game.showCollegeCard(\'' + t.abbr + '\')">' +
+        '<td><span class="' + seedCls + '">#' + seed + '</span>' + (seed <= 4 ? ' <span style="font-size:9px;color:var(--text-muted)">BYE</span>' : '') + '</td>' +
+        '<td><div style="display:flex;align-items:center;gap:8px">' +
+        '<div style="width:4px;height:20px;background:' + (meta ? meta.primary : '#888') + '"></div>' +
+        '<strong>' + (meta ? meta.name : t.abbr) + '</strong>' +
+        '</div></td>' +
+        '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + conf + '</td>' +
+        '<td class="text-center mono-num">' + t.record + '</td>' +
+        '<td class="text-right" style="font-size:10px;font-weight:600;color:' + bidColor + ';letter-spacing:0.5px">' + t.bidType + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    // First-round matchups (seeds 5-12 play in week 1; 1-4 get byes)
+    if (bracket.length === 12) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">First-round matchups</div>' +
+        '<div class="card-meta">Quarterfinals after this round</div></div>' +
+        '<div style="padding:14px 16px">';
+      // 5 vs 12, 6 vs 11, 7 vs 10, 8 vs 9
+      const matchups = [[5, 12], [6, 11], [7, 10], [8, 9]];
+      matchups.forEach(([hi, lo]) => {
+        const a = bracket[hi - 1], b = bracket[lo - 1];
+        const aMeta = COLLEGE_SCHOOLS.find(s => s.abbr === a.abbr);
+        const bMeta = COLLEGE_SCHOOLS.find(s => s.abbr === b.abbr);
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">' +
+          '<div style="font-size:11px;color:var(--text-muted);min-width:90px">#' + hi + ' vs #' + lo + '</div>' +
+          '<div style="flex:1;display:flex;align-items:center;gap:10px">' +
+          '<div style="width:3px;height:20px;background:' + (bMeta ? bMeta.primary : '#888') + '"></div>' +
+          '<span><strong>#' + lo + ' ' + (bMeta ? bMeta.name : b.abbr) + '</strong> <span class="muted" style="font-size:11px">(' + b.record + ')</span></span>' +
+          '<span class="muted" style="margin:0 8px;font-size:11px">at</span>' +
+          '<div style="width:3px;height:20px;background:' + (aMeta ? aMeta.primary : '#888') + '"></div>' +
+          '<span><strong>#' + hi + ' ' + (aMeta ? aMeta.name : a.abbr) + '</strong> <span class="muted" style="font-size:11px">(' + a.record + ')</span></span>' +
+          '</div></div>';
+      });
+      html += '</div></div>';
+    }
+    
+    // "On the bubble" — next 5 teams that didn't make it
+    const inBracket = new Set(bracket.map(t => t.abbr));
+    const bubble = apPoll.filter(t => !inBracket.has(t.abbr)).slice(0, 5);
+    if (bubble.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">On the bubble</div>' +
+        '<div class="card-meta">Top 5 just outside the field</div></div>' +
+        '<table><thead><tr><th>RK</th><th>SCHOOL</th><th class="text-center">CONF</th><th class="text-right">RECORD</th></tr></thead><tbody>';
+      bubble.forEach(t => {
+        const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
+        const conf = meta ? COLLEGE_CONFERENCES[meta.conference].name : '—';
+        html += '<tr style="cursor:pointer" onclick="game.showCollegeCard(\'' + t.abbr + '\')">' +
+          '<td class="mono-num">#' + t.rank + '</td>' +
+          '<td><strong>' + (meta ? meta.name : t.abbr) + '</strong></td>' +
+          '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + conf + '</td>' +
+          '<td class="text-right mono-num">' + t.record + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // COLLEGE BOX SCORE — full game detail. Lighter than NFL (top performers only since we don't
+  // simulate every individual stat for every college player).
+  renderCollegeBoxScore() {
+    const ref = this.viewingCollegeGame;
+    if (!ref) {
+      this.currentView = 'recap'; this.render(); return;
+    }
+    const g = (this.state.collegeSchedule || []).find(x =>
+      x.week === ref.week && x.home === ref.home && x.away === ref.away
+    );
+    if (!g || !g.played) {
+      this.currentView = 'recap'; this.render(); return;
+    }
+    const home = COLLEGE_SCHOOLS.find(s => s.abbr === g.home);
+    const away = COLLEGE_SCHOOLS.find(s => s.abbr === g.away);
+    const homePoll = this.state.apPoll ? this.state.apPoll.find(t => t.abbr === g.home) : null;
+    const awayPoll = this.state.apPoll ? this.state.apPoll.find(t => t.abbr === g.away) : null;
+    
+    let html = '<div class="page-header"><div class="page-title">Box score · Week ' + g.week + '</div>' +
+      '<div class="page-subtitle">' + this.state.year + ' season</div></div>';
+    
+    // Headline: away vs home with scores
+    html += '<div class="card"><div style="padding:20px;display:grid;grid-template-columns:1fr auto 1fr;gap:20px;align-items:center">';
+    // Away
+    html += '<div style="text-align:center">' +
+      '<div style="width:60px;height:6px;background:' + (away ? away.primary : '#888') + ';margin:0 auto 10px"></div>' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px">AWAY' + (awayPoll ? ' · #' + awayPoll.rank : '') + '</div>' +
+      '<div style="font-size:20px;font-weight:600;margin-top:4px;cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + g.away + '\')">' + (away ? away.name : g.away) + '</div>' +
+      '<div style="font-size:36px;font-weight:700;font-family:var(--font-mono);margin-top:8px">' + g.awayScore + '</div>' +
+      '</div>';
+    // Center
+    html += '<div style="text-align:center;color:var(--text-muted);font-size:12px;font-weight:600;letter-spacing:1px">FINAL</div>';
+    // Home
+    html += '<div style="text-align:center">' +
+      '<div style="width:60px;height:6px;background:' + (home ? home.primary : '#888') + ';margin:0 auto 10px"></div>' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px">HOME' + (homePoll ? ' · #' + homePoll.rank : '') + '</div>' +
+      '<div style="font-size:20px;font-weight:600;margin-top:4px;cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + g.home + '\')">' + (home ? home.name : g.home) + '</div>' +
+      '<div style="font-size:36px;font-weight:700;font-family:var(--font-mono);margin-top:8px">' + g.homeScore + '</div>' +
+      '</div>';
+    html += '</div></div>';
+    
+    // Top performers
+    if (g.topPerformers) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Top performers</div></div>' +
+        '<div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px">';
+      // Away column
+      html += '<div>' +
+        '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;margin-bottom:8px">' + g.away + '</div>';
+      if (g.topPerformers.awayOff) {
+        const p = g.topPerformers.awayOff;
+        html += '<div style="margin-bottom:8px;cursor:pointer" onclick="game.showProspectCard(\'' + p.prospectId + '\')">' +
+          '<div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">Offense</div>' +
+          '<div style="font-size:14px;font-weight:600;text-decoration:underline">' + p.name + ' <span class="muted" style="font-size:11px">' + p.position + '</span></div>' +
+          '<div style="font-size:12px;color:var(--text-muted)">' + p.stat + '</div></div>';
+      }
+      if (g.topPerformers.awayDef) {
+        const p = g.topPerformers.awayDef;
+        html += '<div style="margin-bottom:8px;cursor:pointer" onclick="game.showProspectCard(\'' + p.prospectId + '\')">' +
+          '<div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">Defense</div>' +
+          '<div style="font-size:14px;font-weight:600;text-decoration:underline">' + p.name + ' <span class="muted" style="font-size:11px">' + p.position + '</span></div>' +
+          '<div style="font-size:12px;color:var(--text-muted)">' + p.stat + '</div></div>';
+      }
+      html += '</div>';
+      // Home column
+      html += '<div>' +
+        '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;margin-bottom:8px">' + g.home + '</div>';
+      if (g.topPerformers.homeOff) {
+        const p = g.topPerformers.homeOff;
+        html += '<div style="margin-bottom:8px;cursor:pointer" onclick="game.showProspectCard(\'' + p.prospectId + '\')">' +
+          '<div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">Offense</div>' +
+          '<div style="font-size:14px;font-weight:600;text-decoration:underline">' + p.name + ' <span class="muted" style="font-size:11px">' + p.position + '</span></div>' +
+          '<div style="font-size:12px;color:var(--text-muted)">' + p.stat + '</div></div>';
+      }
+      if (g.topPerformers.homeDef) {
+        const p = g.topPerformers.homeDef;
+        html += '<div style="margin-bottom:8px;cursor:pointer" onclick="game.showProspectCard(\'' + p.prospectId + '\')">' +
+          '<div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">Defense</div>' +
+          '<div style="font-size:14px;font-weight:600;text-decoration:underline">' + p.name + ' <span class="muted" style="font-size:11px">' + p.position + '</span></div>' +
+          '<div style="font-size:12px;color:var(--text-muted)">' + p.stat + '</div></div>';
+      }
+      html += '</div></div></div>';
+    }
+    
+    // Game context
+    html += '<div class="card"><div class="card-header"><div class="card-title">Game info</div></div>' +
+      '<div style="padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">' +
+      '<div><span class="muted">Conference game:</span> <strong>' + (g.isConference ? 'Yes' : 'No') + '</strong></div>' +
+      '<div><span class="muted">Week:</span> <strong>' + g.week + '</strong></div>' +
+      '<div><span class="muted">Margin:</span> <strong>' + Math.abs(g.homeScore - g.awayScore) + ' points</strong></div>' +
+      '<div><span class="muted">Total points:</span> <strong>' + (g.homeScore + g.awayScore) + '</strong></div>' +
+      '</div></div>';
     
     document.getElementById('content').innerHTML = html;
   },
@@ -9970,6 +10975,96 @@ let game = {
     document.getElementById('content').innerHTML = html;
   },
 
+  // AP TOP 25 — shows the 25 highest-ranked college teams. Uses the most recently completed
+  // college season's final rankings (collegeHistory[0]). Once weekly college sim is built,
+  // this will become live. Until then, it reflects the most recent year's poll.
+  renderCollegeTop25Teams() {
+    // Priority: live AP poll (mid-season) → most recent final rankings → preseason by prestige
+    const live = this.state.apPoll;
+    const history = this.state.collegeHistory || [];
+    const latestFinalRankings = history.length > 0 && history[0].finalRankings ? history[0].finalRankings : null;
+    
+    let subtitle, top25;
+    if (live && live.length > 0) {
+      subtitle = 'Live · Week ' + (this.state.collegeWeek || 0) + ' AP poll';
+      top25 = live.map(t => ({
+        abbr: t.abbr,
+        name: t.name,
+        record: t.record,
+        prestige: t.prestige,
+        confRecord: t.confRecord
+      }));
+    } else if (latestFinalRankings) {
+      subtitle = 'Final rankings from the ' + history[0].year + ' season';
+      top25 = latestFinalRankings;
+    } else {
+      subtitle = 'Preseason rankings · season has not started';
+      const prestigeMap = this.state.collegePrestige || {};
+      top25 = COLLEGE_SCHOOLS
+        .map(s => ({
+          abbr: s.abbr,
+          name: s.name,
+          record: '0-0',
+          prestige: Math.round(prestigeMap[s.abbr] !== undefined ? prestigeMap[s.abbr] : s.prestige)
+        }))
+        .sort((a, b) => b.prestige - a.prestige)
+        .slice(0, 25);
+    }
+    
+    let html = '<div class="page-header">' +
+      '<div class="page-title">AP Top 25</div>' +
+      '<div class="page-subtitle">' + subtitle + ' · ' + COLLEGE_SCHOOLS.length + ' programs tracked</div></div>';
+    
+    html += '<div class="card">' +
+      '<table><thead><tr>' +
+      '<th>RK</th><th>School</th><th class="text-center">CONF</th><th class="text-center">RECORD</th><th class="text-right">PRESTIGE</th>' +
+      '</tr></thead><tbody>';
+    
+    top25.forEach((rank, i) => {
+      const schoolMeta = COLLEGE_SCHOOLS.find(s => s.abbr === rank.abbr);
+      const conf = schoolMeta ? COLLEGE_CONFERENCES[schoolMeta.conference].name : '—';
+      const primary = schoolMeta ? schoolMeta.primary : '#888';
+      const rankCls = i < 4 ? 'rating elite' : i < 10 ? 'rating great' : i < 25 ? 'rating good' : '';
+      html += '<tr onclick="game.showCollegeCard(\'' + rank.abbr + '\')" style="cursor:pointer">' +
+        '<td class="mono-num"><span class="' + rankCls + '">' + (i + 1) + '</span></td>' +
+        '<td><div style="display:flex;align-items:center;gap:8px">' +
+          '<div style="width:4px;height:24px;background:' + primary + '"></div>' +
+          '<div><strong>' + (schoolMeta ? schoolMeta.name : rank.name) + '</strong> ' +
+          '<span class="muted" style="font-size:11px">' + rank.abbr + '</span></div>' +
+          '</div></td>' +
+        '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + conf + '</td>' +
+        '<td class="text-center mono-num">' + rank.record + '</td>' +
+        '<td class="text-right"><span style="font-family:var(--font-mono);font-weight:600">' + rank.prestige + '</span></td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    // Conference breakdown — small card showing distribution of top 25 across conferences
+    if (latestRankings) {
+      const confCounts = {};
+      top25.forEach(rank => {
+        const meta = COLLEGE_SCHOOLS.find(s => s.abbr === rank.abbr);
+        if (meta) {
+          confCounts[meta.conference] = (confCounts[meta.conference] || 0) + 1;
+        }
+      });
+      const sortedConfs = Object.entries(confCounts).sort((a, b) => b[1] - a[1]);
+      if (sortedConfs.length > 0) {
+        html += '<div class="card"><div class="card-header"><div class="card-title">Top 25 by conference</div></div>' +
+          '<div style="padding:14px 16px;display:flex;flex-wrap:wrap;gap:14px">';
+        sortedConfs.forEach(([conf, count]) => {
+          html += '<div style="display:flex;align-items:baseline;gap:6px">' +
+            '<span style="font-size:18px;font-weight:600;font-family:var(--font-mono)">' + count + '</span>' +
+            '<span style="font-size:12px;color:var(--text-muted)">' + COLLEGE_CONFERENCES[conf].name + '</span>' +
+            '</div>';
+        });
+        html += '</div></div>';
+      }
+    }
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
   // COLLEGE HISTORY page — past national champions and Heisman winners (sidebar version).
   // Separate from renderCollegeHistory() which is the in-page tab returning an HTML string.
   renderCollegeHistoryPage() {
@@ -10095,18 +11190,199 @@ let game = {
     document.getElementById('modal').classList.add('show');
   },
 
-  // SAVE/LOAD — 5 slots
-  // Each slot is keyed 'gridironDynastySave_1' .. 'gridironDynastySave_5' and stores { savedAt, state }.
+  // SAVE/LOAD — 3 slots
+  // Each slot is keyed 'gridironDynastySave_1' .. 'gridironDynastySave_3' and stores { savedAt, state }.
   // The legacy 'gridironDynastySave' key (single save) is migrated to slot 1 on first read.
+  // Slot count is intentionally low because the college league adds 5,400+ players × ~600 bytes each,
+  // pushing each save to ~3MB. localStorage caps around 5-10MB per origin so 3 slots is the max safe count.
+  SAVE_SLOT_COUNT: 3,
+  
+  // Short-key maps for the most common per-player fields. Saves ~300KB on college prospects
+  // and ~500KB on NFL players. Fields NOT in the map pass through unchanged (forward-compat).
+  _PLAYER_SHORT_KEYS: {
+    id: 'a', name: 'b', position: 'c', age: 'd', rating: 'e', team: 'f',
+    abilities: 'g', archetype: 'h', potential: 'i', peakOvr: 'j',
+    injuryProneness: 'k', jerseyNumber: 'l', yearsInLeague: 'm',
+    careerStats: 'n', seasonStats: 'o', seasonHistory: 'p',
+    retired: 'q', hofInducted: 'r', awards: 's',
+    faceSeed: 't', draftYear: 'u', contract: 'v',
+    collegeSchool: 'w', collegeGrade: 'x', declaredEarly: 'y',
+    isUserControlled: 'z', injury: 'aa', weeklyTraining: 'ab',
+    combineResults: 'ac', retiredYear: 'ad', retiredAge: 'ae'
+  },
+  _COLLEGE_SHORT_KEYS: {
+    id: 'a', name: 'b', school: 'c', position: 'd', year: 'e',
+    prospectGrade: 'f', injuryProneness: 'g', faceSeed: 'h', classYear: 'i',
+    declaredEarly: 'j', combineResults: 'k'
+  },
+  
+  _shortenKeys(obj, keyMap) {
+    const out = {};
+    Object.keys(obj).forEach(k => {
+      const short = keyMap[k];
+      // If key isn't in the map, keep the original — forward-compat for new fields
+      out[short || k] = obj[k];
+    });
+    return out;
+  },
+  
+  _expandKeys(obj, keyMap) {
+    // Reverse map: short → long
+    const reverse = {};
+    Object.entries(keyMap).forEach(([long, short]) => reverse[short] = long);
+    const out = {};
+    Object.keys(obj).forEach(k => {
+      const long = reverse[k];
+      out[long || k] = obj[k];
+    });
+    return out;
+  },
+  // because most players have empty stat objects (gamesPlayed: 0). The load path restores them.
+  // This is an internal optimization — game logic still sees the full objects.
+  compressStateForSave(state) {
+    // Shallow clone so we don't mutate live state during serialization
+    const c = Object.assign({}, state);
+    const PK = this._PLAYER_SHORT_KEYS;
+    const CK = this._COLLEGE_SHORT_KEYS;
+    // Compress players array — strip empties, then shorten keys
+    if (c.players) {
+      c.players = c.players.map(p => {
+        const copy = Object.assign({}, p);
+        // Drop empty stat objects — they're recreated on load
+        if (copy.careerStats && copy.careerStats.gamesPlayed === 0 && copy.careerStats.passingYards === 0 && copy.careerStats.rushingYards === 0) {
+          delete copy.careerStats;
+        }
+        if (copy.seasonStats && copy.seasonStats.gamesPlayed === 0 && copy.seasonStats.passingYards === 0 && copy.seasonStats.rushingYards === 0) {
+          delete copy.seasonStats;
+        }
+        if (copy.seasonHistory && copy.seasonHistory.length === 0) delete copy.seasonHistory;
+        if (copy.awards && copy.awards.length === 0) delete copy.awards;
+        if (copy.retired === false) delete copy.retired;
+        if (copy.hofInducted === false) delete copy.hofInducted;
+        if (copy.injury === null || copy.injury === undefined) delete copy.injury;
+        if (copy.weeklyTraining === null || copy.weeklyTraining === undefined) delete copy.weeklyTraining;
+        if (copy.isUserControlled === false || copy.isUserControlled === undefined) delete copy.isUserControlled;
+        // Strip zeros from per-player stat objects (huge savings — most stats are 0)
+        if (copy.seasonStats) copy.seasonStats = this._stripZeros(copy.seasonStats);
+        if (copy.careerStats) copy.careerStats = this._stripZeros(copy.careerStats);
+        // Strip zeros from each seasonHistory entry's stats — accumulates massively over years
+        if (copy.seasonHistory && copy.seasonHistory.length > 0) {
+          copy.seasonHistory = copy.seasonHistory.map(s => {
+            if (s && s.stats) {
+              return Object.assign({}, s, { stats: this._stripZeros(s.stats) });
+            }
+            return s;
+          });
+        }
+        return this._shortenKeys(copy, PK);
+      });
+    }
+    // Drop the NFL draft pool when no draft is active — it's regenerable from the college pool
+    // and accounts for ~1.4MB during off-season saves. Only persist it during active draft.
+    if (!c.draftActive && c.draftPool) {
+      delete c.draftPool;
+    }
+    // Compress college prospects with short keys (huge wins because of 5,400+ records)
+    if (c.collegeProspects) {
+      c.collegeProspects = c.collegeProspects.map(p => this._shortenKeys(p, CK));
+    }
+    // Compress schedule — playerStats accumulates zero-valued stat fields for every player who
+    // touched the game. Stripping zeros makes a 14KB game into a 3KB game. ~75% savings.
+    if (c.schedule) {
+      c.schedule = c.schedule.map(g => {
+        if (!g.played || !g.playerStats) return g;
+        const copy = Object.assign({}, g);
+        const compressedStats = {};
+        Object.entries(g.playerStats).forEach(([pid, stats]) => {
+          compressedStats[pid] = this._stripZeros(stats);
+        });
+        copy.playerStats = compressedStats;
+        return copy;
+      });
+    }
+    c._cv = 2;
+    return c;
+  },
+  
+  // Helper: strip zero-valued numeric fields. Used to compact stat objects where most fields are 0.
+  _stripZeros(obj) {
+    const out = {};
+    Object.entries(obj).forEach(([k, v]) => {
+      // Keep non-zero numerics, all non-numeric values (strings, objects), and explicit non-zero
+      if (typeof v !== 'number' || v !== 0) out[k] = v;
+    });
+    return out;
+  },
+  
+  // Restore stripped + short-keyed fields after loading. Game code expects full field names.
+  decompressStateAfterLoad(state) {
+    const compressed = state._cv === 2;
+    const PK = this._PLAYER_SHORT_KEYS;
+    const CK = this._COLLEGE_SHORT_KEYS;
+    if (state.players) {
+      if (compressed) {
+        state.players = state.players.map(p => this._expandKeys(p, PK));
+      }
+      state.players.forEach(p => {
+        if (!p.careerStats) p.careerStats = EMPTY_CAREER_STATS();
+        else p.careerStats = Object.assign(EMPTY_CAREER_STATS(), p.careerStats);
+        if (!p.seasonStats) p.seasonStats = EMPTY_SEASON_STATS();
+        else p.seasonStats = Object.assign(EMPTY_SEASON_STATS(), p.seasonStats);
+        if (!p.seasonHistory) p.seasonHistory = [];
+        else {
+          // Restore zeros to each seasonHistory entry's stats
+          p.seasonHistory.forEach(s => {
+            if (s && s.stats) s.stats = Object.assign(EMPTY_SEASON_STATS(), s.stats);
+          });
+        }
+        if (!p.awards) p.awards = [];
+        if (p.retired === undefined) p.retired = false;
+        if (p.hofInducted === undefined) p.hofInducted = false;
+      });
+    }
+    if (state.collegeProspects && compressed) {
+      state.collegeProspects = state.collegeProspects.map(p => this._expandKeys(p, CK));
+    }
+    // Restore zero defaults to compressed game playerStats
+    if (state.schedule && compressed) {
+      state.schedule.forEach(g => {
+        if (g.played && g.playerStats) {
+          Object.keys(g.playerStats).forEach(pid => {
+            g.playerStats[pid] = Object.assign(EMPTY_GAME_STATS(), g.playerStats[pid]);
+          });
+        }
+      });
+    }
+    delete state._cv;
+    return state;
+  },
+  
   saveGame() {
     if (!this.state) return;
     const slot = this.activeSlot || 1;
     try {
-      const payload = { savedAt: Date.now(), state: this.state };
-      localStorage.setItem('gridironDynastySave_' + slot, JSON.stringify(payload));
+      const compressed = this.compressStateForSave(this.state);
+      const payload = { savedAt: Date.now(), state: compressed };
+      const serialized = JSON.stringify(payload);
+      localStorage.setItem('gridironDynastySave_' + slot, serialized);
+      this._lastSaveSizeBytes = serialized.length;
+      this._lastSaveError = null;
     } catch (e) {
+      // Most commonly QuotaExceededError when localStorage budget is exhausted.
+      // Surface this so the user knows their save didn't persist.
       console.error('Save failed', e);
+      this._lastSaveError = e.name === 'QuotaExceededError' || /quota|storage/i.test(e.message)
+        ? 'STORAGE_FULL'
+        : 'OTHER';
     }
+  },
+  
+  // Whether the most recent save attempt succeeded. UI can use this to flash a warning.
+  lastSaveStatus() {
+    return {
+      error: this._lastSaveError || null,
+      sizeBytes: this._lastSaveSizeBytes || 0
+    };
   },
 
   // Load a specific slot. If no slot given, falls back to last-used slot or slot 1.
@@ -10128,6 +11404,8 @@ let game = {
       const payload = JSON.parse(raw);
       // Support both old format (raw state) and new format ({savedAt, state})
       this.state = payload.state !== undefined ? payload.state : payload;
+      // Restore any fields that compressStateForSave stripped to keep the save small
+      this.decompressStateAfterLoad(this.state);
       this.activeSlot = slot;
     } catch (e) {
       console.error('Load failed', e);
@@ -10139,7 +11417,7 @@ let game = {
   // Used by the welcome screen save-slot picker.
   getSlotsMetadata() {
     const slots = [];
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= this.SAVE_SLOT_COUNT; i++) {
       const raw = localStorage.getItem('gridironDynastySave_' + i);
       if (!raw) {
         // Check legacy key for slot 1
