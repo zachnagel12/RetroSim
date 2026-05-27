@@ -5311,6 +5311,9 @@ let game = {
     if (this.state.collegeSchedule && this.state.collegeWeek < this.COLLEGE_SEASON_WEEKS) {
       this.simCollegeWeek();
     }
+    // CPU trade market — runs each week during the regular season. Volume scales toward the
+    // trade deadline at week 9; falls to zero after the deadline. User team is never auto-traded.
+    this.simCpuTradeMarket();
     this.generateWeeklyHeadlines();
     if (Math.random() < 0.08) this.generateScandal();
     this.state.lastWeekRecap = this.buildWeekRecap(weekGames);
@@ -6033,8 +6036,42 @@ let game = {
       const score = t.wins * 10 + improvement * 80;
       return { team: t, score };
     }).sort((a, b) => b.score - a.score);
-
-    return { mvp, opoy, dpoy, oroy, droy, coy };
+    
+    // Comeback Player of the Year — biggest year-over-year improvement vs previous season.
+    // Eligibility: must have played a meaningful season (10+ games), AND have a previous season
+    // on record where they either (a) missed significant time OR (b) had notably worse production.
+    // We compute a production score for current and last season; CPOY = largest positive delta.
+    const seasonProdScore = (stats, pos) => {
+      const s = stats || {};
+      if (pos === 'QB') return (s.passingYards || 0) * 0.04 + (s.passingTDs || 0) * 6 - (s.interceptionsThrown || 0) * 3;
+      if (pos === 'RB') return (s.rushingYards || 0) * 0.10 + (s.rushingTDs || 0) * 7;
+      if (pos === 'WR' || pos === 'TE') return (s.receivingYards || 0) * 0.10 + (s.receivingTDs || 0) * 8;
+      if (pos === 'EDGE' || pos === 'DT') return (s.sacks || 0) * 7 + (s.tackles || 0) * 0.5;
+      if (pos === 'LB') return (s.tackles || 0) * 0.8 + (s.sacks || 0) * 6 + (s.interceptionsMade || 0) * 12;
+      if (pos === 'CB' || pos === 'S') return (s.interceptionsMade || 0) * 14 + (s.tackles || 0) * 0.6;
+      return 0;
+    };
+    const cpoy = players.map(p => {
+      const s = p.seasonStats || {};
+      if ((s.gamesPlayed || 0) < 10) return { player: p, score: 0 }; // not enough games
+      const history = p.seasonHistory || [];
+      if (history.length === 0) return { player: p, score: 0 }; // no prior season to compare
+      const prev = history[history.length - 1];
+      if (!prev || !prev.stats) return { player: p, score: 0 };
+      const prevGames = prev.stats.gamesPlayed || 0;
+      const curProd = seasonProdScore(s, p.position);
+      const prevProd = seasonProdScore(prev.stats, p.position);
+      if (curProd < 30) return { player: p, score: 0 }; // current season too weak
+      // Two paths to CPOY: missed last year (≤8 games) OR much worse prod (50%+ drop)
+      const missedTime = prevGames < 9;
+      const prodDrop = prevProd < curProd * 0.55;
+      if (!missedTime && !prodDrop) return { player: p, score: 0 };
+      // Score = improvement magnitude × current-season strength bonus
+      const delta = curProd - prevProd;
+      return { player: p, score: delta };
+    }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
+    
+    return { mvp, opoy, dpoy, oroy, droy, coy, cpoy };
   },
 
   // CONTRACT ACTIONS
@@ -6928,6 +6965,7 @@ let game = {
     award('dpoy', aw.dpoy, 'DPOY');
     award('oroy', aw.oroy, 'OROY');
     award('droy', aw.droy, 'DROY');
+    award('cpoy', aw.cpoy, 'Comeback POY');
     if (aw.coy[0]) {
       const hc = this.getTeamHC(aw.coy[0].team);
       if (hc) {
@@ -6935,9 +6973,87 @@ let game = {
         awardRecord.coy = { teamId: aw.coy[0].team.id, coachId: hc.id, name: hc.name };
       }
     }
+    
+    // ===== PRO BOWL + ALL-PRO SELECTION =====
+    // Pro Bowl: top players at each position per conference (AFC/NFC).
+    //   Roster size per conference roughly mirrors NFL Pro Bowl (44 slots): 3 QB, 4 RB, 6 WR, 3 TE,
+    //   6 OL, 4 DL, 4 LB, 5 DB, 1 K, 1 P + 2 specialists ≈ 44 total.
+    // All-Pro 1st team: best 1 player per position in the whole league.
+    // All-Pro 2nd team: next-best 1 per position.
+    // Selection is based on a season-performance score combining production stats + OVR.
+    const proBowlSpots = { QB: 3, RB: 4, WR: 6, TE: 3, OT: 4, OG: 4, C: 2, EDGE: 4, DT: 3, LB: 5, CB: 5, S: 4, K: 1, P: 1 };
+    const allActive = this.state.players.filter(p => !p.retired && p.team !== null);
+    const proBowlIds = new Set();
+    const allProFirstIds = new Set();
+    const allProSecondIds = new Set();
+    awardRecord.proBowl = { AFC: [], NFC: [] };
+    awardRecord.allProFirst = [];
+    awardRecord.allProSecond = [];
+    
+    // Helper: how good was this player's season? Higher = better. Used to rank within position.
+    const seasonScore = (p) => {
+      const s = p.seasonStats || {};
+      // Production component varies by position
+      let prod = 0;
+      if (p.position === 'QB') prod = (s.passingYards || 0) / 30 + (s.passingTDs || 0) * 6 - (s.interceptionsThrown || 0) * 3 + (s.rushingYards || 0) / 20;
+      else if (p.position === 'RB') prod = (s.rushingYards || 0) / 10 + (s.rushingTDs || 0) * 8 + (s.receivingYards || 0) / 15;
+      else if (p.position === 'WR' || p.position === 'TE') prod = (s.receivingYards || 0) / 12 + (s.receivingTDs || 0) * 9 + (s.receptions || 0) * 0.5;
+      else if (p.position === 'EDGE' || p.position === 'DT') prod = (s.sacks || 0) * 12 + (s.tackles || 0) * 0.6;
+      else if (p.position === 'LB') prod = (s.tackles || 0) * 1.2 + (s.sacks || 0) * 9 + (s.interceptionsMade || 0) * 14;
+      else if (p.position === 'CB' || p.position === 'S') prod = (s.interceptionsMade || 0) * 18 + (s.tackles || 0) * 0.9;
+      else if (p.position === 'K') prod = (s.fieldGoalsMade || 0) * 6 + (s.extraPoints || 0) * 1;
+      else if (p.position === 'P') prod = (s.punts || 0) > 0 ? (s.puntYards || 0) / (s.punts || 1) * 0.5 : 0;
+      // OL has no real stats — use OVR + games played as proxy
+      else prod = p.rating * 0.4 + (s.gamesPlayed || 0);
+      // Floor with OVR so injured-but-talented players still register
+      return prod + p.rating * 0.6;
+    };
+    
+    // Conference Pro Bowl rosters — sort within each conference, take top N per position
+    ['AFC', 'NFC'].forEach(conf => {
+      const confPlayers = allActive.filter(p => {
+        const team = this.state.teams[p.team];
+        return team && team.conference === conf;
+      });
+      Object.entries(proBowlSpots).forEach(([pos, count]) => {
+        const atPos = confPlayers.filter(p => p.position === pos).sort((a, b) => seasonScore(b) - seasonScore(a));
+        atPos.slice(0, count).forEach(p => {
+          proBowlIds.add(p.id);
+          p.awards.push({ year: this.state.year, type: 'Pro Bowl' });
+          awardRecord.proBowl[conf].push({ playerId: p.id, name: p.name, position: p.position });
+        });
+      });
+    });
+    
+    // All-Pro 1st team: best 1 per position league-wide. 2nd team: next 1.
+    Object.keys(proBowlSpots).forEach(pos => {
+      const atPos = allActive.filter(p => p.position === pos).sort((a, b) => seasonScore(b) - seasonScore(a));
+      if (atPos[0]) {
+        allProFirstIds.add(atPos[0].id);
+        atPos[0].awards.push({ year: this.state.year, type: 'All-Pro 1st' });
+        awardRecord.allProFirst.push({ playerId: atPos[0].id, name: atPos[0].name, position: pos });
+      }
+      if (atPos[1]) {
+        allProSecondIds.add(atPos[1].id);
+        atPos[1].awards.push({ year: this.state.year, type: 'All-Pro 2nd' });
+        awardRecord.allProSecond.push({ playerId: atPos[1].id, name: atPos[1].name, position: pos });
+      }
+    });
+    
     this.state.awardsHistory.unshift(awardRecord);
     this.addHeadline({ type:'champ', title: champion.city + ' ' + champion.name + ' win the ' + this.state.year + ' championship', body: champion.city + ' defeated ' + runnerUp.city + ' to claim the title.' });
     if (awardRecord.mvp) this.addHeadline({ title: awardRecord.mvp.name + ' named ' + this.state.year + ' MVP', body: 'Top individual honor.' });
+    
+    // Queue the end-of-season awards ceremony popup. The actual show happens AFTER endSeason returns
+    // and the next render fires — so the user sees championship splash → awards show → offseason flow.
+    // Snapshot what we need right now so the popup has fresh data even after state advances.
+    this._pendingAwardsShow = {
+      year: this.state.year,
+      championAbbr: champion.abbr,
+      championName: champion.city + ' ' + champion.name,
+      runnerUpName: runnerUp.city + ' ' + runnerUp.name,
+      championScore: this.state.lastTitleGameScore || null
+    };
 
     const topPlayers = this.state.players.filter(p => !p.retired);
     topPlayers.forEach(p => {
@@ -7090,7 +7206,24 @@ let game = {
           p.team = null;
         }
         p.contract = null;
-        const isHOF = p.yearsInLeague >= 8 && (p.careerStats.passingYards > 25000 || p.careerStats.rushingYards > 8000 || p.careerStats.receivingYards > 8000 || p.careerStats.touchdowns > 100 || p.awards.length >= 2);
+        // HOF criteria — weighted by award type. Pro Bowl alone isn't enough; need real top honors.
+        // Score awards: MVP/OPOY/DPOY = 5pts each, All-Pro 1st = 3pts, All-Pro 2nd = 2pts, ROY = 2pts,
+        // Pro Bowl = 0.5pts. HOF threshold: 10+ points OR generational career stats.
+        let awardScore = 0;
+        (p.awards || []).forEach(a => {
+          if (a.type === 'MVP' || a.type === 'OPOY' || a.type === 'DPOY') awardScore += 5;
+          else if (a.type === 'All-Pro 1st') awardScore += 3;
+          else if (a.type === 'All-Pro 2nd') awardScore += 2;
+          else if (a.type === 'OROY' || a.type === 'DROY') awardScore += 2;
+          else if (a.type === 'Pro Bowl') awardScore += 0.5;
+        });
+        const isHOF = p.yearsInLeague >= 8 && (
+          p.careerStats.passingYards > 25000 ||
+          p.careerStats.rushingYards > 8000 ||
+          p.careerStats.receivingYards > 8000 ||
+          p.careerStats.touchdowns > 100 ||
+          awardScore >= 10
+        );
         if (isHOF) {
           p.hofInducted = true;
           this.state.hallOfFame.push({
@@ -7897,6 +8030,13 @@ let game = {
     // Prepend a Back button to content if there's history. Inserted AFTER the view-specific render
     // overwrites #content so the button isn't wiped.
     this._injectBackButton();
+    // If endSeason queued an awards ceremony, pop it now (post-render so championship view is visible behind).
+    if (this._pendingAwardsShow) {
+      const data = this._pendingAwardsShow;
+      this._pendingAwardsShow = null;
+      // Defer slightly so it lands on top of the freshly-rendered championship view
+      try { this.showAwardsCeremony(data); } catch (e) { /* defensive — never break sim flow */ }
+    }
   },
   
   // Insert a Back button at the very top of content if the user can navigate back.
@@ -9643,6 +9783,165 @@ let game = {
       return sum;
     }, 0);
   },
+  
+  // CPU TRADE MARKET — pair up contenders and rebuilders, look for mutually-beneficial swaps.
+  // Runs each week of regular season. Volume rises toward the deadline at week 9.
+  // The user's team is never an auto-trade participant — only user-initiated trades involve them.
+  // TRADE DEADLINE: hard cutoff at week 9. Week 9 itself is "deadline day" with elevated volume.
+  simCpuTradeMarket() {
+    if (!this.state || this.state.playoffActive) return;
+    const week = this.state.week;
+    const TRADE_DEADLINE_WEEK = 9;
+    if (week < 1 || week > TRADE_DEADLINE_WEEK) return;
+    
+    // Volume scales toward deadline. Early weeks: ~0-1 trade. Week 9: ~5-7 trades (deadline day spike).
+    const isDeadlineDay = week === TRADE_DEADLINE_WEEK;
+    const weekFactor = Math.min(1.0, week / TRADE_DEADLINE_WEEK);
+    const expectedTrades = isDeadlineDay ? 6.0 : 0.3 + weekFactor * 2.5;
+    const maxTradesThisWeek = Math.max(0, Math.round(expectedTrades + (Math.random() - 0.5) * 1.5));
+    if (maxTradesThisWeek === 0) return;
+    
+    // Classify teams into contender/bubble/rebuilder
+    const userTeamId = this.state.userTeamId;
+    const classifyTeam = (team) => {
+      if (team.id === userTeamId) return 'user'; // never auto-trade for user
+      const games = team.wins + team.losses;
+      if (games < 2) return 'bubble'; // too early to tell
+      const wp = team.wins / games;
+      if (wp >= 0.60) return 'contender';
+      if (wp <= 0.35) return 'rebuilder';
+      return 'bubble';
+    };
+    
+    const contenders = this.state.teams.filter(t => classifyTeam(t) === 'contender');
+    const rebuilders = this.state.teams.filter(t => classifyTeam(t) === 'rebuilder');
+    if (contenders.length === 0 || rebuilders.length === 0) return;
+    
+    // Shuffle to avoid always pairing the same teams first
+    contenders.sort(() => Math.random() - 0.5);
+    rebuilders.sort(() => Math.random() - 0.5);
+    
+    let tradesExecuted = 0;
+    
+    // For each contender, try to find a rebuilder with a player they need
+    for (const contender of contenders) {
+      if (tradesExecuted >= maxTradesThisWeek) break;
+      const contNeeds = this.calculateTeamNeeds(contender);
+      // Only consider positions with REAL need (≥2). Skip K/P — real NFL almost never trades
+      // for specialists, and the value math (low POSITION_VALUE) means trades end up looking like
+      // 2 picks for a kicker, which feels wrong.
+      const neededPositions = Object.entries(contNeeds)
+        .filter(([pos, v]) => v >= 2 && pos !== 'K' && pos !== 'P')
+        .map(([pos]) => pos);
+      if (neededPositions.length === 0) continue;
+      
+      // Find a rebuilder with an upgrade candidate at one of those positions
+      for (const rebuilder of rebuilders) {
+        if (tradesExecuted >= maxTradesThisWeek) break;
+        if (rebuilder.id === contender.id) continue;
+        
+        // What's the rebuilder willing to trade? Aging vets (28+) or non-starter "trade chips"
+        // at premium positions. Don't trade their best young player.
+        const rebuilderPlayers = rebuilder.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
+        // Group by position, find their best at each needed position
+        const candidates = [];
+        for (const pos of neededPositions) {
+          const atPos = rebuilderPlayers.filter(p => p.position === pos).sort((a, b) => b.rating - a.rating);
+          if (atPos.length === 0) continue;
+          // Best at position. Only include if they'd actually upgrade the contender.
+          const candidate = atPos[0];
+          // Don't trade away your QB1 if you have only one decent QB
+          if (pos === 'QB' && atPos.length < 2 && candidate.rating >= 70) continue;
+          // Skip mediocre players — trades should be for legitimate starters (75+)
+          if (candidate.rating < 75) continue;
+          // Contender's current best at this position
+          const contAtPos = contender.roster.map(id => this.state.players[id])
+            .filter(p => p && !p.retired && p.position === pos)
+            .sort((a, b) => b.rating - a.rating);
+          const contStarter = contAtPos[0];
+          // Must be a meaningful upgrade (≥3 OVR better than contender's starter) — was ≥2
+          if (contStarter && candidate.rating <= contStarter.rating + 2) continue;
+          // Rebuilders prefer to trade older players (they're not part of the rebuild plan)
+          // But will trade younger ones too if the return is right
+          if (candidate.age <= 24 && Math.random() < 0.7) continue; // 30% chance to trade young player
+          candidates.push(candidate);
+        }
+        if (candidates.length === 0) continue;
+        
+        // Pick the highest-value candidate
+        candidates.sort((a, b) => this.calculatePlayerTradeValue(b) - this.calculatePlayerTradeValue(a));
+        const player = candidates[0];
+        const playerValue = this.calculatePlayerTradeValue(player);
+        
+        // Find a pick package from the contender that matches the player's value (within ~10%)
+        // Contender owns picks via state.draftPicksOwned; filter to picks they own.
+        const contenderPicks = (this.state.draftPicksOwned || [])
+          .filter(p => p.ownerTeamId === contender.id)
+          .map(p => ({ pick: p, value: this.calculatePickValue(p) }))
+          .filter(p => p.value > 0)
+          .sort((a, b) => b.value - a.value); // best picks first
+        if (contenderPicks.length === 0) continue;
+        
+        // Build a pick package totaling close to playerValue.
+        // Try a single pick first (cleaner trade); fall back to combining picks.
+        let bestPackage = null;
+        let bestDiff = Infinity;
+        // Try each single pick
+        for (const p of contenderPicks) {
+          const diff = Math.abs(p.value - playerValue);
+          if (diff < bestDiff && diff <= playerValue * 0.15) {
+            bestDiff = diff;
+            bestPackage = [p.pick];
+          }
+        }
+        // Try two-pick combinations
+        for (let i = 0; i < contenderPicks.length; i++) {
+          for (let j = i + 1; j < contenderPicks.length; j++) {
+            const total = contenderPicks[i].value + contenderPicks[j].value;
+            const diff = Math.abs(total - playerValue);
+            if (diff < bestDiff && diff <= playerValue * 0.15) {
+              bestDiff = diff;
+              bestPackage = [contenderPicks[i].pick, contenderPicks[j].pick];
+            }
+          }
+        }
+        if (!bestPackage) continue;
+        
+        // Execute the trade
+        rebuilder.roster = rebuilder.roster.filter(id => id !== player.id);
+        contender.roster.push(player.id);
+        player.team = contender.id;
+        bestPackage.forEach(pick => { pick.ownerTeamId = rebuilder.id; });
+        
+        // Headline
+        const pickSummary = bestPackage.map(p => p.year + ' R' + p.round).join(' + ');
+        this.addHeadline({
+          type: 'contract',
+          title: 'TRADE: ' + contender.abbr + ' acquire ' + player.name,
+          body: contender.city + ' send ' + pickSummary + ' to ' + rebuilder.city + ' for ' + player.position + ' ' + player.name + ' (OVR ' + player.rating + ', age ' + player.age + ').'
+        });
+        
+        tradesExecuted++;
+        break; // contender is done shopping for this week
+      }
+    }
+    
+    // Deadline-day summary: a single recap headline at end of week 9 IF any trades occurred today.
+    // Helps the user see that the deadline passed and what happened.
+    if (isDeadlineDay && tradesExecuted > 0) {
+      this.addHeadline({
+        type: 'contract',
+        title: 'Trade deadline: ' + tradesExecuted + ' move' + (tradesExecuted === 1 ? '' : 's') + ' today',
+        body: 'Contenders made their final push for the postseason. No more trades until the offseason.'
+      });
+    } else if (isDeadlineDay) {
+      this.addHeadline({
+        type: 'contract',
+        title: 'Trade deadline passes quietly',
+        body: 'No deadline-day deals announced. Teams stand pat with their current rosters.'
+      });
+    }
+  },
 
   proposeTrade() {
     if (!this.tradeOffer || this.tradeOffer.give.length === 0 || this.tradeOffer.receive.length === 0) return;
@@ -11084,8 +11383,27 @@ let game = {
 
     // Awards
     if (p.awards && p.awards.length > 0) {
-      html += '<div class="section-label">Awards</div><table class="stat-table">';
-      p.awards.forEach(a => {
+      // Aggregate counts by award type for a quick at-a-glance summary
+      const counts = {};
+      p.awards.forEach(a => { counts[a.type] = (counts[a.type] || 0) + 1; });
+      // Order: marquee awards first, then Pro Bowl, then All-Pro
+      const order = ['MVP', 'OPOY', 'DPOY', 'OROY', 'DROY', 'Comeback POY', 'All-Pro 1st', 'All-Pro 2nd', 'Pro Bowl'];
+      const countLine = order
+        .filter(k => counts[k])
+        .map(k => counts[k] + 'x ' + k)
+        .concat(Object.keys(counts).filter(k => !order.includes(k)).map(k => counts[k] + 'x ' + k))
+        .join(' · ');
+      html += '<div class="section-label">Awards</div>' +
+        '<div style="font-size:13px;font-weight:500;margin-bottom:8px">' + countLine + '</div>';
+      // Detail rows — expanded list of every individual award by year (most recent first).
+      // Within the same year, sort by award importance (MVP > OPOY/DPOY > AP1 > AP2 > Pro Bowl)
+      // so the most prestigious honor shows on top of any given season.
+      const awardPriority = { 'MVP': 1, 'OPOY': 2, 'DPOY': 2, 'OROY': 3, 'DROY': 3, 'Comeback POY': 4, 'All-Pro 1st': 5, 'All-Pro 2nd': 6, 'Pro Bowl': 7 };
+      html += '<table class="stat-table">';
+      p.awards.slice().sort((a, b) => {
+        if (b.year !== a.year) return b.year - a.year;
+        return (awardPriority[a.type] || 99) - (awardPriority[b.type] || 99);
+      }).forEach(a => {
         html += '<tr><td>' + a.year + '</td><td>' + a.type + '</td></tr>';
       });
       html += '</table>';
@@ -11464,6 +11782,7 @@ let game = {
     // Tab bar
     html += '<div class="tab-bar">' +
       '<div class="tab ' + (tab === 'current' ? 'active' : '') + '" onclick="game.setAwardsTab(\'current\')">Current race</div>' +
+      '<div class="tab ' + (tab === 'honors' ? 'active' : '') + '" onclick="game.setAwardsTab(\'honors\')">Pro Bowl & All-Pro</div>' +
       '<div class="tab ' + (tab === 'history' ? 'active' : '') + '" onclick="game.setAwardsTab(\'history\')">Year-by-year history</div>' +
       '<div class="tab ' + (tab === 'leaders' ? 'active' : '') + '" onclick="game.setAwardsTab(\'leaders\')">All-time leaders</div>' +
       '</div>';
@@ -11474,7 +11793,10 @@ let game = {
       html += this.renderAwardCard('Defensive Player of the Year', 'dpoy', aw.dpoy, 'Sacks × 6 + INTs × 8 + tackles × 0.8. DL bonus.', 'player');
       html += this.renderAwardCard('Offensive Rookie of the Year', 'oroy', aw.oroy, 'Best offensive performance among first-year players.', 'player');
       html += this.renderAwardCard('Defensive Rookie of the Year', 'droy', aw.droy, 'Best defensive performance among first-year players.', 'player');
+      html += this.renderAwardCard('Comeback Player of the Year', 'cpoy', aw.cpoy, 'Largest year-over-year production jump from a season cut short by injury or down year.', 'player');
       html += this.renderAwardCard('Coach of the Year', 'coy', aw.coy, 'Wins × 10 + improvement over historical baseline × 80.', 'coach');
+    } else if (tab === 'honors') {
+      html += this.renderProBowlAndAllPro();
     } else if (tab === 'history') {
       html += this.renderAwardsHistory();
     } else if (tab === 'leaders') {
@@ -11485,6 +11807,54 @@ let game = {
   },
 
   setAwardsTab(t) { this.awardsTab = t; this.renderAwards(); },
+  
+  // Render the most recent Pro Bowl rosters + All-Pro 1st/2nd team. Falls back to a "no honors yet"
+  // message if the season hasn't ended (these are awarded only at end of season).
+  renderProBowlAndAllPro() {
+    const history = this.state.awardsHistory || [];
+    if (history.length === 0 || !history[0].proBowl) {
+      return '<div class="empty-state">Pro Bowl and All-Pro teams are named at the end of each season. Sim a full season to see the first selections.</div>';
+    }
+    const rec = history[0];
+    const playerLink = (entry) => '<span style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + entry.playerId + ')">' + entry.name + '</span>';
+    let html = '<div class="card"><div class="card-header"><div class="card-title">' + rec.year + ' All-Pro · 1st Team</div><div class="card-meta">Best at each position</div></div>' +
+      '<table><thead><tr><th>POS</th><th>PLAYER</th></tr></thead><tbody>';
+    (rec.allProFirst || []).forEach(e => {
+      html += '<tr><td><span class="position-tag">' + e.position + '</span></td><td><strong>' + playerLink(e) + '</strong></td></tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    html += '<div class="card"><div class="card-header"><div class="card-title">' + rec.year + ' All-Pro · 2nd Team</div></div>' +
+      '<table><thead><tr><th>POS</th><th>PLAYER</th></tr></thead><tbody>';
+    (rec.allProSecond || []).forEach(e => {
+      html += '<tr><td><span class="position-tag">' + e.position + '</span></td><td>' + playerLink(e) + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    
+    // Pro Bowl rosters — split AFC and NFC side-by-side
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
+    ['AFC', 'NFC'].forEach(conf => {
+      const roster = (rec.proBowl || {})[conf] || [];
+      // Group by position for cleaner display
+      const byPos = {};
+      roster.forEach(e => {
+        if (!byPos[e.position]) byPos[e.position] = [];
+        byPos[e.position].push(e);
+      });
+      html += '<div class="card"><div class="card-header"><div class="card-title">' + rec.year + ' ' + conf + ' Pro Bowl</div><div class="card-meta">' + roster.length + ' players</div></div>' +
+        '<table><thead><tr><th>POS</th><th>PLAYERS</th></tr></thead><tbody>';
+      const posOrder = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
+      posOrder.forEach(pos => {
+        const players = byPos[pos];
+        if (!players || players.length === 0) return;
+        html += '<tr><td><span class="position-tag">' + pos + '</span></td><td>' + players.map(p => playerLink(p)).join(', ') + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    });
+    html += '</div>';
+    
+    return html;
+  },
 
   renderAwardsHistory() {
     const history = this.state.awardsHistory || [];
@@ -11500,6 +11870,7 @@ let game = {
       '<th>DPOY</th>' +
       '<th>OROY</th>' +
       '<th>DROY</th>' +
+      '<th>CPOY</th>' +
       '<th>COY</th>' +
       '<th>Champion</th>' +
       '</tr></thead><tbody>';
@@ -11539,6 +11910,7 @@ let game = {
         awardCell(rec.dpoy) +
         awardCell(rec.oroy) +
         awardCell(rec.droy) +
+        awardCell(rec.cpoy) +
         awardCell(rec.coy) +
         '<td style="font-size:12px">' + (champ ? '<strong>' + champ.team.split(' ').slice(-1)[0] + '</strong>' : '—') + '</td>' +
         '</tr>';
@@ -11557,7 +11929,7 @@ let game = {
     const playerTallies = {}; // playerId → { name, position, team, mvp, opoy, dpoy, oroy, droy, total }
     const coachTallies = {};  // coachId → { name, team, coy }
     
-    const awardKeys = ['mvp','opoy','dpoy','oroy','droy'];
+    const awardKeys = ['mvp','opoy','dpoy','oroy','droy','cpoy'];
     history.forEach(rec => {
       awardKeys.forEach(k => {
         if (rec[k] && rec[k].playerId !== undefined) {
@@ -12883,6 +13255,185 @@ let game = {
         '<div class="headline-body">' + (h.body || '') + '</div></div>';
     });
     news.innerHTML = html;
+  },
+
+  // END-OF-SEASON AWARDS CEREMONY — modal popup that fires automatically after the Super Bowl.
+  // Shows NFL or college awards based on user career stage. User can toggle between tabs.
+  // - College stage of player career → defaults to College tab first
+  // - All other career modes (dynasty, coach, NFL stage of player career) → defaults to NFL tab first
+  // - Both tabs always visible regardless of default
+  showAwardsCeremony(data) {
+    const careerMode = this.state.career ? this.state.career.mode : 'dynasty';
+    const careerStage = this.state.career ? this.state.career.careerStage : null;
+    const defaultTab = (careerMode === 'player' && careerStage === 'college') ? 'college' : 'nfl';
+    this._awardsCeremonyData = data;
+    this._awardsCeremonyTab = defaultTab;
+    this._renderAwardsCeremonyModal();
+  },
+  
+  // Re-render the awards ceremony modal — called when user clicks the NFL/College toggle.
+  _renderAwardsCeremonyModal() {
+    const data = this._awardsCeremonyData;
+    const tab = this._awardsCeremonyTab || 'nfl';
+    if (!data) return;
+    
+    // Tab bar (NFL / College)
+    const nflBtnStyle = tab === 'nfl'
+      ? 'background:var(--accent);color:#fff;border-color:var(--accent)'
+      : 'background:transparent;color:var(--text);border-color:var(--border-strong)';
+    const colBtnStyle = tab === 'college'
+      ? 'background:var(--accent);color:#fff;border-color:var(--accent)'
+      : 'background:transparent;color:var(--text);border-color:var(--border-strong)';
+    
+    let body = '<div style="text-align:center;padding:14px 0 18px 0">' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:1.5px;font-weight:600;margin-bottom:6px">' + data.year + ' SEASON AWARDS</div>' +
+      '<div style="font-size:18px;font-weight:700;letter-spacing:-0.3px">A look back at the year</div>' +
+      '</div>';
+    
+    // Tab toggle
+    body += '<div style="display:flex;gap:0;margin-bottom:16px;justify-content:center">' +
+      '<button onclick="game._awardsCeremonyTab=\'nfl\';game._renderAwardsCeremonyModal()" style="padding:7px 20px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;border-width:1px;border-style:solid;border-right:0;letter-spacing:0.4px;' + nflBtnStyle + '">NFL</button>' +
+      '<button onclick="game._awardsCeremonyTab=\'college\';game._renderAwardsCeremonyModal()" style="padding:7px 20px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;border-width:1px;border-style:solid;letter-spacing:0.4px;' + colBtnStyle + '">College</button>' +
+      '</div>';
+    
+    if (tab === 'nfl') {
+      body += this._renderAwardsCeremonyNFL(data);
+    } else {
+      body += this._renderAwardsCeremonyCollege(data);
+    }
+    
+    // Close button at bottom
+    body += '<div style="text-align:center;margin-top:20px;padding-top:14px;border-top:1px solid var(--border)">' +
+      '<button onclick="closeModal()" class="btn btn-primary">Continue to offseason →</button>' +
+      '</div>';
+    
+    this.showModal(data.year + ' Awards Ceremony', body);
+  },
+  
+  // NFL tab contents — champion + season MVP + individual awards + All-Pro 1st team
+  _renderAwardsCeremonyNFL(data) {
+    const history = this.state.awardsHistory || [];
+    const record = history.find(r => r.year === data.year);
+    if (!record) {
+      return '<div class="empty-state" style="padding:24px">No NFL award data for ' + data.year + '.</div>';
+    }
+    
+    // Helper to render a single named award with a gold accent
+    const awardLine = (label, entry, sublabel) => {
+      if (!entry) return '';
+      let nameHtml;
+      if (entry.playerId !== undefined) {
+        const p = this.state.players[entry.playerId];
+        const teamAbbr = p && p.team !== null && this.state.teams[p.team] ? this.state.teams[p.team].abbr : '';
+        nameHtml = '<span style="cursor:pointer;text-decoration:underline" onclick="closeModal();game.showPlayer(' + entry.playerId + ')">' + entry.name + '</span>' +
+          (teamAbbr ? ' <span class="muted" style="font-size:11px">' + teamAbbr + '</span>' : '');
+      } else if (entry.coachId !== undefined) {
+        const t = entry.teamId !== undefined ? this.state.teams[entry.teamId] : null;
+        const teamAbbr = t ? t.abbr : '';
+        nameHtml = entry.name + (teamAbbr ? ' <span class="muted" style="font-size:11px">' + teamAbbr + '</span>' : '');
+      } else {
+        nameHtml = entry.name || '—';
+      }
+      return '<div style="background:var(--surface);padding:10px 14px;margin-bottom:6px;border-left:3px solid #d4a017">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600">' + label + (sublabel ? ' · ' + sublabel : '') + '</div>' +
+        '<div style="font-size:14px;font-weight:600;margin-top:2px">' + nameHtml + '</div>' +
+        '</div>';
+    };
+    
+    let html = '';
+    
+    // Champion banner
+    html += '<div style="background:var(--surface-2);padding:14px 18px;margin-bottom:14px;border-left:4px solid var(--accent)">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600">CHAMPION</div>' +
+      '<div style="font-size:18px;font-weight:700;letter-spacing:-0.2px;margin-top:2px">' + data.championName + '</div>' +
+      '<div class="muted" style="font-size:12px;margin-top:2px">defeated ' + data.runnerUpName + '</div>' +
+      '</div>';
+    
+    // Individual awards
+    html += awardLine('Most Valuable Player', record.mvp);
+    html += awardLine('Offensive Player of the Year', record.opoy);
+    html += awardLine('Defensive Player of the Year', record.dpoy);
+    html += awardLine('Offensive Rookie of the Year', record.oroy);
+    html += awardLine('Defensive Rookie of the Year', record.droy);
+    if (record.cpoy) html += awardLine('Comeback Player of the Year', record.cpoy);
+    html += awardLine('Coach of the Year', record.coy);
+    
+    // All-Pro 1st team — collapsed by default
+    if (record.allProFirst && record.allProFirst.length > 0) {
+      html += '<div style="margin-top:14px"><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">ALL-PRO FIRST TEAM</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px 16px;font-size:12px">';
+      record.allProFirst.forEach(p => {
+        html += '<div><span style="font-weight:600">' + p.position + '</span> · <span style="cursor:pointer;text-decoration:underline" onclick="closeModal();game.showPlayer(' + p.playerId + ')">' + p.name + '</span></div>';
+      });
+      html += '</div></div>';
+    }
+    
+    // Pro Bowl summary count
+    if (record.proBowl) {
+      const total = (record.proBowl.AFC ? record.proBowl.AFC.length : 0) + (record.proBowl.NFC ? record.proBowl.NFC.length : 0);
+      html += '<div style="margin-top:12px;font-size:11px;color:var(--text-muted)">' + total + ' players named to the Pro Bowl. Full roster on the Awards page.</div>';
+    }
+    
+    return html;
+  },
+  
+  // College tab contents — uses latestCollegeRecap for the most recent college season
+  _renderAwardsCeremonyCollege(data) {
+    const recap = this.state.latestCollegeRecap;
+    if (!recap) {
+      return '<div class="empty-state" style="padding:24px">No college season has concluded yet.</div>';
+    }
+    const schoolLinkByAbbr = (abbr) => {
+      const found = COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
+      if (!found) return abbr;
+      return '<span style="cursor:pointer;text-decoration:underline" onclick="closeModal();game.showCollegeCard(\'' + abbr + '\')">' + found.name + '</span>';
+    };
+    
+    let html = '';
+    
+    // National championship
+    const titleScore = recap.cfpTitleGame ? ' ' + recap.cfpTitleGame.winnerScore + '–' + recap.cfpTitleGame.loserScore : '';
+    html += '<div style="background:var(--surface-2);padding:14px 18px;margin-bottom:14px;border-left:4px solid var(--accent)">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600">NATIONAL CHAMPION</div>' +
+      '<div style="font-size:18px;font-weight:700;letter-spacing:-0.2px;margin-top:2px">' + schoolLinkByAbbr(recap.championAbbr) + '</div>' +
+      '<div class="muted" style="font-size:12px;margin-top:2px">defeated ' + schoolLinkByAbbr(recap.runnerUpAbbr || '') + titleScore + '</div>' +
+      '</div>';
+    
+    // Heisman
+    html += '<div style="background:var(--surface);padding:10px 14px;margin-bottom:6px;border-left:3px solid #d4a017">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600">HEISMAN TROPHY</div>' +
+      '<div style="font-size:14px;font-weight:600;margin-top:2px">' + recap.heismanName + ' <span class="muted" style="font-size:11px">' + recap.heismanPosition + ' · ' + schoolLinkByAbbr(recap.heismanSchool) + '</span></div>' +
+      '</div>';
+    
+    // Maxwell
+    if (recap.maxwellName) {
+      html += '<div style="background:var(--surface);padding:10px 14px;margin-bottom:6px;border-left:3px solid #d4a017">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600">MAXWELL AWARD</div>' +
+        '<div style="font-size:14px;font-weight:600;margin-top:2px">' + recap.maxwellName + ' <span class="muted" style="font-size:11px">' + recap.maxwellPosition + ' · ' + schoolLinkByAbbr(recap.maxwellSchool) + '</span></div>' +
+        '</div>';
+    }
+    
+    // Heisman finalists
+    if (recap.heismanFinalists && recap.heismanFinalists.length > 0) {
+      html += '<div style="margin-top:14px"><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">HEISMAN FINALISTS</div>' +
+        '<div style="display:grid;grid-template-columns:1fr;gap:4px;font-size:12px">';
+      recap.heismanFinalists.forEach((f, i) => {
+        const s = f.stats || {};
+        let prod;
+        if (f.position === 'QB') prod = (s.passYds || 0).toLocaleString() + ' yds, ' + (s.passTDs || 0) + ' TD';
+        else if (f.position === 'RB') prod = (s.rushYds || 0).toLocaleString() + ' yds, ' + (s.rushTDs || 0) + ' TD';
+        else prod = (s.receptions || 0) + ' rec, ' + (s.recYds || 0).toLocaleString() + ' yds, ' + (s.recTDs || 0) + ' TD';
+        html += '<div><span style="opacity:0.6">#' + (i + 1) + '</span> <strong>' + f.name + '</strong> <span class="muted">(' + f.position + ', ' + schoolLinkByAbbr(f.school) + ') — ' + prod + '</span></div>';
+      });
+      html += '</div></div>';
+    }
+    
+    // Conference championship count
+    if (recap.confChampGames && recap.confChampGames.length > 0) {
+      html += '<div style="margin-top:14px;font-size:11px;color:var(--text-muted)">' + recap.confChampGames.length + ' conference titles decided · ' + (recap.bowlGames ? recap.bowlGames.length : 0) + ' bowl games played. Full results on the College Recap page.</div>';
+    }
+    
+    return html;
   },
 
   // MODAL HELPER — supports a back button via modalHistory stack.
