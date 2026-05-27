@@ -1268,18 +1268,31 @@ let game = {
   },
 
   bindEvents() {
-    document.querySelectorAll('.nav-item').forEach(item => {
-      item.addEventListener('click', () => {
+    // Use event delegation on the sidebar so clicks work even after the player-career nav
+    // re-renders its inner HTML. A single listener at the sidebar level catches `.nav-item`
+    // clicks regardless of when those items entered the DOM — solves the "tap doesn't navigate"
+    // bug that happened because individual handlers were lost after innerHTML rewrites.
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) {
+      sidebar.addEventListener('click', (e) => {
+        // Walk up to find the nearest .nav-item (handles clicks on inner spans/icons)
+        let target = e.target;
+        while (target && target !== sidebar && !target.classList.contains('nav-item')) {
+          target = target.parentElement;
+        }
+        if (!target || !target.classList.contains('nav-item')) return;
         if (this.state && this.state.draftActive) return;
+        const view = target.dataset.view;
+        if (!view) return;
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-        item.classList.add('active');
-        this.currentView = item.dataset.view;
+        target.classList.add('active');
+        this.currentView = view;
         // Reset drill-down sub-state when navigating via the sidebar so users always see the
         // landing view (e.g. team-history list, not a stale drill-down).
         if (this.currentView === 'teamhistory') this.viewingTeamHistoryId = null;
         this.render();
       });
-    });
+    }
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') closeModal();
       if (e.key === ' ' && this.state && !this.state.draftActive && !document.getElementById('modal').classList.contains('show')) {
@@ -1377,16 +1390,7 @@ let game = {
             '<div class="nav-title">Your Career</div>' +
             '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>';
         }
-        // Rebind click handlers on the freshly-written nav items
-        playerCareerNav.querySelectorAll('.nav-item').forEach(item => {
-          item.addEventListener('click', () => {
-            if (this.state && this.state.draftActive) return;
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            item.classList.add('active');
-            this.currentView = item.dataset.view;
-            this.render();
-          });
-        });
+        // No rebind needed — event delegation on #sidebar catches clicks on these items
       }
       return;
     }
@@ -3934,9 +3938,12 @@ let game = {
     if (!this.state.collegeSchedule) return [];
     if (this.state.collegeWeek >= this.COLLEGE_SEASON_WEEKS) return [];
     // At the very start of a season (week 0 → 1), zero out per-player Heisman stats so the
-    // running leaderboard tracks THIS year only.
+    // running leaderboard tracks THIS year only. Also reset the user's per-game log.
     if (this.state.collegeWeek === 0) {
-      (this.state.collegeProspects || []).forEach(p => { if (p._heismanStats) delete p._heismanStats; });
+      (this.state.collegeProspects || []).forEach(p => {
+        if (p._heismanStats) delete p._heismanStats;
+        if (p._currentSeasonGameLog) delete p._currentSeasonGameLog;
+      });
     }
     this.state.collegeWeek++;
     const week = this.state.collegeWeek;
@@ -3977,6 +3984,60 @@ let game = {
     g.awayScore = awayScore;
     g.played = true;
     g.topPerformers = this.pickGameTopPerformers(g.home, g.away, homeScore, awayScore);
+    
+    // If the user's player is in this game, capture their personal performance for the post-game popup.
+    // This runs regardless of whether they were a top performer — the user always sees their own line.
+    const userPlayer = this.getUserPlayer();
+    if (userPlayer && (userPlayer.school === g.home || userPlayer.school === g.away)) {
+      const userIsHome = userPlayer.school === g.home;
+      const userTeamScore = userIsHome ? homeScore : awayScore;
+      const oppScore = userIsHome ? awayScore : homeScore;
+      const userIsWin = userTeamScore > oppScore;
+      const perf = this.generateUserGameStatLine(userPlayer, userTeamScore, oppScore, userIsWin);
+      g.userPerformance = {
+        ...perf,
+        userIsHome,
+        userTeamScore,
+        oppScore,
+        userIsWin,
+        userTeamAbbr: userPlayer.school,
+        opponentAbbr: userIsHome ? g.away : g.home,
+        week: g.week,
+        _isCollege: true
+      };
+      // Accumulate into the user's _heismanStats AND seasonStatsAcc so career stats survive
+      if (perf.raw && !perf.didNotPlay) {
+        if (!userPlayer._heismanStats) {
+          userPlayer._heismanStats = { passYds: 0, passTDs: 0, ints: 0, rushYds: 0, rushTDs: 0, recYds: 0, recTDs: 0, receptions: 0, games: 0, lastTeamScore: 0 };
+        }
+        userPlayer._heismanStats.games++;
+        userPlayer._heismanStats.passYds += perf.raw.passYds || 0;
+        userPlayer._heismanStats.passTDs += perf.raw.passTDs || 0;
+        userPlayer._heismanStats.ints += perf.raw.ints || 0;
+        userPlayer._heismanStats.rushYds += perf.raw.rushYds || 0;
+        userPlayer._heismanStats.rushTDs += perf.raw.rushTDs || 0;
+        userPlayer._heismanStats.recYds += perf.raw.recYds || 0;
+        userPlayer._heismanStats.recTDs += perf.raw.recTDs || 0;
+        userPlayer._heismanStats.receptions += perf.raw.receptions || 0;
+      }
+      // Per-game log for the current college season — populates the "Game-by-game" table on
+      // the My Career page. Resets at the start of each college season (in simCollegeWeek).
+      if (!userPlayer._currentSeasonGameLog) userPlayer._currentSeasonGameLog = [];
+      userPlayer._currentSeasonGameLog.push({
+        week: g.week,
+        opponentAbbr: userIsHome ? g.away : g.home,
+        userIsHome,
+        teamScore: userTeamScore,
+        oppScore,
+        result: userIsWin ? 'W' : 'L',
+        didNotPlay: !!perf.didNotPlay,
+        snaps: perf.snaps || 0,
+        snapPct: perf.snapPct || 0,
+        raw: perf.raw || {}
+      });
+      // Queue the popup. simWeek will check this flag after college sim finishes.
+      this._pendingUserGamePopup = { gameRef: g };
+    }
     
     // Update standings
     const homeWin = homeScore > awayScore;
@@ -4094,6 +4155,177 @@ let game = {
       };
     }
     return { display: '—', raw: {} };
+  },
+  
+  // Generate a richer per-game stat line specifically for the USER'S player. Unlike the generic
+  // top-performer line, this:
+  //  - Always renders something (even for buried backups or defensive players)
+  //  - Scales with the user's prospect grade AND depth-chart position (starter sees more snaps)
+  //  - Returns usage metrics (snap %, role) so the post-game card shows context
+  //  - Handles defensive positions (LB, CB, S, EDGE, DT) properly
+  // Returns: { stats: {...display+raw}, snaps, snapPct, role, didNotPlay? }
+  generateUserGameStatLine(p, teamScore, opponentScore, isWin) {
+    // Determine depth slot at user's school + position
+    const samePos = (this.state.collegeProspects || [])
+      .filter(x => x.school === p.school && x.position === p.position)
+      .sort((a, b) => b.prospectGrade - a.prospectGrade);
+    const depthIdx = samePos.findIndex(x => x.id === p.id);
+    const isStarter = depthIdx === 0;
+    
+    // Snap percentage by depth slot
+    let snapPct;
+    if (depthIdx === 0) snapPct = 88 + Math.floor(Math.random() * 10); // 88-97% — starter
+    else if (depthIdx === 1) snapPct = 28 + Math.floor(Math.random() * 25); // 28-52% — backup/rotation
+    else if (depthIdx === 2) snapPct = 8 + Math.floor(Math.random() * 18); // 8-25% — deep backup
+    else snapPct = Math.random() < 0.4 ? Math.floor(Math.random() * 8) : 0; // 0-7% or DNP
+    
+    // If snap % is 0 and player is buried deep, didNotPlay
+    if (snapPct === 0 && depthIdx >= 3) {
+      return {
+        didNotPlay: true,
+        snapPct: 0,
+        snaps: 0,
+        role: 'Did not play',
+        depthIdx
+      };
+    }
+    
+    // Scale factor for production = grade-based × snap-based
+    // 95-grade starter on a 42-point team should put up monster lines.
+    // 65-grade depth player on a 14-point team puts up scraps.
+    const gradeFactor = Math.max(0.4, Math.min(1.4, p.prospectGrade / 78)); // 0.4 to 1.4
+    const teamScoreFactor = teamScore / 28;
+    const snapFactor = snapPct / 100;
+    const usage = gradeFactor * snapFactor * (0.7 + teamScoreFactor * 0.5);
+    
+    // Approximate snap count
+    const totalSnaps = 65 + Math.floor(Math.random() * 15);
+    const snaps = Math.round(totalSnaps * snapFactor);
+    
+    // Role label
+    let role;
+    if (depthIdx === 0) role = 'Starter';
+    else if (depthIdx === 1) role = 'Rotational';
+    else if (depthIdx === 2) role = 'Deep reserve';
+    else role = 'Scout team';
+    
+    const raw = {};
+    const lines = []; // human-readable stat lines
+    
+    if (p.position === 'QB') {
+      // QB stats only get generated if starter or close. Backup QBs occasionally take a series.
+      if (depthIdx === 0) {
+        const yds = Math.round((180 + Math.random() * 220) * usage);
+        const tds = Math.max(0, Math.floor((1 + Math.random() * 3) * usage));
+        const ints = Math.random() < 0.30 ? (Math.random() < 0.25 ? 2 : 1) : 0;
+        const att = 24 + Math.floor(Math.random() * 18);
+        const cmp = Math.max(8, Math.round(att * (0.55 + Math.random() * 0.18)));
+        raw.passYds = yds; raw.passTDs = tds; raw.ints = ints; raw.cmp = cmp; raw.att = att;
+        lines.push(cmp + '/' + att + ' for ' + yds + ' yards');
+        lines.push(tds + ' passing TD' + (tds === 1 ? '' : 's'));
+        if (ints > 0) lines.push(ints + ' INT' + (ints > 1 ? 's' : ''));
+        // QBs can rush a bit
+        const rushYds = Math.round(Math.random() * 35);
+        if (rushYds > 0) { raw.rushYds = rushYds; lines.push(rushYds + ' rushing yards'); }
+      } else {
+        // Backup QB — limited reps or none
+        if (snapPct >= 10) {
+          const yds = Math.round((10 + Math.random() * 40) * usage);
+          raw.passYds = yds;
+          lines.push((2 + Math.floor(Math.random() * 4)) + '/' + (4 + Math.floor(Math.random() * 5)) + ' for ' + yds + ' yards');
+          raw.passTDs = 0; raw.ints = 0;
+        } else {
+          lines.push('Did not throw a pass');
+        }
+      }
+    } else if (p.position === 'RB') {
+      const carries = Math.max(0, Math.round((8 + Math.random() * 18) * usage));
+      const yds = Math.round(carries * (3.5 + Math.random() * 2.5));
+      const tds = (carries >= 8 && Math.random() < 0.45 * usage) ? 1 + Math.floor(Math.random() * 1.4) : 0;
+      raw.carries = carries; raw.rushYds = yds; raw.rushTDs = tds;
+      if (carries > 0) lines.push(carries + ' carries for ' + yds + ' yards');
+      if (tds > 0) lines.push(tds + ' rushing TD' + (tds > 1 ? 's' : ''));
+      // RBs catch passes too
+      const recs = Math.max(0, Math.round(Math.random() * 4 * usage));
+      const recYds = recs > 0 ? Math.round(recs * (5 + Math.random() * 6)) : 0;
+      if (recs > 0) {
+        raw.receptions = recs; raw.recYds = recYds;
+        lines.push(recs + ' rec for ' + recYds + ' yards');
+      }
+    } else if (p.position === 'WR' || p.position === 'TE') {
+      const targets = Math.max(0, Math.round((3 + Math.random() * 7) * usage));
+      const recs = Math.max(0, Math.round(targets * (0.55 + Math.random() * 0.25)));
+      const yds = recs > 0 ? Math.round(recs * (8 + Math.random() * 12) * (p.position === 'TE' ? 0.8 : 1.1)) : 0;
+      const tds = (recs >= 3 && Math.random() < 0.4 * usage) ? 1 : 0;
+      raw.targets = targets; raw.receptions = recs; raw.recYds = yds; raw.recTDs = tds;
+      if (recs > 0) lines.push(recs + '/' + targets + ' targets for ' + yds + ' yards');
+      else if (targets > 0) lines.push('0/' + targets + ' targets (no catches)');
+      else lines.push('No targets');
+      if (tds > 0) lines.push(tds + ' receiving TD');
+    } else if (p.position === 'OT' || p.position === 'OG' || p.position === 'C') {
+      // Offensive linemen — no individual stats, but show pancakes/sacks-allowed proxy
+      const pancakes = Math.max(0, Math.round((1 + Math.random() * 5) * usage));
+      const sacksAllowed = Math.random() < 0.25 * (1 - usage * 0.5) ? 1 : 0;
+      raw.pancakes = pancakes; raw.sacksAllowed = sacksAllowed;
+      lines.push(pancakes + ' pancake block' + (pancakes === 1 ? '' : 's'));
+      if (sacksAllowed > 0) lines.push(sacksAllowed + ' sack allowed');
+      else lines.push('Clean pocket — 0 sacks allowed');
+    } else if (p.position === 'EDGE' || p.position === 'DT') {
+      const tackles = Math.max(0, Math.round((3 + Math.random() * 5) * usage));
+      const tfl = Math.random() < 0.5 * usage ? 1 + Math.floor(Math.random() * 1.3) : 0;
+      const sacks = Math.random() < 0.4 * usage ? (Math.random() < 0.3 ? 2 : 1) : 0;
+      const qbHits = sacks + (Math.random() < 0.4 * usage ? 1 : 0);
+      raw.tackles = tackles; raw.tfl = tfl; raw.sacks = sacks; raw.qbHits = qbHits;
+      lines.push(tackles + ' tackle' + (tackles === 1 ? '' : 's'));
+      if (sacks > 0) lines.push(sacks + ' sack' + (sacks > 1 ? 's' : ''));
+      if (tfl > 0) lines.push(tfl + ' TFL');
+      if (qbHits > 0 && sacks === 0) lines.push(qbHits + ' QB hit' + (qbHits > 1 ? 's' : ''));
+    } else if (p.position === 'LB') {
+      const tackles = Math.max(0, Math.round((5 + Math.random() * 8) * usage));
+      const tfl = Math.random() < 0.4 * usage ? 1 + Math.floor(Math.random() * 1.3) : 0;
+      const sacks = Math.random() < 0.2 * usage ? 1 : 0;
+      const ints = Math.random() < 0.10 * usage ? 1 : 0;
+      raw.tackles = tackles; raw.tfl = tfl; raw.sacks = sacks; raw.interceptionsMade = ints;
+      lines.push(tackles + ' tackle' + (tackles === 1 ? '' : 's'));
+      if (sacks > 0) lines.push(sacks + ' sack');
+      if (tfl > 0) lines.push(tfl + ' TFL');
+      if (ints > 0) lines.push(ints + ' INT');
+    } else if (p.position === 'CB' || p.position === 'S') {
+      const tackles = Math.max(0, Math.round((3 + Math.random() * 6) * usage));
+      const passDef = Math.random() < 0.5 * usage ? 1 + Math.floor(Math.random() * 1.4) : 0;
+      const ints = Math.random() < 0.15 * usage ? 1 : 0;
+      const tdAllowed = Math.random() < 0.18 ? 1 : 0;
+      raw.tackles = tackles; raw.passDef = passDef; raw.interceptionsMade = ints; raw.tdAllowed = tdAllowed;
+      lines.push(tackles + ' tackle' + (tackles === 1 ? '' : 's'));
+      if (passDef > 0) lines.push(passDef + ' pass break-up' + (passDef === 1 ? '' : 's'));
+      if (ints > 0) lines.push(ints + ' INT');
+      if (tdAllowed > 0 && p.position === 'CB') lines.push('Allowed ' + tdAllowed + ' TD');
+    } else if (p.position === 'K') {
+      const fgAtt = Math.floor(Math.random() * 4);
+      const fgMade = fgAtt > 0 ? Math.max(0, fgAtt - (Math.random() < 0.2 ? 1 : 0)) : 0;
+      const xpAtt = Math.floor(teamScore / 7);
+      const xpMade = xpAtt > 0 ? Math.max(0, xpAtt - (Math.random() < 0.1 ? 1 : 0)) : 0;
+      raw.fgMade = fgMade; raw.fgAtt = fgAtt; raw.xpMade = xpMade; raw.xpAtt = xpAtt;
+      lines.push(fgMade + '/' + fgAtt + ' FG');
+      lines.push(xpMade + '/' + xpAtt + ' XP');
+    } else if (p.position === 'P') {
+      const punts = 3 + Math.floor(Math.random() * 6);
+      const avg = 38 + Math.floor(Math.random() * 12);
+      raw.punts = punts; raw.puntAvg = avg;
+      lines.push(punts + ' punts · ' + avg + '.0 avg');
+    } else {
+      lines.push('Active');
+    }
+    
+    return {
+      didNotPlay: false,
+      snaps,
+      snapPct,
+      role,
+      depthIdx,
+      lines,
+      raw
+    };
   },
   
   // Compute the current Heisman race standings from accumulated _heismanStats.
@@ -4611,6 +4843,11 @@ let game = {
         if (!isUser || this.state.useAssistantGM) this.runAssistantGM(team);
       });
       
+      // BLUE-CHIP FA SWEEP — any young high-OVR player left unsigned gets snapped up by SOME team.
+      // Real NFL: a 24-year-old 90 OVR EDGE doesn't sit in FA. Teams break cap math to sign them.
+      // This runs AFTER AGM (which may have created the FA) and BEFORE the roster minimum fill.
+      this.runBlueChipFASweep();
+      
       // Post-AGM FA fill — fill any roster gaps AGM created. Backstop only; cheap rookies/UDFAs.
       this.fillRostersToMinimum();
       
@@ -4625,6 +4862,12 @@ let game = {
         const isUser = team.id === this.state.userTeamId;
         if (!isUser || this.state.useAssistantGM) this.runAssistantGM(team);
       });
+      // One more blue-chip sweep after the final AGM pass in case any stars slipped through.
+      this.runBlueChipFASweep();
+      
+      // Enforce league-wide OVR bell curve. If too many players have inflated into the elite tiers,
+      // apply small downward nudges so the league stays approximately bell-shaped year over year.
+      this.enforceLeagueOvrEquilibrium();
       
       this.generateSchedule();
       this.generateCollegeSchedule();
@@ -5257,11 +5500,12 @@ let game = {
     const playerUsed = teamCapUsed(team, this.state.players);
     const coachingUsed = this.teamCoachingSalary(team);
     const violations = [];
-    if (playerUsed > playerCap) {
+    // Small grace ($1M) for rounding — real NFL also has minor cap math fudge.
+    if (playerUsed > playerCap + 1_000_000) {
       violations.push('Player payroll: ' + formatMoney(playerUsed) + ' / ' + formatMoney(playerCap) +
         ' (' + formatMoney(playerUsed - playerCap) + ' over)');
     }
-    if (coachingUsed > COACHING_CAP) {
+    if (coachingUsed > COACHING_CAP + 100_000) {
       violations.push('Coaching staff: ' + formatMoney(coachingUsed) + ' / ' + formatMoney(COACHING_CAP) +
         ' (' + formatMoney(coachingUsed - COACHING_CAP) + ' over)');
     }
@@ -5438,6 +5682,110 @@ let game = {
       }
     }
     this.generateGameStats(g, home, away);
+    
+    // If the user is an active NFL player on either team, capture their per-game performance for the popup.
+    // Skipped for non-player careers and for retired/injured users (DNP).
+    const userPlayer = this.getUserPlayer();
+    if (userPlayer && this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'nfl' && !userPlayer.retired) {
+      const userOnHome = home.roster.includes(userPlayer.id);
+      const userOnAway = away.roster.includes(userPlayer.id);
+      if (userOnHome || userOnAway) {
+        const userIsHome = userOnHome;
+        const userTeamScore = userIsHome ? g.homeScore : g.awayScore;
+        const oppScore = userIsHome ? g.awayScore : g.homeScore;
+        const userIsWin = userTeamScore > oppScore;
+        const userTeam = userIsHome ? home : away;
+        const oppTeam = userIsHome ? away : home;
+        // Pull per-game stats accumulated in generateGameStats
+        const gameStats = (g.playerStats && g.playerStats[userPlayer.id]) || null;
+        // Did they play? gamesPlayed increments mark; absence of stats means DNP (injured or scratched)
+        const didNotPlay = !gameStats || (userPlayer.injury && userPlayer.injury.weeksRemaining > 0);
+        // Snap %: rough proxy. NFL starter sees 90%+; backups see less. We don't model snaps directly,
+        // so derive a reasonable estimate from the game stats vs team totals.
+        const snapPct = didNotPlay ? 0 : this._estimateNflSnapPct(userPlayer, userTeam, gameStats);
+        const snaps = Math.round(65 * snapPct / 100);
+        const role = didNotPlay ? 'Did not play' : (snapPct >= 70 ? 'Starter' : snapPct >= 30 ? 'Rotational' : 'Reserve');
+        // Build human-readable stat lines from the game stats
+        const lines = didNotPlay ? [] : this._formatNflGameLines(userPlayer, gameStats);
+        this._pendingUserNflGamePopup = {
+          didNotPlay,
+          snaps, snapPct, role,
+          lines,
+          raw: gameStats || {},
+          userIsHome,
+          userTeamScore,
+          oppScore,
+          userIsWin,
+          userTeamAbbr: userTeam.abbr,
+          opponentAbbr: oppTeam.abbr,
+          userTeamName: userTeam.city + ' ' + userTeam.name,
+          opponentName: oppTeam.city + ' ' + oppTeam.name,
+          week: g.week || this.state.week,
+          _isCollege: false,
+          _userTeamId: userTeam.id,
+          _oppTeamId: oppTeam.id,
+          _gameRef: g
+        };
+      }
+    }
+  },
+  
+  // Estimate snap % for the user's NFL player based on their stat contribution and depth position.
+  // Pure heuristic — actual snap counts aren't tracked per-game.
+  _estimateNflSnapPct(p, team, gameStats) {
+    // Depth at position
+    const samePos = team.roster.map(id => this.state.players[id]).filter(x => x && !x.retired && x.position === p.position).sort((a, b) => b.rating - a.rating);
+    const depthIdx = samePos.findIndex(x => x.id === p.id);
+    if (depthIdx === 0) return 88 + Math.floor(Math.random() * 10);
+    if (depthIdx === 1) return p.position === 'WR' || p.position === 'CB' || p.position === 'LB' ? 45 + Math.floor(Math.random() * 25) : 25 + Math.floor(Math.random() * 20);
+    if (depthIdx === 2) return 8 + Math.floor(Math.random() * 15);
+    return Math.random() < 0.3 ? Math.floor(Math.random() * 6) : 0;
+  },
+  
+  // Format the user's NFL per-game stats into display-friendly lines.
+  _formatNflGameLines(p, gs) {
+    const lines = [];
+    if (p.position === 'QB') {
+      const cmp = gs.completions || 0;
+      const att = gs.attempts || 0;
+      const yds = gs.passingYards || 0;
+      const tds = gs.passingTDs || 0;
+      const ints = gs.interceptionsThrown || 0;
+      if (att > 0) lines.push(cmp + '/' + att + ' for ' + yds.toLocaleString() + ' yards');
+      if (tds > 0) lines.push(tds + ' passing TD' + (tds === 1 ? '' : 's'));
+      if (ints > 0) lines.push(ints + ' INT' + (ints > 1 ? 's' : ''));
+      if ((gs.rushingYards || 0) > 0) lines.push((gs.rushingYards) + ' rushing yards' + ((gs.rushingTDs || 0) > 0 ? ', ' + gs.rushingTDs + ' TD' : ''));
+    } else if (p.position === 'RB') {
+      const car = gs.carries || 0;
+      const yds = gs.rushingYards || 0;
+      const tds = gs.rushingTDs || 0;
+      if (car > 0) lines.push(car + ' carries for ' + yds + ' yards');
+      if (tds > 0) lines.push(tds + ' rushing TD' + (tds === 1 ? '' : 's'));
+      if ((gs.receptions || 0) > 0) lines.push(gs.receptions + ' rec for ' + (gs.receivingYards || 0) + ' yards' + ((gs.receivingTDs || 0) > 0 ? ', ' + gs.receivingTDs + ' TD' : ''));
+    } else if (p.position === 'WR' || p.position === 'TE') {
+      const rec = gs.receptions || 0;
+      const yds = gs.receivingYards || 0;
+      const tds = gs.receivingTDs || 0;
+      const tgt = gs.targets || 0;
+      if (rec > 0 || tgt > 0) lines.push(rec + (tgt > 0 ? '/' + tgt + ' targets' : ' rec') + ' for ' + yds + ' yards');
+      if (tds > 0) lines.push(tds + ' receiving TD' + (tds === 1 ? '' : 's'));
+    } else if (['EDGE','DT','LB','CB','S'].includes(p.position)) {
+      const tk = gs.tackles || 0;
+      const sk = gs.sacks || 0;
+      const ints = gs.interceptionsMade || 0;
+      if (tk > 0) lines.push(tk + ' tackle' + (tk === 1 ? '' : 's'));
+      if (sk > 0) lines.push(sk + ' sack' + (sk > 1 ? 's' : ''));
+      if (ints > 0) lines.push(ints + ' INT' + (ints > 1 ? 's' : ''));
+    } else if (p.position === 'K') {
+      lines.push((gs.fieldGoalsMade || 0) + '/' + (gs.fieldGoalsAttempted || 0) + ' FG');
+      lines.push((gs.extraPoints || 0) + ' XP');
+    } else if (p.position === 'P') {
+      lines.push((gs.punts || 0) + ' punts · ' + (gs.puntYards && gs.punts ? (gs.puntYards / gs.punts).toFixed(1) : '0.0') + ' avg');
+    } else {
+      lines.push('Active');
+    }
+    if (lines.length === 0) lines.push('Limited usage');
+    return lines;
   },
 
   getTeamStrength(team) {
@@ -5448,9 +5796,21 @@ let game = {
     if (!roster.length) return 50;
     const sorted = [...roster].sort((a, b) => b.rating - a.rating).slice(0, 22);
     const playerAvg = sorted.reduce((s, p) => s + p.rating, 0) / sorted.length;
-    // HC OVR provides a small bump/penalty around 75 baseline
+    // HC OVR provides a meaningful bump/penalty around 75 baseline. A great HC (90+) is worth
+    // ~2 strength points — meaningful enough that elite coaches anchor team performance.
     const hc = this.getTeamHC(team);
-    const coachBonus = hc ? (hc.ovr - 75) * 0.06 : 0;
+    const coachBonus = hc ? (hc.ovr - 75) * 0.10 : 0;
+    // FRANCHISE QB BONUS — a starting QB at 85+ OVR is a force multiplier. Real NFL: teams with
+    // elite QBs maintain competitiveness even through roster turnover (Mahomes, Rodgers prime,
+    // Brady eras). The QB elevates everyone around them.
+    const qbs = roster.filter(p => p.position === 'QB').sort((a, b) => b.rating - a.rating);
+    let qbBonus = 0;
+    if (qbs[0]) {
+      if (qbs[0].rating >= 92) qbBonus = 1.8;
+      else if (qbs[0].rating >= 88) qbBonus = 1.2;
+      else if (qbs[0].rating >= 85) qbBonus = 0.6;
+      else if (qbs[0].rating < 70) qbBonus = -1.0; // weak QB is also a force multiplier in reverse
+    }
     // Training boost: a focused training week gives a small competitive edge (~+1 strength rating).
     // Real NFL: prep matters but it's not transformative. This nudges win probability by a few percent.
     const trainBonus = team.weeklyTraining ? 1.2 : 0;
@@ -5459,7 +5819,7 @@ let game = {
     if (team.playcalling && team.playcalling.aggressiveness !== undefined) {
       aggBonus = (team.playcalling.aggressiveness - 50) * 0.015; // -0.75 to +0.75
     }
-    return playerAvg + coachBonus + trainBonus + aggBonus;
+    return playerAvg + coachBonus + qbBonus + trainBonus + aggBonus;
   },
 
   // Get effective pass emphasis for a team based on its coaching playstyle
@@ -6382,8 +6742,228 @@ let game = {
   },
 
   // FA players
+  // Active player pool helper — used by both blue-chip sweep and equilibrium pass.
   getFreeAgentPlayers() {
-    return this.state.players.filter(p => !p.retired && p.team === null);
+    return this.state.players.filter(p => !p.retired && !p._culled && p.team === null);
+  },
+  
+  // ENFORCE LEAGUE OVR EQUILIBRIUM — runs once per offseason to keep the league's rating distribution
+  // approximately bell-shaped. Without this, year-over-year progression slowly inflates the top tier
+  // (everyone develops, fewer retire) and after 5 years the league has 3-4x the realistic count of
+  // 85+ OVR players. We measure each band and apply small targeted nudges to bring it back to target.
+  //
+  // Targets (calibrated to a realistic NFL distribution, ~1700 active players):
+  //   95+ : 0.2%   (3-4 generational)
+  //   90-94: 1.0%  (15-20 elite)
+  //   85-89: 4.0%  (60-70 Pro Bowl tier)
+  //   80-84: 13%   (220 quality starters)
+  //   75-79: 24%   (400)
+  //   70-74: 27%   (450)
+  //   65-69: 19%   (320)
+  //   60-64: 9%    (150)
+  //   <60  : 3%    (50 fringe)
+  //
+  // We only nudge DOWN (never up — the natural growth handles that). The user's own player is
+  // exempt so they're never silently nerfed.
+  enforceLeagueOvrEquilibrium() {
+    const targetPct = { 95: 0.002, 90: 0.010, 85: 0.040, 80: 0.130, 75: 0.240 };
+    const active = this.state.players.filter(p =>
+      !p.retired && !p._culled && p.team !== null && !p.isUserControlled
+    );
+    if (active.length < 100) return; // not enough population yet
+    
+    // Bucket boundaries from highest to lowest (we walk top-down so high-tier nudges cascade
+    // into lower tiers and natural pressure builds the bell curve back).
+    const tiers = [
+      { floor: 95, target: targetPct[95] },
+      { floor: 90, target: targetPct[90] },
+      { floor: 85, target: targetPct[85] },
+      { floor: 80, target: targetPct[80] }
+    ];
+    
+    const totalCount = this.state.players.filter(p => !p.retired && !p._culled && p.team !== null).length;
+    let nudged = 0;
+    
+    for (const tier of tiers) {
+      // Re-query the band each iteration since prior nudges may have moved some players down.
+      const ceil = tier.floor + 5;
+      const inBand = active.filter(p => p.rating >= tier.floor && p.rating < ceil);
+      const target = Math.round(totalCount * tier.target);
+      const excess = inBand.length - target;
+      // Tight tolerance — only 5% of target. Want to keep the curve clean.
+      const tolerance = Math.max(2, Math.floor(target * 0.05));
+      if (excess <= tolerance) continue;
+      
+      // Sort the band so we nudge the marginal cases first (lowest OVR in the band).
+      // Within ties, older players get nudged first (their decline is more believable).
+      inBand.sort((a, b) => {
+        if (a.rating !== b.rating) return a.rating - b.rating;
+        return b.age - a.age;
+      });
+      
+      // Number to nudge — bring all the way down to target (no tolerance left over).
+      const toNudge = Math.min(inBand.length, excess);
+      for (let i = 0; i < toNudge; i++) {
+        const p = inBand[i];
+        if (!p.abilities) continue;
+        const abilityKeys = Object.keys(p.abilities);
+        if (abilityKeys.length === 0) continue;
+        // Nudge enough to actually drop the player OUT of the band. The exact OVR drop needed
+        // depends on how far above the band's floor they are, but we want at least 2-3 OVR drop
+        // to clear the band entirely. With 5 abilities and ~0.4 OVR per ability point, that's
+        // ~5-8 ability points spread across 3-4 top abilities.
+        abilityKeys.sort((a, b) => p.abilities[b] - p.abilities[a]);
+        const nudgeCount = Math.min(4, abilityKeys.length);
+        for (let j = 0; j < nudgeCount; j++) {
+          const k = abilityKeys[j];
+          const drop = 2 + Math.floor(Math.random() * 2); // 2 or 3 points each
+          p.abilities[k] = Math.max(40, p.abilities[k] - drop);
+        }
+        p.rating = calculateOvrFromAbilities(p.position, p.abilities);
+        nudged++;
+      }
+    }
+    
+    return nudged;
+  },
+  
+  // BLUE-CHIP FA SWEEP — any high-quality unsigned player gets signed by SOMEONE.
+  // Real NFL: a 26-year-old 88 OVR WR doesn't sit unsigned. Teams find a way.
+  // Goal: <1% of the FA pool should be above OVR 77. Vets and youngsters alike get scooped up.
+  //
+  // We rank quality FAs by an "attractiveness" score (OVR adjusted for age), then for each FA
+  // pick the team most likely to sign — preferring teams with cap space + position need, but
+  // for genuinely good players (OVR 82+) we'll sign onto any team with cap space even if they
+  // don't need the position (real NFL: depth is always welcome at that quality level).
+  //
+  // The user's own player is never auto-signed here — they go through the FA-choice popup.
+  runBlueChipFASweep() {
+    const allFAs = this.state.players.filter(p =>
+      !p.retired && !p._culled && p.team === null && !p.isUserControlled
+    );
+    // Quality bar — anyone 78+ should get signed, period. Younger players sign at lower OVR too.
+    const blueChips = allFAs.filter(p => {
+      if (p.age <= 26 && p.rating >= 73) return true;
+      if (p.age <= 30 && p.rating >= 76) return true;
+      if (p.age <= 36 && p.rating >= 78) return true; // even older vets get signed if they're still good
+      return false;
+    });
+    // Sort by attractiveness — high OVR first, with mild penalty for older vets.
+    blueChips.sort((a, b) => {
+      const aScore = a.rating - (Math.max(0, a.age - 28) * 0.6);
+      const bScore = b.rating - (Math.max(0, b.age - 28) * 0.6);
+      return bScore - aScore;
+    });
+    
+    let signed = 0;
+    for (const fa of blueChips) {
+      // Find the team most willing to sign. Cap math is checked at signing time (with restructure
+      // attempts) — at candidate-selection time we just need a team with minimal cap room and
+      // position-fit interest.
+      const candidates = [];
+      for (const team of this.state.teams) {
+        if (team.id === this.state.userTeamId && !this.state.useAssistantGM) continue;
+        const cap = getSalaryCap(this.state.year);
+        const used = teamCapUsed(team, this.state.players);
+        const space = cap - used;
+        // Skip only if team is deeply over cap (no realistic restructure fix). Real NFL teams
+        // can find ~$8-15M via restructures, so allow teams with up to that much over.
+        if (space < -10_000_000) continue;
+        
+        const needs = this.calculateTeamNeeds(team);
+        const posNeed = needs[fa.position] || 0;
+        const samePos = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired && p.position === fa.position);
+        samePos.sort((a, b) => b.rating - a.rating);
+        const ourBest = samePos[0];
+        
+        // Stockpile guard — don't crowd a top-tier YOUNG player at the same position.
+        // We allow stockpiling at older positions (a 31-year-old elite vet isn't blocking development).
+        if (ourBest && ourBest.rating >= 88 && ourBest.age < 28 && fa.age > ourBest.age + 1) {
+          // We already have a young star here. Skip unless the FA is significantly better.
+          if (fa.rating <= ourBest.rating + 2) continue;
+        }
+        
+        // Score the team's interest. For HIGH-OVR FAs (78+) we'll sign regardless of position need.
+        // Real NFL: a quality vet always finds SOMEBODY willing to give them a one-year deal.
+        let interest = 0;
+        interest += Math.min(20, space / 2_500_000);
+        interest += posNeed * 3;
+        if (ourBest && fa.rating > ourBest.rating) interest += (fa.rating - ourBest.rating) * 2.5;
+        if (!ourBest) interest += 10;
+        // Bonus if the FA is a meaningful upgrade
+        if (ourBest && fa.rating - ourBest.rating >= 3) interest += 6;
+        
+        candidates.push({ team, interest });
+      }
+      if (candidates.length === 0) continue;
+      candidates.sort((a, b) => b.interest - a.interest);
+      // Try each candidate in interest order until one can afford the contract (possibly after restructure)
+      let signedThisFA = false;
+      for (const cand of candidates) {
+        const winner = cand.team;
+        // If FA has sat for ≥1 offseason already, they take a discounted prove-it deal.
+        // Real NFL: late-summer vet-min signings happen all the time for unsigned 78-85 OVR vets.
+        // Use vet-min ($1.5M, 1 year) instead of market AAV when player previously sat unsigned.
+        const isReducedDeal = (fa.yearsAsFA || 0) >= 1;
+        const estAAV = isReducedDeal
+          ? 1_500_000
+          : calculateContractAAV(fa.position, fa.rating, fa.age, this.state.year);
+        const cap = getSalaryCap(this.state.year);
+        // For user team, be extra careful — keep them with some breathing room so they don't
+        // immediately fail the cap-compliance check on next sim attempt.
+        const effectiveCap = (winner.id === this.state.userTeamId) ? cap - 2_000_000 : cap;
+        let space = effectiveCap - teamCapUsed(winner, this.state.players);
+        // If team is short on cap, attempt a quick restructure of one or two highest-paid players
+        // to free up room. Real NFL: this is exactly what GMs do to fit a big signing.
+        if (estAAV > space) {
+          const restructureCandidates = winner.roster
+            .map(id => this.state.players[id])
+            .filter(p => p && p.contract && p.contract.yearsRemaining >= 2 && p.rating >= 78 && p.contract.baseSalaries[0] > 4_000_000)
+            .sort((a, b) => b.contract.baseSalaries[0] - a.contract.baseSalaries[0]);
+          for (const p of restructureCandidates) {
+            if (estAAV <= effectiveCap - teamCapUsed(winner, this.state.players)) break;
+            const convertible = p.contract.baseSalaries[0] - 1_500_000;
+            if (convertible < 1_000_000) continue;
+            const converting = Math.round(convertible * 0.80 / 50_000) * 50_000;
+            p.contract.baseSalaries[0] -= converting;
+            p.contract.signingBonus += converting;
+            p.contract.bonusProrationYears = Math.min(5, p.contract.yearsRemaining);
+          }
+          space = effectiveCap - teamCapUsed(winner, this.state.players);
+        }
+        // Affordability check after potential restructures
+        if (estAAV > space * 1.05) continue;
+        fa.team = winner.id;
+        winner.roster.push(fa.id);
+        if (isReducedDeal) {
+          // 1-year prove-it deal at vet minimum. Real NFL: this is how Cam Newton signed late
+          // with Carolina, how veteran DBs sign in August, etc.
+          const vetMin = 1_500_000;
+          fa.contract = {
+            aav: vetMin,
+            years: 1,
+            yearsRemaining: 1,
+            totalValue: vetMin,
+            signingBonus: 0,
+            bonusProrationYears: 1,
+            baseSalaries: [vetMin]
+          };
+        } else {
+          fa.contract = generateContract(fa.position, fa.rating, fa.age, this.state.year, false);
+        }
+        signed++;
+        signedThisFA = true;
+        if (fa.rating >= 85) {
+          this.addHeadline({
+            type: 'contract',
+            title: winner.city + ' ' + winner.name + ' land ' + fa.name,
+            body: fa.position + ' ' + fa.name + ' (OVR ' + fa.rating + ', age ' + fa.age + ') signs a ' + fa.contract.years + '-year, ' + formatMoney(fa.contract.totalValue) + ' deal.'
+          });
+        }
+        break; // move to next FA
+      }
+    }
+    return signed;
   },
 
   // Sign a free-agent player
@@ -6415,7 +6995,11 @@ let game = {
   //   4. Last resort: cut mid-tier vets
   // Stars at fair-market value are kept; the AGM only cuts a star if the contract is truly toxic.
   runAssistantGM(team) {
-    const cap = getSalaryCap(this.state.year);
+    // Target cap headroom — real NFL teams don't run right up to the cap. They leave $5-15M
+    // for in-season signings, practice squad elevations, and mid-season trades. We use $8M
+    // as a conservative target so each team has room for the blue-chip sweep + minor moves.
+    const HEADROOM = 8_000_000;
+    const cap = getSalaryCap(this.state.year) - HEADROOM;
     const getPlayers = () => team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
     
     // STEP 0: Extend stars with 1 year left (only when cap-compliant)
@@ -6440,13 +7024,30 @@ let game = {
       return currentCapHit(p.contract) - fairAAV;
     };
     
+    // Determines whether a player is "untouchable" for cap purposes — a franchise-tier young star
+    // that no GM would realistically cut, because doing so destroys the team's future.
+    // Real NFL: 25-year-old Pro Bowl QBs and 24-year-old top OTs don't get cap-cut, period.
+    //   Criteria (tightened): under 27 AND OVR ≥ 85 — these are the true franchise cornerstones.
+    //   Also: the user's own player should ALWAYS be untouchable by CPU AGM.
+    // We keep the bar high enough that teams can still cut decent young players when in cap hell,
+    // which is what real NFL teams do when they have to.
+    const isFranchiseUntouchable = (p) => {
+      if (!p) return false;
+      if (p.isUserControlled) return true; // user player can't be CPU-cut
+      if (p.age < 27 && p.rating >= 85) return true;
+      return false;
+    };
+    
     // STEP 1: CUT BAD-VALUE CONTRACTS (cap casualties)
     // These are players whose cap hit far exceeds their on-field market value.
     // Real NFL: this is where Russell Wilson, Aaron Rodgers, etc. type cuts happen — high salary, declining play.
     // We require positive savings (savings = capHit - deadCap > 0) so the cut actually helps cap.
+    // Young franchise-tier players are NEVER cut here, even if their contract math looks "overpaid"
+    // for their current OVR — GMs don't gut their futures over short-term cap savings.
     if (teamCapUsed(team, this.state.players) > cap) {
       const casualties = getPlayers()
         .filter(p => p.contract && currentCapHit(p.contract) - deadCapIfReleased(p.contract) > 0)
+        .filter(p => !isFranchiseUntouchable(p))
         .map(p => ({ p, over: overpaidness(p), savings: currentCapHit(p.contract) - deadCapIfReleased(p.contract) }))
         .filter(x => x.over > 1_000_000) // truly overpaid (>$1M over market)
         .sort((a, b) => b.over - a.over); // most overpaid cut first
@@ -6535,11 +7136,14 @@ let game = {
     
     // STEP 4: LAST RESORT — cut remaining positive-savings players, lowest-OVR first
     // Real NFL: when cap pressure is severe, even decent backups get cut.
-    // We protect the top 25 players on the roster (rough starter count) to avoid gutting the team.
+    // We protect (a) the top 25 players by rating AND (b) any young franchise-tier player —
+    // because real NFL GMs would never cut a 23-year-old Pro Bowl QB for cap relief.
     if (teamCapUsed(team, this.state.players) > cap) {
       const allPlayers = getPlayers();
       const sortedByRating = [...allPlayers].sort((a, b) => b.rating - a.rating);
       const protectedIds = new Set(sortedByRating.slice(0, 25).map(p => p.id)); // top 25 stars/starters
+      // Add young franchise-tier players to the protected set regardless of where they rank
+      allPlayers.forEach(p => { if (isFranchiseUntouchable(p)) protectedIds.add(p.id); });
       const lastResortCuts = allPlayers
         .filter(p =>
           !protectedIds.has(p.id) &&
@@ -7132,19 +7736,45 @@ let game = {
           let delta = 0;
           const currentAbility = p.abilities[k];
           if (p.age < aging.peakStart && p.rating < (p.potential || p.rating + 5) && currentAbility < abilityCeiling) {
-            // Pre-peak: average +0.5/year per ability (was +1). 60% no gain, 30% +1, 10% +2.
-            // Across ~5 abilities this gives ~+2.5 OVR/year max, ~+1.5 typical. Over 4 years that
-            // means a 75 OVR rookie tops out around 81-87 in their prime — realistic.
+            // Pre-peak: growth rate scales DOWN as a player's current OVR rises. This prevents
+            // the "everyone becomes a star" inflation problem — gains shrink near the top so the
+            // league stays bell-curved.
+            //   - At OVR < 75: full growth rate (60% no gain, 30% +1, 10% +2)
+            //   - At OVR 80-84: half rate (70% no gain, 25% +1, 5% +2)
+            //   - At OVR 85+: minimal (85% no gain, 13% +1, 2% +2)
             const r = Math.random();
-            if (r < 0.60) delta = 0;
-            else if (r < 0.90) delta = 1;
-            else delta = 2;
+            if (p.rating < 75) {
+              if (r < 0.60) delta = 0;
+              else if (r < 0.90) delta = 1;
+              else delta = 2;
+            } else if (p.rating < 80) {
+              if (r < 0.70) delta = 0;
+              else if (r < 0.95) delta = 1;
+              else delta = 2;
+            } else if (p.rating < 85) {
+              if (r < 0.82) delta = 0;
+              else if (r < 0.98) delta = 1;
+              else delta = 2;
+            } else {
+              // 85+ already — diminishing returns at the elite tier
+              if (r < 0.92) delta = 0;
+              else if (r < 0.99) delta = 1;
+              else delta = 2;
+            }
             // Slow growth even more as you approach the ability ceiling
             if (currentAbility >= abilityCeiling - 3) delta = Math.min(delta, 1);
             if (currentAbility >= abilityCeiling - 1) delta = 0;
           } else if (p.age >= aging.peakStart && p.age <= aging.peakEnd) {
-            // In peak: stable with slight fluctuation
-            delta = Math.random() < 0.3 ? 1 : (Math.random() < 0.3 ? -1 : 0);
+            // In peak: stable with slight fluctuation. High-OVR players get more downward pressure
+            // (regression to mean keeps the elite tier from accumulating).
+            if (p.rating >= 88) {
+              // Elite at peak: more likely to slip than gain
+              delta = Math.random() < 0.15 ? 1 : (Math.random() < 0.45 ? -1 : 0);
+            } else if (p.rating >= 82) {
+              delta = Math.random() < 0.25 ? 1 : (Math.random() < 0.30 ? -1 : 0);
+            } else {
+              delta = Math.random() < 0.30 ? 1 : (Math.random() < 0.25 ? -1 : 0);
+            }
             if (currentAbility >= abilityCeiling) delta = Math.min(delta, 0);
           } else if (p.age >= aging.declineStart) {
             // POST-PEAK DECLINE — steeper the further past peak.
@@ -7196,6 +7826,17 @@ let game = {
         willRetire = true;
       } else if (p.rating < 50) {
         willRetire = true;
+      }
+      // FA-induced retirement: if player has been unsigned for the entire offseason despite the
+      // blue-chip sweep, the market has spoken. Players ≥30yo unsigned for a full season retire
+      // (real NFL: most unsigned vets quietly retire). Younger players keep trying.
+      // Track yearsAsFA — incremented each year they sit unsigned.
+      if (p.team === null && !willRetire) {
+        p.yearsAsFA = (p.yearsAsFA || 0) + 1;
+        if (p.yearsAsFA >= 2 && p.age >= 29) willRetire = true;
+        else if (p.yearsAsFA >= 1 && p.age >= 32) willRetire = true;
+      } else if (p.team !== null) {
+        p.yearsAsFA = 0;
       }
       if (willRetire) {
         p.retired = true;
@@ -8037,6 +8678,28 @@ let game = {
       // Defer slightly so it lands on top of the freshly-rendered championship view
       try { this.showAwardsCeremony(data); } catch (e) { /* defensive — never break sim flow */ }
     }
+    // Post-game popup for the user's college player. Fires after each week the user played in.
+    // Skipped for non-player careers and for weeks where the user's team had a bye or DNP.
+    // Queue lives on `this` (not state) to avoid circular references in JSON.stringify saves.
+    if (this._pendingUserGamePopup) {
+      const popup = this._pendingUserGamePopup;
+      this._pendingUserGamePopup = null;
+      // Only fire in player career, college stage. The data was attached to the game by simCollegeGame.
+      const careerMode = this.state && this.state.career ? this.state.career.mode : null;
+      const careerStage = this.state && this.state.career ? this.state.career.careerStage : null;
+      if (careerMode === 'player' && careerStage === 'college' && popup.gameRef && popup.gameRef.userPerformance) {
+        // Re-attach the live gameRef onto the perf object for the popup helpers to use.
+        // Stays transient (popup fires once then perf is discarded).
+        const perf = Object.assign({}, popup.gameRef.userPerformance, { _gameRef: popup.gameRef });
+        try { this.showUserGamePopup(perf); } catch (e) { /* defensive */ }
+      }
+    }
+    // Post-game popup for the user's NFL player. Fires after each week the user's team played.
+    if (this._pendingUserNflGamePopup) {
+      const perf = this._pendingUserNflGamePopup;
+      this._pendingUserNflGamePopup = null;
+      try { this.showUserGamePopup(perf); } catch (e) { /* defensive */ }
+    }
   },
   
   // Insert a Back button at the very top of content if the user can navigate back.
@@ -8508,7 +9171,9 @@ let game = {
     
     html += '</div>';
     if (!currentPick) {
-      html += '<div style="padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">No focus selected. Pick one before simming the week.</div>';
+      html += '<div style="padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">No focus selected. Pick one — it stays active until you change it.</div>';
+    } else {
+      html += '<div style="padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">Focus stays active until you pick a different one.</div>';
     }
     html += '</div>';
     return html;
@@ -8592,13 +9257,11 @@ let game = {
   },
 
   // After a game is simmed, clear weekly training picks so users must re-pick next week.
+  // PREVIOUSLY: cleared training every week so user had to re-pick. The training UI now
+  // treats focus as sticky — once chosen, it stays in effect for every sim until the user
+  // selects a different focus or explicitly clears it. No-op kept here for backwards compat.
   clearWeeklyTraining() {
-    this.state.teams.forEach(t => { t.weeklyTraining = null; });
-    // Also clear player-mode weekly training
-    if (this.state.career && this.state.career.mode === 'player') {
-      const p = this.getUserPlayer();
-      if (p) p.weeklyTraining = null;
-    }
+    // Intentionally a no-op. Training focus persists across weeks.
   },
 
   // Tick down injury timers after each week's games. Players whose timer hits 0 return to play.
@@ -8727,7 +9390,9 @@ let game = {
     
     html += '</div>';
     if (!currentPick) {
-      html += '<div style="padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">No training selected this week. Pick one before simming.</div>';
+      html += '<div style="padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">No focus selected. Pick one to start gaining the bonus — it\'ll stay active until you change it.</div>';
+    } else {
+      html += '<div style="padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">Focus is active and will apply every week until you select a different one.</div>';
     }
     html += '</div>';
     return html;
@@ -8833,7 +9498,7 @@ let game = {
     
     // Season-by-season college stat lines
     if (p.seasonHistory && p.seasonHistory.length > 0) {
-      html += '<div class="card"><div class="card-header"><div class="card-title">College stats</div></div>' +
+      html += '<div class="card"><div class="card-header"><div class="card-title">Previous seasons</div></div>' +
         '<table><thead><tr><th>Year</th><th>Class</th>';
       if (p.position === 'QB') html += '<th class="text-right">PASS YDS</th><th class="text-right">TD</th><th class="text-right">INT</th>';
       else if (p.position === 'RB') html += '<th class="text-right">RUSH YDS</th><th class="text-right">RUSH TD</th><th class="text-right">REC YDS</th>';
@@ -8857,6 +9522,102 @@ let game = {
           '<td class="text-right mono-num">' + c1 + '</td><td class="text-right mono-num">' + c2 + '</td><td class="text-right mono-num">' + c3 + '</td>' +
           '<td class="text-right mono-num">' + h.prospectGrade.toFixed(1) + '</td>' +
           '<td style="font-size:11px;color:var(--warning);font-weight:600">' + awardsStr + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    
+    // CURRENT SEASON — running totals from _heismanStats (accumulated each week the user plays)
+    if (stage === 'college' && p._heismanStats && p._heismanStats.games > 0) {
+      const s = p._heismanStats;
+      html += '<div class="card"><div class="card-header"><div class="card-title">' + this.state.year + ' season · ' + p.year + ' year</div>' +
+        '<div class="card-meta">' + s.games + ' game' + (s.games === 1 ? '' : 's') + ' played</div></div>' +
+        '<div style="padding:14px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px">';
+      const statCell = (label, value, sub) => {
+        return '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">' + label + '</div>' +
+          '<div style="font-size:20px;font-weight:700;margin-top:2px">' + value + '</div>' +
+          (sub ? '<div class="muted" style="font-size:10px;margin-top:1px">' + sub + '</div>' : '') +
+          '</div>';
+      };
+      const perGame = (v) => s.games > 0 ? (v / s.games).toFixed(1) : '0.0';
+      if (p.position === 'QB') {
+        html += statCell('PASS YARDS', (s.passYds || 0).toLocaleString(), perGame(s.passYds || 0) + ' / game');
+        html += statCell('PASS TD', s.passTDs || 0, perGame(s.passTDs || 0) + ' / game');
+        html += statCell('INT', s.ints || 0, '');
+        if ((s.rushYds || 0) > 0) html += statCell('RUSH YDS', (s.rushYds || 0).toLocaleString(), perGame(s.rushYds || 0) + ' / game');
+      } else if (p.position === 'RB') {
+        html += statCell('RUSH YDS', (s.rushYds || 0).toLocaleString(), perGame(s.rushYds || 0) + ' / game');
+        html += statCell('RUSH TD', s.rushTDs || 0, '');
+        html += statCell('REC', s.receptions || 0, '');
+        html += statCell('REC YDS', (s.recYds || 0).toLocaleString(), '');
+      } else if (p.position === 'WR' || p.position === 'TE') {
+        html += statCell('REC', s.receptions || 0, perGame(s.receptions || 0) + ' / game');
+        html += statCell('REC YDS', (s.recYds || 0).toLocaleString(), perGame(s.recYds || 0) + ' / game');
+        html += statCell('REC TD', s.recTDs || 0, '');
+      } else {
+        // Defensive — use game log to compute totals (we don't track those in _heismanStats)
+        const log = p._currentSeasonGameLog || [];
+        const tk = log.reduce((a, g) => a + (g.raw.tackles || 0), 0);
+        const sk = log.reduce((a, g) => a + (g.raw.sacks || 0), 0);
+        const ints = log.reduce((a, g) => a + (g.raw.interceptionsMade || 0), 0);
+        const pd = log.reduce((a, g) => a + (g.raw.passDef || 0), 0);
+        html += statCell('TACKLES', tk, perGame(tk) + ' / game');
+        if (sk > 0) html += statCell('SACKS', sk, '');
+        if (ints > 0) html += statCell('INT', ints, '');
+        if (pd > 0) html += statCell('PASS DEF', pd, '');
+      }
+      html += '</div></div>';
+    }
+    
+    // GAME LOG — week-by-week for the CURRENT season. Populated by simCollegeGame for the user.
+    if (stage === 'college' && p._currentSeasonGameLog && p._currentSeasonGameLog.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Game-by-game · ' + this.state.year + '</div>' +
+        '<div class="card-meta">' + p._currentSeasonGameLog.length + ' game' + (p._currentSeasonGameLog.length === 1 ? '' : 's') + '</div></div>' +
+        '<table><thead><tr><th>WK</th><th>OPP</th><th class="text-center">RESULT</th><th class="text-center">SNAPS</th>';
+      if (p.position === 'QB') html += '<th class="text-right">CMP/ATT</th><th class="text-right">YDS</th><th class="text-right">TD</th><th class="text-right">INT</th>';
+      else if (p.position === 'RB') html += '<th class="text-right">CAR</th><th class="text-right">RUSH YDS</th><th class="text-right">TD</th>';
+      else if (p.position === 'WR' || p.position === 'TE') html += '<th class="text-right">REC/TGT</th><th class="text-right">YDS</th><th class="text-right">TD</th>';
+      else if (['EDGE','DT','LB','CB','S'].includes(p.position)) html += '<th class="text-right">TKL</th><th class="text-right">SACK</th><th class="text-right">INT</th>';
+      else html += '<th class="text-right">STATS</th><th></th><th></th>';
+      html += '</tr></thead><tbody>';
+      p._currentSeasonGameLog.forEach(g => {
+        const r = g.raw || {};
+        const scoreStr = g.userIsHome
+          ? g.oppScore + '–' + g.teamScore
+          : g.teamScore + '–' + g.oppScore;
+        const oppMeta = COLLEGE_SCHOOLS.find(s => s.abbr === g.opponentAbbr);
+        const oppName = oppMeta ? oppMeta.name : g.opponentAbbr;
+        const resultColor = g.result === 'W' ? 'var(--success)' : 'var(--danger)';
+        let c1 = '—', c2 = '—', c3 = '—', c4 = '';
+        if (g.didNotPlay) {
+          c1 = 'DNP'; c2 = ''; c3 = ''; c4 = '';
+        } else if (p.position === 'QB') {
+          c1 = (r.cmp || 0) + '/' + (r.att || 0);
+          c2 = (r.passYds || 0);
+          c3 = r.passTDs || 0;
+          c4 = r.ints || 0;
+        } else if (p.position === 'RB') {
+          c1 = r.carries || 0;
+          c2 = r.rushYds || 0;
+          c3 = r.rushTDs || 0;
+        } else if (p.position === 'WR' || p.position === 'TE') {
+          c1 = (r.receptions || 0) + '/' + (r.targets || 0);
+          c2 = r.recYds || 0;
+          c3 = r.recTDs || 0;
+        } else if (['EDGE','DT','LB','CB','S'].includes(p.position)) {
+          c1 = r.tackles || 0;
+          c2 = r.sacks || 0;
+          c3 = r.interceptionsMade || 0;
+        }
+        html += '<tr>' +
+          '<td class="mono-num">' + g.week + '</td>' +
+          '<td>' + (g.userIsHome ? 'vs ' : '@ ') + '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + g.opponentAbbr + '\')">' + oppName + '</span></td>' +
+          '<td class="text-center"><span style="color:' + resultColor + ';font-weight:600">' + g.result + '</span> <span class="muted" style="font-size:11px">' + scoreStr + '</span></td>' +
+          '<td class="text-center mono-num">' + (g.didNotPlay ? '—' : g.snapPct + '%') + '</td>' +
+          '<td class="text-right mono-num">' + c1 + '</td>' +
+          '<td class="text-right mono-num">' + c2 + '</td>' +
+          '<td class="text-right mono-num">' + c3 + '</td>';
+        if (p.position === 'QB') html += '<td class="text-right mono-num">' + c4 + '</td>';
+        html += '</tr>';
       });
       html += '</tbody></table></div>';
     }
@@ -8899,7 +9660,8 @@ let game = {
         '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="muted">Scheme fit</span><span class="rating ' + fitClass + '" style="font-size:10px;padding:1px 5px">' + fitPct + '%</span></div>' +
         '<div style="display:flex;justify-content:space-between"><span class="muted">Role</span><strong style="font-size:11px">' + offer.teamContext.depthRole + '</strong></div>' +
         '</div>' +
-        (hc ? '<div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">HC ' + hc.name + ' · ' + (hc.playstyle ? (hc.playstyle.offense + ' / ' + hc.playstyle.defense) : '—') + '</div>' : '') +
+        (hc ? '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">HC ' + hc.name + ' · ' + (hc.playstyle ? (hc.playstyle.offense + ' / ' + hc.playstyle.defense) : '—') + '</div>' : '') +
+        '<button class="btn btn-sm" style="width:100%;margin-bottom:6px" onclick="game.showTeam(' + team.id + ')">Review depth chart</button>' +
         '<button class="btn btn-sm btn-success" style="width:100%" onclick="game.acceptPlayerFAOffer(' + offer.teamId + ')">Sign with ' + team.abbr + '</button>' +
         '</div>';
     });
@@ -13021,13 +13783,17 @@ let game = {
 
   // PROSPECTS (Top 100) — extracted from College page into its own view.
   renderProspects() {
+    // Top 100 prospects across ALL classes — includes freshmen and sophomores too, since
+    // top high-ceiling underclassmen (5-star recruits with high grades) belong on a "futures"
+    // board. Previously this was limited to Jr/Sr only and produced ~30 entries in dynasty
+    // mode where the pool is smaller.
     const prospects = (this.state.collegeProspects || [])
-      .filter(p => p.year === 'Senior' || p.year === 'Junior')
+      .filter(p => !p.declaredEarly) // exclude already-declared (they're in the draft pool, not prospects)
       .sort((a, b) => b.prospectGrade - a.prospectGrade)
       .slice(0, 100);
     
     let html = '<div class="page-header"><div class="page-title">Top 100 prospects</div>' +
-      '<div class="page-subtitle">' + this.state.year + ' draft class · ranked by grade</div></div>';
+      '<div class="page-subtitle">' + this.state.year + ' rankings · all classes · ranked by grade</div></div>';
     
     if (prospects.length === 0) {
       html += '<div class="empty-state">No prospects yet. Wait for the next class to develop.</div>';
@@ -13113,8 +13879,9 @@ let game = {
     });
     html += '</tbody></table></div>';
     
-    // Conference breakdown — small card showing distribution of top 25 across conferences
-    if (latestRankings) {
+    // Conference breakdown — small card showing distribution of top 25 across conferences.
+    // Only show this when we have ranked data (live AP or final rankings), not preseason prestige.
+    if (live || latestFinalRankings) {
       const confCounts = {};
       top25.forEach(rank => {
         const meta = COLLEGE_SCHOOLS.find(s => s.abbr === rank.abbr);
@@ -13257,7 +14024,466 @@ let game = {
     news.innerHTML = html;
   },
 
-  // END-OF-SEASON AWARDS CEREMONY — modal popup that fires automatically after the Super Bowl.
+  // POST-GAME PLAYER CARD — pops after the user's game each week (college OR NFL).
+  // Shows opponent, final score, W/L, user's snap count + role, and stat line.
+  // Data shape (game agnostic):
+  //   userIsHome, userTeamScore, oppScore, userIsWin, userTeamAbbr, opponentAbbr,
+  //   userTeamName?, opponentName?, week, didNotPlay, snaps, snapPct, role, lines, raw
+  showUserGamePopup(perf) {
+    if (!perf) return;
+    const userPlayer = this.getUserPlayer();
+    if (!userPlayer) return;
+    // Resolve display names. NFL teams pass userTeamName/opponentName; college passes abbrs only.
+    let opponentName, userSchoolName;
+    if (perf.opponentName) {
+      opponentName = perf.opponentName;
+    } else {
+      const opponentSchool = COLLEGE_SCHOOLS.find(s => s.abbr === perf.opponentAbbr);
+      opponentName = opponentSchool ? opponentSchool.name : perf.opponentAbbr;
+    }
+    if (perf.userTeamName) {
+      userSchoolName = perf.userTeamName;
+    } else {
+      const userSchool = COLLEGE_SCHOOLS.find(s => s.abbr === perf.userTeamAbbr);
+      userSchoolName = userSchool ? userSchool.name : perf.userTeamAbbr;
+    }
+    const resultLabel = perf.userIsWin ? 'WIN' : 'LOSS';
+    const resultColor = perf.userIsWin ? 'var(--success)' : 'var(--danger)';
+    // Matchup format: "Away @ Home". Score format must match the same order so the user reads it correctly.
+    // If user is home: matchup = "Opp @ User", score = "OppScore – UserScore"
+    // If user is away: matchup = "User @ Opp", score = "UserScore – OppScore"
+    const matchupText = perf.userIsHome
+      ? opponentName + ' @ ' + userSchoolName
+      : userSchoolName + ' @ ' + opponentName;
+    const scoreText = perf.userIsHome
+      ? perf.oppScore + '–' + perf.userTeamScore
+      : perf.userTeamScore + '–' + perf.oppScore;
+    
+    // Head — score banner
+    let body = '<div style="background:var(--surface-2);padding:14px 18px;margin-bottom:16px;border-left:4px solid ' + resultColor + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline">' +
+      '<div>' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600">WEEK ' + (perf.week || '?') + ' · ' + resultLabel + '</div>' +
+      '<div style="font-size:16px;font-weight:700;letter-spacing:-0.2px;margin-top:2px">' + matchupText + '</div>' +
+      '<div class="muted" style="font-size:11px;margin-top:1px">' + (perf.userIsHome ? 'Home' : 'Away') + ' game</div>' +
+      '</div>' +
+      '<div style="font-size:24px;font-weight:700;font-family:var(--font-mono);letter-spacing:-0.5px">' + scoreText + '</div>' +
+      '</div></div>';
+    
+    // DNP case — short message and nothing else
+    if (perf.didNotPlay) {
+      body += '<div style="background:var(--surface);padding:18px 18px;text-align:center">' +
+        '<div style="font-size:13px;color:var(--text-muted)">' + userPlayer.name + ' did not see the field this week.</div>' +
+        '<div class="muted" style="font-size:11px;margin-top:4px">Depth chart slot #' + (perf.depthIdx + 1) + ' at ' + userPlayer.position + ' — keep working in practice.</div>' +
+        '</div>';
+    } else {
+      // Usage block: snaps + role
+      body += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">' +
+        '<div style="background:var(--surface);padding:10px 12px"><div style="font-size:9px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">SNAPS</div><div style="font-size:18px;font-weight:700;margin-top:2px">' + perf.snaps + '</div></div>' +
+        '<div style="background:var(--surface);padding:10px 12px"><div style="font-size:9px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">SNAP %</div><div style="font-size:18px;font-weight:700;margin-top:2px">' + perf.snapPct + '%</div></div>' +
+        '<div style="background:var(--surface);padding:10px 12px"><div style="font-size:9px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">ROLE</div><div style="font-size:13px;font-weight:600;margin-top:5px">' + perf.role + '</div></div>' +
+        '</div>';
+      
+      // Stat lines (the user's own production)
+      body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">YOUR STAT LINE</div>';
+      if (perf.lines && perf.lines.length > 0) {
+        perf.lines.forEach(l => {
+          body += '<div style="font-size:14px;font-weight:500;padding:3px 0">' + l + '</div>';
+        });
+      } else {
+        body += '<div class="muted" style="font-size:13px">No production this game.</div>';
+      }
+      body += '</div>';
+      
+      // Performance commentary
+      const commentary = this._getGameCommentary(userPlayer, perf);
+      if (commentary) {
+        body += '<div style="background:var(--surface-2);padding:12px 14px;font-size:12px;font-style:italic;color:var(--text-muted);margin-bottom:14px;border-left:2px solid var(--accent)">' + commentary + '</div>';
+      }
+      
+      // ── MIDDLE SECTION: TEAMMATE CONTEXT + STANDOUT PERFORMERS ──────────────
+      const teammateBlock = this._buildTeammateContext(userPlayer, perf);
+      if (teammateBlock) body += teammateBlock;
+      
+      const standoutBlock = this._buildStandoutPerformers(userPlayer, perf);
+      if (standoutBlock) body += standoutBlock;
+    }
+    
+    // ── BOTTOM SECTION: TOP 25 + HEISMAN RACE (college) or LEAGUE LEADERS (NFL) ──
+    if (perf._isCollege) {
+      const top25Block = this._buildPopupTop25();
+      if (top25Block) body += top25Block;
+      const heismanBlock = this._buildPopupHeismanRace(userPlayer);
+      if (heismanBlock) body += heismanBlock;
+    } else {
+      const standingsBlock = this._buildPopupNflStandings(perf._userTeamId);
+      if (standingsBlock) body += standingsBlock;
+    }
+    
+    // Footer — continue button
+    body += '<div style="text-align:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
+      '<button onclick="closeModal()" class="btn btn-primary">Continue →</button>' +
+      '</div>';
+    
+    this.showModal(userPlayer.name + ' · Week ' + (perf.week || '?') + ' performance', body);
+  },
+  
+  // Generate light qualitative commentary on a user game performance based on stat line + result
+  _getGameCommentary(p, perf) {
+    if (perf.didNotPlay) return null;
+    const raw = perf.raw || {};
+    const lines = [];
+    // Position-specific praise/criticism
+    if (p.position === 'QB') {
+      if ((raw.passTDs || 0) >= 4) lines.push('Lit up the box score through the air.');
+      else if ((raw.passTDs || 0) >= 2 && (raw.ints || 0) === 0) lines.push('Clean, efficient game commanding the offense.');
+      else if ((raw.ints || 0) >= 2) lines.push('Turnovers told the story — needs to clean it up.');
+      else if ((raw.passYds || 0) > 300) lines.push('Big yardage day, but the work continues.');
+    } else if (p.position === 'RB') {
+      if ((raw.rushYds || 0) >= 150) lines.push('A workhorse performance on the ground.');
+      else if ((raw.rushTDs || 0) >= 2) lines.push('Multiple trips to the end zone — playmaker stuff.');
+      else if ((raw.carries || 0) === 0) lines.push('Never got the ball — frustrating week.');
+    } else if (p.position === 'WR' || p.position === 'TE') {
+      if ((raw.recYds || 0) >= 120) lines.push('Big day stretching the field.');
+      else if ((raw.recTDs || 0) >= 1) lines.push('Got into the end zone — that\'s what they pay you for.');
+      else if ((raw.receptions || 0) === 0 && (raw.targets || 0) > 0) lines.push('Targeted but no catches — the drops are mental now.');
+      else if ((raw.targets || 0) === 0) lines.push('Couldn\'t get open against this coverage.');
+    } else if (p.position === 'EDGE' || p.position === 'DT' || p.position === 'LB') {
+      if ((raw.sacks || 0) >= 2) lines.push('Living in the backfield today.');
+      else if ((raw.tackles || 0) >= 10) lines.push('All over the field making plays.');
+      else if ((raw.tackles || 0) <= 2) lines.push('Quiet game — opportunities just didn\'t come.');
+    } else if (p.position === 'CB' || p.position === 'S') {
+      if ((raw.interceptionsMade || 0) >= 1 && (raw.passDef || 0) >= 2) lines.push('Locked-down coverage performance.');
+      else if ((raw.interceptionsMade || 0) >= 1) lines.push('Came up with the takeaway when it mattered.');
+      else if ((raw.tdAllowed || 0) >= 1) lines.push('Tough one — burned on a touchdown.');
+    }
+    // Win/loss context
+    if (lines.length > 0) {
+      if (perf.userIsWin) lines.push('Team got the W.');
+      else lines.push('Production didn\'t translate to a team win.');
+    }
+    return lines.length > 0 ? lines.join(' ') : null;
+  },
+  
+  // ════ POPUP HELPERS — build the rich sections that follow the user's stat line ════
+  
+  // Teammate context: show the linked teammate whose performance directly affected the user's stats.
+  // QB ↔ top WR/RB (passing/receiving paired); WR/TE shows their QB; RB shows QB; OL shows QB+lead RB.
+  // Defensive players see the OPPOSING offense's QB performance (what they faced).
+  _buildTeammateContext(userPlayer, perf) {
+    if (perf._isCollege) {
+      return this._buildCollegeTeammateContext(userPlayer, perf);
+    } else {
+      return this._buildNflTeammateContext(userPlayer, perf);
+    }
+  },
+  
+  _buildCollegeTeammateContext(userPlayer, perf) {
+    const g = perf._gameRef;
+    if (!g || !g.topPerformers) return null;
+    // The pickGameTopPerformers function picked ONE offensive + ONE defensive per team. We use those.
+    const sameSideTop = perf.userIsHome ? g.topPerformers.homeOff : g.topPerformers.awayOff;
+    const sameSideDef = perf.userIsHome ? g.topPerformers.homeDef : g.topPerformers.awayDef;
+    if (!sameSideTop && !sameSideDef) return null;
+    
+    // Determine which teammate is most "linked" to the user's stat line
+    let teammates = [];
+    const userPos = userPlayer.position;
+    const skillPositions = ['QB','RB','WR','TE'];
+    
+    if (userPos === 'QB') {
+      // QB sees their top skill receiver/back. If the picked offensive star IS the user (QB),
+      // search the roster for the best WR/RB/TE instead and synthesize a stat line.
+      let candidate = null;
+      if (sameSideTop && sameSideTop.prospectId !== userPlayer.id && ['RB','WR','TE'].includes(sameSideTop.position)) {
+        candidate = sameSideTop;
+      } else {
+        // Find top non-QB skill teammate from the roster
+        const skill = (this.state.collegeProspects || [])
+          .filter(x => x.school === userPlayer.school && ['RB','WR','TE'].includes(x.position) && x.id !== userPlayer.id)
+          .sort((a, b) => b.prospectGrade - a.prospectGrade)[0];
+        if (skill) {
+          // Synthesize a stat line proportional to the QB's passing volume
+          const ts = perf.userTeamScore;
+          let stat;
+          if (skill.position === 'RB') {
+            const yds = Math.round(60 + Math.random() * 60 + ts * 1.2);
+            const tds = Math.random() < 0.4 ? 1 : 0;
+            stat = yds + ' rush yds' + (tds > 0 ? ', ' + tds + ' TD' : '');
+          } else {
+            const recs = 4 + Math.floor(Math.random() * 4);
+            const yds = Math.round(recs * (10 + Math.random() * 8));
+            const tds = Math.random() < 0.4 ? 1 : 0;
+            stat = recs + ' rec, ' + yds + ' yds' + (tds > 0 ? ', ' + tds + ' TD' : '');
+          }
+          candidate = { name: skill.name, position: skill.position, stat, prospectId: skill.id };
+        }
+      }
+      if (candidate) teammates.push({ label: 'Top receiver/back', perf: candidate });
+    } else if (['WR','TE','RB'].includes(userPos)) {
+      // Skill players see their QB's line
+      const ourQB = (this.state.collegeProspects || []).filter(x => x.school === userPlayer.school && x.position === 'QB').sort((a, b) => b.prospectGrade - a.prospectGrade)[0];
+      if (ourQB && ourQB.id !== userPlayer.id) {
+        // Synthesize QB line from sameSideTop if it's a QB, otherwise from the team's score
+        let qbStat;
+        if (sameSideTop && sameSideTop.prospectId === ourQB.id) {
+          qbStat = sameSideTop.stat;
+        } else {
+          // Fabricate from team score (rough QB line)
+          const ts = perf.userTeamScore;
+          const yds = Math.round(180 + ts * 6 + Math.random() * 60);
+          const tds = Math.max(0, Math.floor(ts / 14));
+          qbStat = yds + ' pass yds, ' + tds + ' TD' + (tds === 1 ? '' : 's');
+        }
+        teammates.push({ label: 'Your QB', perf: { name: ourQB.name, position: 'QB', stat: qbStat, prospectId: ourQB.id } });
+      }
+    } else if (['EDGE','DT','LB','CB','S'].includes(userPos)) {
+      // Defenders see the OPPOSING QB's line (what they faced)
+      const oppOff = perf.userIsHome ? g.topPerformers.awayOff : g.topPerformers.homeOff;
+      if (oppOff) {
+        teammates.push({ label: 'Opposing QB / RB / WR', perf: oppOff });
+      }
+    }
+    
+    if (teammates.length === 0) return null;
+    
+    let html = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">CONNECTED PERFORMANCES</div>';
+    teammates.forEach(t => {
+      html += '<div style="padding:5px 0;display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+        '<div><span style="font-size:10px;color:var(--text-muted)">' + t.label + ':</span> ' +
+        '<span style="font-weight:600">' + t.perf.name + '</span> ' +
+        '<span class="muted" style="font-size:11px">(' + t.perf.position + ')</span></div>' +
+        '<div style="font-size:12px;color:var(--text)">' + t.perf.stat + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  },
+  
+  _buildNflTeammateContext(userPlayer, perf) {
+    const userTeam = this.state.teams[perf._userTeamId];
+    if (!userTeam) return null;
+    const g = perf._gameRef;
+    if (!g || !g.playerStats) return null;
+    
+    // Find the most relevant teammates based on user's position
+    let teammates = [];
+    const userPos = userPlayer.position;
+    const roster = userTeam.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
+    
+    if (userPos === 'QB') {
+      // QB sees top WR + top RB on the team for this game
+      const topWR = roster.filter(p => p.position === 'WR' && p.id !== userPlayer.id)
+        .map(p => ({ p, gs: g.playerStats[p.id] }))
+        .filter(x => x.gs && x.gs.receivingYards > 0)
+        .sort((a, b) => (b.gs.receivingYards || 0) - (a.gs.receivingYards || 0))[0];
+      const topRB = roster.filter(p => p.position === 'RB' && p.id !== userPlayer.id)
+        .map(p => ({ p, gs: g.playerStats[p.id] }))
+        .filter(x => x.gs && (x.gs.rushingYards > 0 || x.gs.receivingYards > 0))
+        .sort((a, b) => ((b.gs.rushingYards || 0) + (b.gs.receivingYards || 0)) - ((a.gs.rushingYards || 0) + (a.gs.receivingYards || 0)))[0];
+      if (topWR) teammates.push({ label: 'Top WR', name: topWR.p.name, pos: 'WR', stat: (topWR.gs.receptions || 0) + ' rec, ' + (topWR.gs.receivingYards || 0) + ' yds' + ((topWR.gs.receivingTDs || 0) > 0 ? ', ' + topWR.gs.receivingTDs + ' TD' : '') });
+      if (topRB) teammates.push({ label: 'Top RB', name: topRB.p.name, pos: 'RB', stat: (topRB.gs.carries || 0) + ' car, ' + (topRB.gs.rushingYards || 0) + ' yds' + ((topRB.gs.rushingTDs || 0) > 0 ? ', ' + topRB.gs.rushingTDs + ' TD' : '') });
+    } else if (['WR','TE','RB'].includes(userPos)) {
+      // Skill sees their QB
+      const qb = roster.filter(p => p.position === 'QB').map(p => ({ p, gs: g.playerStats[p.id] })).filter(x => x.gs).sort((a, b) => (b.gs.passingYards || 0) - (a.gs.passingYards || 0))[0];
+      if (qb) teammates.push({ label: 'Your QB', name: qb.p.name, pos: 'QB', stat: (qb.gs.completions || 0) + '/' + (qb.gs.attempts || 0) + ' for ' + (qb.gs.passingYards || 0) + ' yds, ' + (qb.gs.passingTDs || 0) + ' TD' + ((qb.gs.interceptionsThrown || 0) > 0 ? ', ' + qb.gs.interceptionsThrown + ' INT' : '') });
+    } else if (['EDGE','DT','LB','CB','S'].includes(userPos)) {
+      // Defender sees the opposing QB
+      const oppTeam = this.state.teams[perf._oppTeamId];
+      if (oppTeam) {
+        const oppQB = oppTeam.roster.map(id => this.state.players[id]).filter(p => p && p.position === 'QB').map(p => ({ p, gs: g.playerStats[p.id] })).filter(x => x.gs).sort((a, b) => (b.gs.passingYards || 0) - (a.gs.passingYards || 0))[0];
+        if (oppQB) teammates.push({ label: 'Opposing QB', name: oppQB.p.name, pos: 'QB', stat: (oppQB.gs.completions || 0) + '/' + (oppQB.gs.attempts || 0) + ' for ' + (oppQB.gs.passingYards || 0) + ' yds, ' + (oppQB.gs.passingTDs || 0) + ' TD' + ((oppQB.gs.interceptionsThrown || 0) > 0 ? ', ' + oppQB.gs.interceptionsThrown + ' INT' : '') });
+      }
+    }
+    
+    if (teammates.length === 0) return null;
+    
+    let html = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">CONNECTED PERFORMANCES</div>';
+    teammates.forEach(t => {
+      html += '<div style="padding:5px 0;display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+        '<div><span style="font-size:10px;color:var(--text-muted)">' + t.label + ':</span> ' +
+        '<span style="font-weight:600">' + t.name + '</span> ' +
+        '<span class="muted" style="font-size:11px">(' + t.pos + ')</span></div>' +
+        '<div style="font-size:12px;color:var(--text)">' + t.stat + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  },
+  
+  // Standout performers from the game (both teams) — separate from the user's connected teammates.
+  // Shows top offensive + defensive performer from each side, skipping the user.
+  _buildStandoutPerformers(userPlayer, perf) {
+    if (perf._isCollege) {
+      const g = perf._gameRef;
+      if (!g || !g.topPerformers) return null;
+      const tp = g.topPerformers;
+      const items = [];
+      // Order: home offense, home defense, away offense, away defense
+      const allPerfs = [
+        { side: g.home + ' off', perf: tp.homeOff },
+        { side: g.home + ' def', perf: tp.homeDef },
+        { side: g.away + ' off', perf: tp.awayOff },
+        { side: g.away + ' def', perf: tp.awayDef }
+      ];
+      allPerfs.forEach(item => {
+        if (item.perf && item.perf.prospectId !== userPlayer.id) {
+          items.push(item);
+        }
+      });
+      if (items.length === 0) return null;
+      
+      let html = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">STANDOUT PERFORMERS</div>';
+      items.forEach(item => {
+        html += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px">' +
+          '<div><span class="muted" style="font-size:10px">' + item.side + '</span> ' +
+          '<strong>' + item.perf.name + '</strong> ' +
+          '<span class="muted">(' + item.perf.position + ')</span></div>' +
+          '<div>' + item.perf.stat + '</div>' +
+          '</div>';
+      });
+      html += '</div>';
+      return html;
+    } else {
+      // NFL: pull top performers from this game via playerStats
+      const g = perf._gameRef;
+      if (!g || !g.playerStats) return null;
+      const userTeam = this.state.teams[perf._userTeamId];
+      const oppTeam = this.state.teams[perf._oppTeamId];
+      if (!userTeam || !oppTeam) return null;
+      
+      const topFromTeam = (team) => {
+        const results = [];
+        // Top passer
+        const qb = team.roster.map(id => this.state.players[id]).filter(p => p && p.position === 'QB').map(p => ({ p, gs: g.playerStats[p.id] })).filter(x => x.gs && x.gs.passingYards > 0).sort((a, b) => b.gs.passingYards - a.gs.passingYards)[0];
+        if (qb) results.push({ p: qb.p, stat: (qb.gs.passingYards || 0) + ' pass yds, ' + (qb.gs.passingTDs || 0) + ' TD' });
+        // Top rusher
+        const rb = team.roster.map(id => this.state.players[id]).filter(p => p && ['RB','QB'].includes(p.position)).map(p => ({ p, gs: g.playerStats[p.id] })).filter(x => x.gs && x.gs.rushingYards >= 40).sort((a, b) => b.gs.rushingYards - a.gs.rushingYards)[0];
+        if (rb && (!qb || rb.p.id !== qb.p.id)) results.push({ p: rb.p, stat: (rb.gs.rushingYards || 0) + ' rush yds' + ((rb.gs.rushingTDs || 0) > 0 ? ', ' + rb.gs.rushingTDs + ' TD' : '') });
+        // Top receiver
+        const wr = team.roster.map(id => this.state.players[id]).filter(p => p && ['WR','TE','RB'].includes(p.position)).map(p => ({ p, gs: g.playerStats[p.id] })).filter(x => x.gs && x.gs.receivingYards >= 40).sort((a, b) => b.gs.receivingYards - a.gs.receivingYards)[0];
+        if (wr && (!rb || wr.p.id !== rb.p.id)) results.push({ p: wr.p, stat: (wr.gs.receptions || 0) + ' rec, ' + (wr.gs.receivingYards || 0) + ' yds' + ((wr.gs.receivingTDs || 0) > 0 ? ', ' + wr.gs.receivingTDs + ' TD' : '') });
+        // Top defender (by sacks+INTs)
+        const def = team.roster.map(id => this.state.players[id]).filter(p => p && ['EDGE','DT','LB','CB','S'].includes(p.position)).map(p => ({ p, gs: g.playerStats[p.id], score: g.playerStats[p.id] ? (g.playerStats[p.id].sacks || 0) * 5 + (g.playerStats[p.id].interceptionsMade || 0) * 7 + (g.playerStats[p.id].tackles || 0) * 0.5 : 0 })).filter(x => x.gs && x.score > 3).sort((a, b) => b.score - a.score)[0];
+        if (def) {
+          const parts = [];
+          if (def.gs.tackles) parts.push(def.gs.tackles + ' tk');
+          if (def.gs.sacks) parts.push(def.gs.sacks + ' sk');
+          if (def.gs.interceptionsMade) parts.push(def.gs.interceptionsMade + ' INT');
+          results.push({ p: def.p, stat: parts.join(', ') });
+        }
+        return results.filter(r => r.p.id !== userPlayer.id);
+      };
+      
+      const userTeamTop = topFromTeam(userTeam);
+      const oppTeamTop = topFromTeam(oppTeam);
+      const sections = [
+        { label: userTeam.abbr, items: userTeamTop },
+        { label: oppTeam.abbr, items: oppTeamTop }
+      ];
+      const total = userTeamTop.length + oppTeamTop.length;
+      if (total === 0) return null;
+      
+      let html = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">STANDOUT PERFORMERS</div>';
+      sections.forEach(sec => {
+        sec.items.forEach(item => {
+          html += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px">' +
+            '<div><span class="muted" style="font-size:10px">' + sec.label + '</span> ' +
+            '<strong>' + item.p.name + '</strong> ' +
+            '<span class="muted">(' + item.p.position + ')</span></div>' +
+            '<div>' + item.stat + '</div>' +
+            '</div>';
+        });
+      });
+      html += '</div>';
+      return html;
+    }
+  },
+  
+  // Top 25 college teams snapshot — used in college popup bottom section.
+  _buildPopupTop25() {
+    const live = this.state.apPoll;
+    if (!live || live.length === 0) return null;
+    const top25 = live.slice(0, 25);
+    let html = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:10px">TOP 25 · AFTER WEEK ' + (this.state.collegeWeek || 0) + '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:2px 18px;font-size:11px">';
+    top25.forEach((t, i) => {
+      const meta = COLLEGE_SCHOOLS.find(s => s.abbr === t.abbr);
+      const primary = meta ? meta.primary : '#888';
+      html += '<div style="display:flex;align-items:baseline;gap:6px;padding:2px 0">' +
+        '<span style="opacity:0.5;width:18px;text-align:right;font-family:var(--font-mono)">' + (i + 1) + '</span>' +
+        '<span style="width:3px;height:11px;background:' + primary + ';display:inline-block"></span>' +
+        '<span style="cursor:pointer;text-decoration:underline" onclick="closeModal();game.showCollegeCard(\'' + t.abbr + '\')">' + (meta ? meta.name : t.name) + '</span>' +
+        '<span class="muted" style="font-family:var(--font-mono);margin-left:auto">' + t.record + '</span>' +
+        '</div>';
+    });
+    html += '</div></div>';
+    return html;
+  },
+  
+  // Active Heisman race — top 5-6 candidates by current score. Highlight the user if present.
+  _buildPopupHeismanRace(userPlayer) {
+    if (typeof this.getHeismanRace !== 'function') return null;
+    const race = this.getHeismanRace(6);
+    if (!race || race.length === 0) return null;
+    
+    let html = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">HEISMAN RACE · TOP 6</div>';
+    race.forEach((entry, i) => {
+      const p = entry.player;
+      const isUser = p.id === userPlayer.id;
+      const s = entry.stats || {};
+      let prodStr;
+      if (p.position === 'QB') prodStr = (s.passYds || 0).toLocaleString() + ' yds · ' + (s.passTDs || 0) + ' TD';
+      else if (p.position === 'RB') prodStr = (s.rushYds || 0).toLocaleString() + ' yds · ' + (s.rushTDs || 0) + ' TD';
+      else prodStr = (s.receptions || 0) + '-' + (s.recYds || 0).toLocaleString() + '-' + (s.recTDs || 0);
+      const schoolMeta = COLLEGE_SCHOOLS.find(sc => sc.abbr === p.school);
+      const bg = isUser ? 'background:var(--surface-2);border-left:3px solid var(--accent);padding-left:8px' : '';
+      html += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px;' + bg + '">' +
+        '<div><span style="opacity:0.5;font-family:var(--font-mono);width:18px;display:inline-block">' + (i + 1) + '</span> ' +
+        '<strong>' + p.name + '</strong>' + (isUser ? ' <span style="color:var(--accent);font-size:10px;font-weight:700">YOU</span>' : '') + ' ' +
+        '<span class="muted">(' + p.position + ', ' + (schoolMeta ? schoolMeta.abbr : p.school) + ')</span></div>' +
+        '<div><span style="font-family:var(--font-mono);font-size:11px">' + prodStr + '</span> ' +
+        '<span style="font-weight:700;margin-left:8px">' + Math.round(entry.score) + '</span></div>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  },
+  
+  // NFL conference/division standings snapshot — bottom section for NFL game popups.
+  _buildPopupNflStandings(userTeamId) {
+    const userTeam = this.state.teams[userTeamId];
+    if (!userTeam) return null;
+    const divTeams = this.state.teams.filter(t => t.division === userTeam.division && t.conference === userTeam.conference);
+    divTeams.sort((a, b) => {
+      const aPct = a.wins / Math.max(1, a.wins + a.losses);
+      const bPct = b.wins / Math.max(1, b.wins + b.losses);
+      if (aPct !== bPct) return bPct - aPct;
+      return b.wins - a.wins;
+    });
+    let html = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">' + userTeam.conference + ' ' + userTeam.division + ' · WEEK ' + this.state.week + '</div>';
+    divTeams.forEach((t, i) => {
+      const isUser = t.id === userTeam.id;
+      const bg = isUser ? 'background:var(--surface-2);border-left:3px solid var(--accent);padding-left:8px' : '';
+      html += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:baseline;font-size:12px;' + bg + '">' +
+        '<div><span style="opacity:0.5;font-family:var(--font-mono);width:18px;display:inline-block">' + (i + 1) + '</span> ' +
+        '<span style="width:3px;height:11px;background:' + t.primary + ';display:inline-block;vertical-align:middle;margin-right:6px"></span>' +
+        '<strong>' + t.city + ' ' + t.name + '</strong>' + (isUser ? ' <span style="color:var(--accent);font-size:10px;font-weight:700">YOU</span>' : '') + '</div>' +
+        '<div style="font-family:var(--font-mono)">' + t.wins + '-' + t.losses + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  },
+  
   // Shows NFL or college awards based on user career stage. User can toggle between tabs.
   // - College stage of player career → defaults to College tab first
   // - All other career modes (dynasty, coach, NFL stage of player career) → defaults to NFL tab first
