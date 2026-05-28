@@ -6343,6 +6343,13 @@ let game = {
       // Don't auto-run — the agent draft-night view drives picks via reveal/sim buttons.
       return;
     }
+    // ANNUAL TEAM DRAFT (coach / dynasty): the user drives the draft themselves — pick-by-pick
+    // via "Reveal next pick", a jump via "Sim to my pick", or "Auto-complete" to finish. We do NOT
+    // silently sim CPU picks here. (The inaugural/startup draft — 53 rounds, not annual — keeps the
+    // old auto-advance-to-the-user's-pick behavior below so it isn't a 1,696-click slog.)
+    if (this.state.draftIsAnnual) {
+      return;
+    }
     const userId = this.state.userTeamId;
     let safety = 0;
     while (this.state.draftCurrentIdx < this.state.draftOrder.length) {
@@ -6482,6 +6489,41 @@ let game = {
       this.state.draftCurrentIdx++;
     }
     this.finishDraft();
+  },
+
+  // COACH / DYNASTY annual draft — reveal one pick at a time. If the user's team is on the clock,
+  // we don't auto-pick for them: render so they can choose from the board. Otherwise the CPU on the
+  // clock makes its selection and we advance one slot.
+  _coachRevealNextPick() {
+    if (!this.state.draftActive) return;
+    if (this.state.draftCurrentIdx >= this.state.draftOrder.length) { this.finishDraft(); return; }
+    const current = this.state.draftOrder[this.state.draftCurrentIdx];
+    if (!current) { this.state.draftCurrentIdx++; this.render(); return; }
+    if (current.teamId === this.state.userTeamId) { this.render(); return; } // your pick — choose from the board
+    const before = this.state.draftCurrentIdx;
+    this.cpuPick(current.teamId);
+    if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
+    if (this.state.draftCurrentIdx >= this.state.draftOrder.length) { this.finishDraft(); return; }
+    this.render();
+  },
+
+  // COACH / DYNASTY annual draft — fast-forward through CPU picks until the user's team is on the
+  // clock (or the draft ends).
+  _coachSimToMyPick() {
+    if (!this.state.draftActive) return;
+    const userId = this.state.userTeamId;
+    let safety = 0;
+    while (this.state.draftActive && this.state.draftCurrentIdx < this.state.draftOrder.length && safety < 2000) {
+      safety++;
+      const current = this.state.draftOrder[this.state.draftCurrentIdx];
+      if (!current) { this.state.draftCurrentIdx++; continue; }
+      if (current.teamId === userId) break; // stop on your pick
+      const before = this.state.draftCurrentIdx;
+      this.cpuPick(current.teamId);
+      if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
+    }
+    if (this.state.draftCurrentIdx >= this.state.draftOrder.length) { this.finishDraft(); return; }
+    this.render();
   },
 
   finishDraft() {
@@ -7169,6 +7211,15 @@ let game = {
     }
     const isUserTurn = current.teamId === this.state.userTeamId;
     const userTeam = this.state.userTeamId !== null ? this.state.teams[this.state.userTeamId] : null;
+    // Pick-by-pick controls. Available in the annual draft when a CPU is on the clock: the user can
+    // reveal the next pick one at a time, fast-forward to their own pick, or auto-complete the rest.
+    const isAnnualDraft = this.state.draftIsAnnual;
+    let draftControls = '';
+    if (isAnnualDraft && !isUserTurn) {
+      draftControls += '<button class="btn btn-sm btn-success" onclick="game._coachRevealNextPick()">Reveal next pick →</button>' +
+        '<button class="btn btn-sm" onclick="game._coachSimToMyPick()">Sim to my pick</button>';
+    }
+    draftControls += '<button class="btn btn-sm" onclick="game.autoCompleteDraft()">Auto-complete →</button>';
     // WAR ROOM (Dynasty #3) — compute the user team's positional needs so the big board can flag
     // which prospects fill a hole. Strongest needs surface as a "top needs" strip.
     const userNeeds = userTeam ? this.calculateTeamNeeds(userTeam) : {};
@@ -7181,10 +7232,10 @@ let game = {
     const userRoster = userTeam ? userTeam.roster.map(id => this.state.players[id]).filter(p => p && !p.retired) : [];
 
     let html = '<div class="draft-header-bar">' +
-      '<div class="draft-round-info"><strong>R' + current.round + '</strong>Pick <strong>' + (currentIdx + 1) + '</strong> of ' + totalPicks + '</div>' +
+      '<div class="draft-round-info"><strong>R' + current.round + '</strong> Pick <strong>' + (currentIdx + 1) + '</strong> of ' + totalPicks + '</div>' +
       '<div class="draft-on-clock ' + (isUserTurn ? 'user-turn' : '') + '">' +
       (isUserTurn ? '⏰ YOU ARE ON THE CLOCK' : 'On the clock: ' + currentTeam.city + ' ' + currentTeam.name) + '</div>' +
-      '<div><button class="btn btn-sm" onclick="game.autoCompleteDraft()">Auto-complete →</button></div></div>' +
+      '<div style="display:flex;gap:6px">' + draftControls + '</div></div>' +
       '<div class="draft-filters">' +
       ['ALL'].concat(POSITIONS_FOR_DRAFT).map(pos => 
         '<button class="filter-btn ' + (this.draftFilter === pos ? 'active' : '') + '" onclick="game.setDraftFilter(\'' + pos + '\')">' + pos + '</button>'
@@ -10926,6 +10977,10 @@ let game = {
     this.state.week = 0;
     this.state.lastWeekRecap = null;
 
+    // Expire any of the user player's NIL/endorsement deals whose term elapsed this offseason.
+    // Frees up slots under the 4-deal cap so fresh offers can be surfaced and signed next season.
+    if (this.state.career && this.state.career.mode === 'player') this._playerExpireNilDeals();
+
     // Advance college season — graduates are stashed in state.pendingDraftClass
     this.advanceCollegeSeason();
     
@@ -11457,6 +11512,7 @@ let game = {
       case 'records': this.renderRecords(); break;
       case 'champions': this.renderChampions(); break;
       case 'about': this.renderAbout(); break;
+      case 'draft': this.state.draftActive ? this.renderDraft() : this.renderStandings(); break;
       default: this.renderStandings();
     }
     // Keep the accordion sidebar in sync with the currently-active view.
@@ -11527,6 +11583,13 @@ let game = {
   _injectBackButton() {
     const content = document.getElementById('content');
     if (!content) return;
+    // No back button while a draft is live — the draft view owns the screen until it completes,
+    // and a back nav would strand the user away from the still-active draft.
+    if (this.state && this.state.draftActive) {
+      const stale = (typeof content.querySelector === 'function') ? content.querySelector('.back-bar-inline') : null;
+      if (stale && typeof stale.remove === 'function') stale.remove();
+      return;
+    }
     // Defensive: in some headless/test environments content may not be a real DOM element.
     if (typeof content.querySelector !== 'function' || typeof content.insertBefore !== 'function') return;
     if (typeof document.createElement !== 'function') return;
@@ -13062,6 +13125,34 @@ let game = {
     return this.state.career.rep;
   },
 
+  // Max NIL/endorsement deals the player can hold at once. Once one expires, a slot frees up
+  // and a fresh offer can be surfaced and accepted.
+  _playerMaxNilDeals() { return 4; },
+
+  // The player's currently-active (non-expired) NIL/endorsement deals.
+  _playerActiveNilDeals(rep) {
+    rep = rep || this._playerRepState();
+    if (!rep || !rep.nilDeals) return [];
+    return rep.nilDeals.filter(d => !d.expired);
+  },
+
+  // Expire any of the player's NIL/endorsement deals whose term has elapsed. A deal signed in
+  // year Y for L years runs through season Y+L-1 and expires when the league rolls into year Y+L.
+  // Called once per offseason after the year advances — this frees slots under the 4-deal cap so
+  // the player can take new offers. Legacy deals (signed before this model existed) get their
+  // expireYear backfilled from signed year + length on first pass.
+  _playerExpireNilDeals() {
+    const rep = this.state.career && this.state.career.rep;
+    if (!rep || !rep.nilDeals) return;
+    rep.nilDeals.forEach(d => {
+      if (d.expired) return;
+      if (d.expireYear === undefined) {
+        d.expireYear = (d.signedYear || d.year || this.state.year) + (d.lengthYears || 1);
+      }
+      if (this.state.year >= d.expireYear) d.expired = true;
+    });
+  },
+
   // Weekly tick for player representation. Generates agent pitches (when unrepresented) and NIL
   // endorsement offers (scaled by marketability + agent quality). Surfaces forced popups.
   _playerRepWeeklyTick() {
@@ -13101,13 +13192,17 @@ let game = {
     else if (agentTier === 2) dealProb *= 1.5;
     else if (agentTier === 3) dealProb *= 1.2;
     else dealProb *= 0.55; // unrepresented: you're leaving money on the table
-    if (Math.random() < dealProb) {
+    // Cap: a player holds at most 4 active deals at once. While maxed out, brands hold off — no
+    // new offers are generated or surfaced until one of the player's deals expires and frees a slot.
+    const maxDeals = this._playerMaxNilDeals();
+    const activeCount = this._playerActiveNilDeals(rep).length;
+    if (activeCount < maxDeals && Math.random() < dealProb) {
       const offer = this._playerGenerateNilOffer(p, m, agentOvr);
       if (offer) rep.pendingNilOffers.push(offer);
     }
 
-    // Surface the first queued NIL offer if none active.
-    if (!rep.currentNilOffer && rep.pendingNilOffers.length > 0) {
+    // Surface the first queued NIL offer if none active — but only if a deal slot is free.
+    if (!rep.currentNilOffer && activeCount < maxDeals && rep.pendingNilOffers.length > 0) {
       rep.currentNilOffer = rep.pendingNilOffers.shift();
     }
   },
@@ -13289,7 +13384,17 @@ let game = {
   playerAcceptNilOffer() {
     const rep = this._playerRepState();
     if (!rep || !rep.currentNilOffer) return;
+    // Safety net for the 4-deal cap (offers shouldn't surface while maxed, but guard regardless).
+    if (this._playerActiveNilDeals(rep).length >= this._playerMaxNilDeals()) {
+      alert('You already have ' + this._playerMaxNilDeals() + ' active deals. Wait for one to expire before signing another.');
+      return;
+    }
     const o = rep.currentNilOffer;
+    // Stamp the deal's term: it runs for o.lengthYears seasons from the signing year and expires
+    // when the league rolls into year signedYear + lengthYears (handled in _playerExpireNilDeals).
+    o.signedYear = this.state.year;
+    o.expireYear = this.state.year + (o.lengthYears || 1);
+    o.expired = false;
     rep.nilDeals.push(o);
     rep.nilEarnings += o.playerCut;
     // If represented, the agent earns their commission too (adds to that agency's lore/feel —
@@ -13301,7 +13406,11 @@ let game = {
         (o.commissionRate ? ' · ' + formatMoney(o.playerCut) + ' after agent commission' : '') + '.'
     });
     rep.currentNilOffer = null;
-    if (rep.pendingNilOffers.length > 0) rep.currentNilOffer = rep.pendingNilOffers.shift();
+    // Chain to the next queued offer only if there's still a free deal slot; otherwise it waits
+    // in the inbox until a deal expires.
+    if (this._playerActiveNilDeals(rep).length < this._playerMaxNilDeals() && rep.pendingNilOffers.length > 0) {
+      rep.currentNilOffer = rep.pendingNilOffers.shift();
+    }
     closeModal();
     this.render();
     this._playerMaybeShowForcedPopup();
@@ -13356,8 +13465,10 @@ let game = {
     if (!o) return '';
     const queued = rep.pendingNilOffers.length;
     const dealWord = o.stage === 'college' ? 'NIL deal' : 'endorsement deal';
+    const maxDeals = this._playerMaxNilDeals();
+    const activeCount = this._playerActiveNilDeals(rep).length;
     let html = '<div style="padding:18px">' +
-      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:4px">Incoming ' + dealWord + '</div>' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:4px">Incoming ' + dealWord + ' · slots ' + activeCount + '/' + maxDeals + ' used</div>' +
       '<div style="font-size:16px;font-weight:700;margin-bottom:2px">' + o.brand + '</div>' +
       '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">A ' + o.category + ' brand wants a ' + o.lengthYears + '-year deal with you.</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;margin-bottom:14px">' +
@@ -13438,7 +13549,7 @@ let game = {
     return html;
   },
 
-  // NIL / endorsements card: lists accepted deals and lifetime earnings.
+  // NIL / endorsements card: lists accepted deals (active first), their status, and lifetime earnings.
   _renderPlayerNilCard() {
     const p = this.getUserPlayer();
     if (!p || p.retired) return '';
@@ -13446,19 +13557,38 @@ let game = {
     if (!rep) return '';
     const stage = this.state.career.careerStage;
     const label = stage === 'college' ? 'NIL deals' : 'Endorsements';
+    const maxDeals = this._playerMaxNilDeals();
+    const activeCount = this._playerActiveNilDeals(rep).length;
+    const slotClass = activeCount >= maxDeals ? 'var(--warning)' : 'var(--text-muted)';
     let html = '<div class="card"><div class="card-header"><div class="card-title">' + label + '</div>' +
-      '<div class="card-meta">Lifetime earned: <strong style="color:var(--success)">' + formatMoney(rep.nilEarnings || 0) + '</strong></div></div>';
+      '<div class="card-meta">Active <strong style="color:' + slotClass + '">' + activeCount + '/' + maxDeals + '</strong>' +
+      ' · Lifetime earned: <strong style="color:var(--success)">' + formatMoney(rep.nilEarnings || 0) + '</strong></div></div>';
+    if (activeCount >= maxDeals) {
+      html += '<div style="padding:8px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-size:11px;color:var(--text-muted)">' +
+        'You\'re at the ' + maxDeals + '-deal limit. New offers pause until a deal expires and frees a slot.</div>';
+    }
     if (!rep.nilDeals || rep.nilDeals.length === 0) {
       html += '<div class="empty-state" style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">No deals yet. ' +
         (rep.agentId ? 'Your agent is working on it — keep playing well.' : 'Sign with an agent to attract bigger brands.') + '</div>';
     } else {
-      html += '<table><thead><tr><th>Brand</th><th>Category</th><th class="text-right">TOTAL</th><th class="text-right">YOU KEEP</th><th class="text-right">SIGNED</th></tr></thead><tbody>';
-      [...rep.nilDeals].reverse().forEach(d => {
-        html += '<tr><td><strong>' + d.brand + '</strong></td>' +
+      // Active deals first (most recent on top), then expired.
+      const sorted = [...rep.nilDeals].sort((a, b) => {
+        const ae = a.expired ? 1 : 0, be = b.expired ? 1 : 0;
+        if (ae !== be) return ae - be;
+        return (b.signedYear || b.year || 0) - (a.signedYear || a.year || 0);
+      });
+      html += '<table><thead><tr><th>Brand</th><th>Category</th><th class="text-right">TOTAL</th><th class="text-right">YOU KEEP</th><th class="text-right">STATUS</th></tr></thead><tbody>';
+      sorted.forEach(d => {
+        const through = (d.expireYear !== undefined ? d.expireYear - 1 : ((d.signedYear || d.year || 0) + (d.lengthYears || 1) - 1));
+        const statusHtml = d.expired
+          ? '<span style="font-size:10px;background:var(--surface-2);color:var(--text-muted);padding:1px 6px;border-radius:2px;font-weight:600">EXPIRED</span>'
+          : '<span style="font-size:10px;background:var(--success);color:#fff;padding:1px 6px;border-radius:2px;font-weight:600">ACTIVE</span>' +
+            '<div style="font-size:10px;color:var(--text-muted);margin-top:2px">through ' + through + '</div>';
+        html += '<tr' + (d.expired ? ' style="opacity:0.55"' : '') + '><td><strong>' + d.brand + '</strong></td>' +
           '<td style="font-size:12px;color:var(--text-muted)">' + d.category + '</td>' +
           '<td class="text-right mono-num">' + formatMoney(d.totalValue) + '</td>' +
           '<td class="text-right mono-num" style="color:var(--success)">' + formatMoney(d.playerCut) + '</td>' +
-          '<td class="text-right mono-num" style="font-size:11px">' + d.year + ' wk ' + d.week + '</td></tr>';
+          '<td class="text-right">' + statusHtml + '</td></tr>';
       });
       html += '</tbody></table>';
     }
