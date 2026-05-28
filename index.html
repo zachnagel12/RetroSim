@@ -14548,28 +14548,33 @@ let game = {
     if (!agency || agency.bankrupted) return;
     // The year just completed is (current year - 1), since year++ already ran before this hook.
     const closedYear = this.state.year - 1;
+    // Compute the year's operating net (for the headline only — NOT for the bankruptcy trigger).
     let net = 0;
     (agency.ledger || []).forEach(e => {
       if (e.year !== closedYear) return;
       if (e.type === 'founding') return; // founding capital isn't operating income
       net += (e.amount || 0);
     });
-    const losingYear = net < 0 || agency.capital < 0;
-    if (losingYear) {
+    // BANKRUPTCY TRIGGER — an agency is only "in the negative" if it ends the season with negative
+    // CAPITAL ON HAND. A losing operating year while still sitting on cash is fine. Two CONSECUTIVE
+    // seasons ending with negative capital folds the agency.
+    const inTheRed = agency.capital < 0;
+    if (inTheRed) {
       agency.negativeYears = (agency.negativeYears || 0) + 1;
       if (agency.negativeYears >= 2) {
         this._agentDeclareBankruptcy(net);
         return;
       }
       this.addHeadline({
-        title: agency.agencyName + ' posts a losing year',
-        body: closedYear + ' closed ' + (net < 0 ? formatMoney(net) : 'in the red') + '. One more losing year and the agency folds. Close deals and cut costs.'
+        title: agency.agencyName + ' ends the year in the red',
+        body: closedYear + ' closed with negative capital (' + formatMoney(agency.capital) + '). One more season underwater and the agency folds — raise cash and cut costs.'
       });
     } else {
+      // Solvent at year end → reset the counter (and note the recovery if they were underwater).
       if (agency.negativeYears) {
         this.addHeadline({
-          title: agency.agencyName + ' back in the black',
-          body: closedYear + ' finished profitable (' + formatMoney(net) + ' net). The agency is on solid footing again.'
+          title: agency.agencyName + ' back on solid ground',
+          body: closedYear + ' ended with ' + formatMoney(agency.capital) + ' on hand. The agency is safe from bankruptcy again.'
         });
       }
       agency.negativeYears = 0;
@@ -18814,9 +18819,11 @@ let game = {
     const pos = p.position;
     const hs = p._heismanStats || null;
     const log = p._currentSeasonGameLog || [];
-    const history = (p.seasonHistory || []).filter(h => h && (h.stats || h.passYards !== undefined || h.awards));
-    // Nothing to show (e.g. a CPU prospect we never simmed in detail) → skip gracefully.
-    if (!hs && log.length === 0 && history.length === 0) return '';
+    // Full season-by-season career: real archived seasons + synthetic backfill for prior years
+    // we never simmed, so every prospect shows a complete career like player/dynasty modes.
+    const career = this._prospectCareerSeasons(p);
+    // Nothing at all to show (e.g. a freshman CPU prospect we never simmed) → skip gracefully.
+    if (!hs && log.length === 0 && career.length === 0) return '';
 
     let html = '';
     const perGame = (v, g) => g > 0 ? (v / g).toFixed(1) : '0.0';
@@ -18878,28 +18885,122 @@ let game = {
       html += '</tbody></table></div></div>';
     }
 
-    // ---- PRIOR SEASONS ----
-    if (history.length > 0) {
+    // ---- CAREER BY SEASON ---- (matches the player/dynasty season-by-season table)
+    if (career.length > 0) {
       html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
         '<div class="section-label">Career by season</div>' +
         '<div style="margin-top:8px;overflow-x:auto"><table style="width:100%;font-size:12px"><thead><tr>' +
-        '<th style="text-align:left">YEAR</th><th style="text-align:right">KEY STATS</th><th style="text-align:left">HONORS</th>' +
-        '</tr></thead><tbody>';
-      history.forEach(h => {
+        '<th style="text-align:left">YEAR</th><th style="text-align:left">CLASS</th>';
+      if (pos === 'QB') html += '<th style="text-align:right">PASS YDS</th><th style="text-align:right">TD</th><th style="text-align:right">INT</th>';
+      else if (pos === 'RB') html += '<th style="text-align:right">RUSH YDS</th><th style="text-align:right">TD</th><th style="text-align:right">REC YDS</th>';
+      else if (pos === 'WR' || pos === 'TE') html += '<th style="text-align:right">REC</th><th style="text-align:right">YDS</th><th style="text-align:right">TD</th>';
+      else if (pos === 'EDGE' || pos === 'DT' || pos === 'LB') html += '<th style="text-align:right">TKL</th><th style="text-align:right">SCK</th><th style="text-align:right">INT</th>';
+      else if (pos === 'CB' || pos === 'S') html += '<th style="text-align:right">TKL</th><th style="text-align:right">INT</th><th style="text-align:right">PD</th>';
+      else if (pos === 'K') html += '<th style="text-align:right">FGM/A</th><th style="text-align:right">XP</th><th></th>';
+      else if (pos === 'P') html += '<th style="text-align:right">PUNTS</th><th style="text-align:right">YDS</th><th style="text-align:right">I20</th>';
+      else html += '<th style="text-align:right">STATS</th><th></th><th></th>';
+      html += '<th style="text-align:right">GRADE</th><th style="text-align:left">AWARDS</th></tr></thead><tbody>';
+      career.forEach(h => {
         const st = h.stats || h;
-        let line = '—';
-        if (pos === 'QB') line = ((st.passYds || st.passYards || 0)).toLocaleString() + ' yds · ' + (st.passTDs || 0) + ' TD';
-        else if (pos === 'RB') line = ((st.rushYds || st.rushYards || 0)).toLocaleString() + ' rush · ' + (st.rushTDs || 0) + ' TD';
-        else if (pos === 'WR' || pos === 'TE') line = ((st.recYds || st.recYards || 0)).toLocaleString() + ' rec · ' + (st.recTDs || 0) + ' TD';
-        else line = (st.tackles || 0) + ' tkl' + ((st.sacks || 0) > 0 ? ' · ' + st.sacks + ' sk' : '') + ((st.interceptions || st.ints || 0) > 0 ? ' · ' + (st.interceptions || st.ints) + ' INT' : '');
+        let c1 = '—', c2 = '—', c3 = '—';
+        if (pos === 'QB') { c1 = (st.passingYards || st.passYds || 0).toLocaleString(); c2 = st.passingTDs || st.passTDs || 0; c3 = st.interceptionsThrown || st.ints || 0; }
+        else if (pos === 'RB') { c1 = (st.rushingYards || st.rushYds || 0).toLocaleString(); c2 = st.rushingTDs || st.rushTDs || 0; c3 = (st.receivingYards || st.recYds || 0).toLocaleString(); }
+        else if (pos === 'WR' || pos === 'TE') { c1 = st.receptions || 0; c2 = (st.receivingYards || st.recYds || 0).toLocaleString(); c3 = st.receivingTDs || st.recTDs || 0; }
+        else if (pos === 'EDGE' || pos === 'DT' || pos === 'LB') { c1 = st.tackles || 0; c2 = st.sacks || 0; c3 = st.interceptionsMade || st.interceptions || 0; }
+        else if (pos === 'CB' || pos === 'S') { c1 = st.tackles || 0; c2 = st.interceptionsMade || st.interceptions || 0; c3 = st.passDeflections || 0; }
+        else if (pos === 'K') { c1 = (st.fieldGoalsMade || 0) + '/' + (st.fieldGoalsAttempted || 0); c2 = st.extraPoints || 0; c3 = ''; }
+        else if (pos === 'P') { c1 = st.punts || 0; c2 = (st.puntYards || 0).toLocaleString(); c3 = st.puntsInside20 || 0; }
+        const grade = h.prospectGrade !== undefined ? (typeof h.prospectGrade === 'number' ? h.prospectGrade.toFixed(1) : h.prospectGrade) : '—';
         const honors = (h.awards || []).join(', ');
-        html += '<tr><td class="mono-num">' + (h.year || '—') + '</td><td style="text-align:right">' + line + '</td>' +
-          '<td style="color:var(--accent);font-size:11px">' + (honors || '') + '</td></tr>';
+        const synthNote = h._synthetic ? ' style="opacity:0.85"' : '';
+        html += '<tr' + synthNote + '><td class="mono-num">' + (h.year || '—') + '</td><td>' + (h.classYear || '—') + '</td>' +
+          '<td style="text-align:right" class="mono-num">' + c1 + '</td><td style="text-align:right" class="mono-num">' + c2 + '</td><td style="text-align:right" class="mono-num">' + c3 + '</td>' +
+          '<td style="text-align:right" class="mono-num">' + grade + '</td>' +
+          '<td style="color:var(--accent);font-size:11px;font-weight:600">' + honors + '</td></tr>';
       });
-      html += '</tbody></table></div></div>';
+      html += '</tbody></table></div>';
+      if (career.some(h => h._synthetic)) {
+        html += '<div style="font-size:10px;color:var(--text-muted);margin-top:6px">Prior-season totals estimated from scouting profile where full game records aren\'t available.</div>';
+      }
+      html += '</div>';
     }
 
     return html;
+  },
+
+  // Generate a plausible full-season stat total for a prospect at a given class year, scaled by
+  // their prospect grade and position. Used to BACKFILL prior college seasons so every prospect
+  // shows a complete season-by-season career (like player/dynasty modes), even agent clients who
+  // were only created as a grade and never simmed in earlier years. Deterministic per prospect+year
+  // so the numbers don't change between views.
+  _syntheticCollegeSeason(p, classYear, year) {
+    // Seeded RNG from the prospect id + year so results are stable across re-renders.
+    let seed = (year * 7919) >>> 0;
+    const idStr = String(p.id || p.name || 'x');
+    for (let i = 0; i < idStr.length; i++) seed = (seed * 31 + idStr.charCodeAt(i)) >>> 0;
+    const rng = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const grade = p.prospectGrade || 70;
+    // Younger seasons are a bit less productive than their current grade suggests.
+    const yearFactor = classYear === 'Freshman' ? 0.62 : classYear === 'Sophomore' ? 0.82 : 0.95;
+    const g = (grade / 80) * yearFactor;       // ~1.0 for a solid prospect
+    const games = 11 + Math.round(rng() * 2);  // 11-13 games
+    const v = (base, spread) => Math.max(0, Math.round((base * g) + (rng() - 0.5) * spread));
+    const pos = p.position;
+    const stats = { games, _synthetic: true };
+    if (pos === 'QB') {
+      stats.passingYards = v(2900, 700); stats.passingTDs = v(24, 8); stats.interceptionsThrown = Math.max(2, v(9, 6));
+      stats.rushingYards = v(250, 200); stats.rushingTDs = v(3, 4);
+    } else if (pos === 'RB') {
+      stats.rushingYards = v(1050, 500); stats.rushingTDs = v(11, 6);
+      stats.receivingYards = v(220, 200); stats.receivingTDs = v(2, 3); stats.receptions = v(24, 16);
+    } else if (pos === 'WR' || pos === 'TE') {
+      stats.receptions = v(58, 24); stats.receivingYards = v(820, 380); stats.receivingTDs = v(8, 6);
+    } else if (pos === 'EDGE' || pos === 'DT') {
+      stats.tackles = v(42, 18); stats.sacks = v(8, 6); stats.interceptionsMade = 0;
+    } else if (pos === 'LB') {
+      stats.tackles = v(85, 30); stats.sacks = v(4, 4); stats.interceptionsMade = v(1, 2);
+    } else if (pos === 'CB' || pos === 'S') {
+      stats.tackles = v(52, 24); stats.interceptionsMade = v(3, 3); stats.passDeflections = v(8, 6);
+    } else if (pos === 'K') {
+      stats.fieldGoalsMade = v(18, 8); stats.fieldGoalsAttempted = stats.fieldGoalsMade + v(4, 4); stats.extraPoints = v(35, 12);
+    } else if (pos === 'P') {
+      stats.punts = v(50, 18); stats.puntYards = stats.punts * (40 + Math.round(rng() * 6)); stats.puntsInside20 = v(18, 8);
+    }
+    // Estimated season grade for that year (slightly below current for younger years).
+    const seasonGrade = Math.max(40, Math.min(99, grade * (yearFactor + 0.05)));
+    return { year, classYear, prospectGrade: Math.round(seasonGrade * 10) / 10, awards: [], stats, _synthetic: true };
+  },
+
+  // Build the full season-by-season career for a prospect: real archived seasons where we have
+  // them, synthetic backfill for the earlier years we don't. Returns oldest→newest.
+  _prospectCareerSeasons(p) {
+    const classOrder = ['Freshman', 'Sophomore', 'Junior', 'Senior'];
+    const curIdx = classOrder.indexOf(p.year);
+    if (curIdx <= 0) return (p.seasonHistory || []).slice(); // freshman: no prior years
+    // How many completed prior seasons should exist (freshman through the year before current).
+    const priorCount = curIdx; // e.g. Junior → 2 prior (Fr, So)
+    const real = (p.seasonHistory || []).filter(h => h && h.year !== undefined);
+    // Map real seasons by year for quick lookup.
+    const byYear = {};
+    real.forEach(h => { byYear[h.year] = h; });
+    const out = [];
+    for (let i = 0; i < priorCount; i++) {
+      const classYear = classOrder[i];
+      // The year this class-season would have occurred: current year minus (yearsAgo).
+      const yearsAgo = curIdx - i;
+      const seasonYear = this.state.year - yearsAgo;
+      // Prefer a real archived season for this year; otherwise synthesize.
+      if (byYear[seasonYear]) {
+        const h = byYear[seasonYear];
+        if (!h.classYear) h.classYear = classYear;
+        out.push(h);
+      } else {
+        out.push(this._syntheticCollegeSeason(p, classYear, seasonYear));
+      }
+    }
+    // Append any remaining real seasons not already placed (defensive).
+    real.forEach(h => { if (!out.includes(h)) out.push(h); });
+    return out;
   },
 
   showProspectCard(prospectId, replace) {
@@ -24162,6 +24263,15 @@ let game = {
       return '<div class="empty-state" style="padding:24px">No NFL award data for ' + data.year + '.</div>';
     }
     
+    // AGENT MODE — flag NFL players who are the user's clients. CPU-repped players aren't marked.
+    const isAgent = this.state.career && this.state.career.mode === 'agent';
+    const clientBadge = '<span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:2px;letter-spacing:0.5px;margin-left:6px;font-weight:700;vertical-align:middle">YOUR CLIENT</span>';
+    const isMyClientId = (pid) => {
+      if (!isAgent || pid === undefined || pid === null) return false;
+      const p = this.state.players[pid];
+      return !!(p && p.agentId === 'user');
+    };
+
     // Helper to render a single named award with a gold accent
     const awardLine = (label, entry, sublabel) => {
       if (!entry) return '';
@@ -24170,6 +24280,7 @@ let game = {
         const p = this.state.players[entry.playerId];
         const teamAbbr = p && p.team !== null && this.state.teams[p.team] ? this.state.teams[p.team].abbr : '';
         nameHtml = '<span style="cursor:pointer;text-decoration:underline" onclick="closeModal();game.showPlayer(' + entry.playerId + ')">' + entry.name + '</span>' +
+          (isMyClientId(entry.playerId) ? clientBadge : '') +
           (teamAbbr ? ' <span class="muted" style="font-size:11px">' + teamAbbr + '</span>' : '');
       } else if (entry.coachId !== undefined) {
         const t = entry.teamId !== undefined ? this.state.teams[entry.teamId] : null;
@@ -24207,7 +24318,7 @@ let game = {
       html += '<div style="margin-top:14px"><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">ALL-PRO FIRST TEAM</div>' +
         '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px 16px;font-size:12px">';
       record.allProFirst.forEach(p => {
-        html += '<div><span style="font-weight:600">' + p.position + '</span> · <span style="cursor:pointer;text-decoration:underline" onclick="closeModal();game.showPlayer(' + p.playerId + ')">' + p.name + '</span></div>';
+        html += '<div><span style="font-weight:600">' + p.position + '</span> · <span style="cursor:pointer;text-decoration:underline" onclick="closeModal();game.showPlayer(' + p.playerId + ')">' + p.name + '</span>' + (isMyClientId(p.playerId) ? clientBadge : '') + '</div>';
       });
       html += '</div></div>';
     }
@@ -24221,6 +24332,19 @@ let game = {
     return html;
   },
   
+  // Build a Set of "name|SCHOOL" keys for the user agency's current clients, for flagging them in
+  // recaps. Returns null when not in agent mode (so callers can skip annotation entirely). Only
+  // the user's own clients are included — players repped by other agencies are never flagged.
+  _agentClientNameSchoolSet() {
+    if (!(this.state.career && this.state.career.mode === 'agent' && this.state.agency)) return null;
+    const set = new Set();
+    (this.state.agency.clients || []).forEach(c => {
+      const p = this._agentResolveClient(c.prospectId);
+      if (p && p.name) set.add(p.name.toLowerCase() + '|' + (p.school || '').toUpperCase());
+    });
+    return set;
+  },
+
   // College tab contents — uses latestCollegeRecap for the most recent college season
   _renderAwardsCeremonyCollege(data) {
     const recap = this.state.latestCollegeRecap;
@@ -24234,7 +24358,16 @@ let game = {
     };
     
     let html = '';
-    
+
+    // AGENT MODE — build a lookup of the user's clients by name+school so we can flag them in the
+    // recap. We only mark OUR clients; players repped by other agencies aren't annotated.
+    const clientKeys = this._agentClientNameSchoolSet();
+    const isMyClient = (name, schoolAbbr) => {
+      if (!clientKeys) return false;
+      return clientKeys.has((name || '').toLowerCase() + '|' + (schoolAbbr || '').toUpperCase());
+    };
+    const clientBadge = '<span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:2px;letter-spacing:0.5px;margin-left:6px;font-weight:700;vertical-align:middle">YOUR CLIENT</span>';
+
     // National championship
     const titleScore = recap.cfpTitleGame ? ' ' + recap.cfpTitleGame.winnerScore + '–' + recap.cfpTitleGame.loserScore : '';
     html += '<div style="background:var(--surface-2);padding:14px 18px;margin-bottom:14px;border-left:4px solid var(--accent)">' +
@@ -24246,14 +24379,14 @@ let game = {
     // Heisman
     html += '<div style="background:var(--surface);padding:10px 14px;margin-bottom:6px;border-left:3px solid #d4a017">' +
       '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600">HEISMAN TROPHY</div>' +
-      '<div style="font-size:14px;font-weight:600;margin-top:2px">' + recap.heismanName + ' <span class="muted" style="font-size:11px">' + recap.heismanPosition + ' · ' + schoolLinkByAbbr(recap.heismanSchool) + '</span></div>' +
+      '<div style="font-size:14px;font-weight:600;margin-top:2px">' + recap.heismanName + (isMyClient(recap.heismanName, recap.heismanSchool) ? clientBadge : '') + ' <span class="muted" style="font-size:11px">' + recap.heismanPosition + ' · ' + schoolLinkByAbbr(recap.heismanSchool) + '</span></div>' +
       '</div>';
     
     // Maxwell
     if (recap.maxwellName) {
       html += '<div style="background:var(--surface);padding:10px 14px;margin-bottom:6px;border-left:3px solid #d4a017">' +
         '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600">MAXWELL AWARD</div>' +
-        '<div style="font-size:14px;font-weight:600;margin-top:2px">' + recap.maxwellName + ' <span class="muted" style="font-size:11px">' + recap.maxwellPosition + ' · ' + schoolLinkByAbbr(recap.maxwellSchool) + '</span></div>' +
+        '<div style="font-size:14px;font-weight:600;margin-top:2px">' + recap.maxwellName + (isMyClient(recap.maxwellName, recap.maxwellSchool) ? clientBadge : '') + ' <span class="muted" style="font-size:11px">' + recap.maxwellPosition + ' · ' + schoolLinkByAbbr(recap.maxwellSchool) + '</span></div>' +
         '</div>';
     }
     
@@ -24267,7 +24400,7 @@ let game = {
         if (f.position === 'QB') prod = (s.passYds || 0).toLocaleString() + ' yds, ' + (s.passTDs || 0) + ' TD';
         else if (f.position === 'RB') prod = (s.rushYds || 0).toLocaleString() + ' yds, ' + (s.rushTDs || 0) + ' TD';
         else prod = (s.receptions || 0) + ' rec, ' + (s.recYds || 0).toLocaleString() + ' yds, ' + (s.recTDs || 0) + ' TD';
-        html += '<div><span style="opacity:0.6">#' + (i + 1) + '</span> <strong>' + f.name + '</strong> <span class="muted">(' + f.position + ', ' + schoolLinkByAbbr(f.school) + ') — ' + prod + '</span></div>';
+        html += '<div><span style="opacity:0.6">#' + (i + 1) + '</span> <strong>' + f.name + '</strong>' + (isMyClient(f.name, f.school) ? clientBadge : '') + ' <span class="muted">(' + f.position + ', ' + schoolLinkByAbbr(f.school) + ') — ' + prod + '</span></div>';
       });
       html += '</div></div>';
     }
