@@ -6783,6 +6783,13 @@ let game = {
       this.render();
       return;
     }
+    // Forced NIL offer also blocks sim — the user must accept or decline it first.
+    if (this.state.career && this.state.career.mode === 'agent' && this.state.agency &&
+        (this.state.agency.currentNilOffer || (this.state.agency.pendingNilOffers && this.state.agency.pendingNilOffers.length > 0))) {
+      this._agentSurfaceNextNilOffer();
+      this._agentMaybeShowForcedPopup();
+      return;
+    }
     if (this.state.offseasonPhase === 'fa') {
       this.state.offseasonPhase = 'draft';
       this.startAnnualDraft();
@@ -6818,9 +6825,233 @@ let game = {
     document.getElementById('newsFeed').style.display = '';
     document.getElementById('mainGrid').style.gridTemplateColumns = '200px 1fr 320px';
     this.saveGame();
-    this.currentView = 'recap';
+    // Re-render the CURRENT view (do NOT switch the user's tab/page), then overlay the week
+    // recap as a dismissable popup. Agent careers also get forced NIL / contract popups, which
+    // are surfaced from within the recap modal flow.
     this.render();
+    this.showWeekRecapModal();
   },
+
+  // Build and show the weekly recap as a modal popup. This replaces the old behaviour of
+  // switching the user to a dedicated 'recap' page. The user stays on whatever tab they were on.
+  // For agent careers, the recap includes an agency summary, and any forced NIL / contract
+  // decisions are chained after the recap is dismissed.
+  showWeekRecapModal() {
+    const recap = this.state.lastWeekRecap;
+    // Clear any stale modal history so the recap opens fresh (not stacked behind an old card).
+    this._modalHistory = [];
+    let title, body;
+    if (recap && recap.isPlayoff) {
+      title = 'Playoff results';
+      body = this._buildWeekRecapModalBody(recap);
+    } else if (recap) {
+      title = 'Week ' + recap.week + ' recap · ' + this.state.year;
+      body = this._buildWeekRecapModalBody(recap);
+    } else {
+      // No game recap (e.g. offseason advance) — still surface agency popups if present.
+      this._agentMaybeShowForcedPopup();
+      return;
+    }
+    this.showModal(title, body);
+    // After the user closes this recap, chain into any forced agent popups.
+    this._pendingForcedAfterRecap = true;
+  },
+
+  // Compose the recap modal body. Mirrors the key content from renderRecap but condensed for a
+  // popup: user game spotlight, standout performers, full scoreboard, and (agent mode) an agency
+  // weekly summary.
+  _buildWeekRecapModalBody(recap) {
+    const userTeamId = this.getUserTeamId();
+    let html = '<div style="padding:16px 18px">';
+
+    // ===== AGENT AGENCY SUMMARY (agent careers) =====
+    if (this.state.career && this.state.career.mode === 'agent' && this.state.agency) {
+      html += this._buildAgencyWeekSummary();
+    }
+
+    // ===== USER GAME SPOTLIGHT =====
+    if (userTeamId !== null && userTeamId !== undefined && recap.games) {
+      const userGame = recap.games.find(g => g.homeTeam === userTeamId || g.awayTeam === userTeamId);
+      const userTeam = this.state.teams[userTeamId];
+      if (userTeam && !userGame) {
+        html += '<div style="background:var(--surface-2);border:1px solid var(--border);padding:12px 14px;margin-bottom:14px">' +
+          '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Your team · Bye week</div>' +
+          '<div style="font-size:15px;font-weight:600;margin-top:2px">' + userTeam.city + ' ' + userTeam.name + ' (' + userTeam.wins + '–' + userTeam.losses + ')</div></div>';
+      } else if (userGame) {
+        const home = this.state.teams[userGame.homeTeam];
+        const away = this.state.teams[userGame.awayTeam];
+        const userIsHome = home.id === userTeamId;
+        const userScore = userIsHome ? userGame.homeScore : userGame.awayScore;
+        const oppScore = userIsHome ? userGame.awayScore : userGame.homeScore;
+        const opp = userIsHome ? away : home;
+        const won = userScore > oppScore;
+        html += '<div style="background:' + (won ? '#eaedd8' : '#f5e0dc') + ';border:1px solid var(--border);border-left:3px solid ' + (won ? 'var(--success)' : 'var(--danger)') + ';padding:12px 14px;margin-bottom:14px">' +
+          '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Your team · ' + (won ? 'WIN' : 'LOSS') + '</div>' +
+          '<div style="font-size:17px;font-weight:700;margin-top:3px">' + userTeam.abbr + ' ' + userScore + ' — ' + oppScore + ' ' + opp.abbr + '</div></div>';
+      }
+    }
+
+    // ===== STANDOUT PERFORMERS =====
+    const standouts = [];
+    if (recap.offensiveStandout) standouts.push(['Offense', recap.offensiveStandout]);
+    if (recap.defensiveStandout) standouts.push(['Defense', recap.defensiveStandout]);
+    if (recap.specialStandout) standouts.push(['Special teams', recap.specialStandout]);
+    if (standouts.length > 0) {
+      html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:6px">Standout performers</div>';
+      html += '<div style="display:grid;grid-template-columns:1fr;gap:6px;margin-bottom:14px">';
+      standouts.forEach(([label, s]) => {
+        const p = s.player;
+        const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
+        html += '<div style="display:flex;justify-content:space-between;background:var(--surface-2);border:1px solid var(--border);padding:8px 12px">' +
+          '<div><span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted)">' + label + '</span><div style="font-weight:600">' + p.name + ' <span class="muted" style="font-weight:400">' + p.position + (team ? ' · ' + team.abbr : '') + '</span></div></div>' +
+          '</div>';
+      });
+      html += '</div>';
+    }
+
+    // ===== SCOREBOARD =====
+    if (recap.games && recap.games.length > 0) {
+      html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:6px">Scoreboard</div>';
+      html += '<table style="font-size:12px"><tbody>';
+      const sorted = [...recap.games].sort((a, b) => {
+        const aU = a.homeTeam === userTeamId || a.awayTeam === userTeamId;
+        const bU = b.homeTeam === userTeamId || b.awayTeam === userTeamId;
+        return (bU ? 1 : 0) - (aU ? 1 : 0);
+      });
+      sorted.forEach(g => {
+        const home = this.state.teams[g.homeTeam];
+        const away = this.state.teams[g.awayTeam];
+        if (!home || !away) return;
+        const homeWon = g.homeScore > g.awayScore;
+        const isUser = g.homeTeam === userTeamId || g.awayTeam === userTeamId;
+        html += '<tr' + (isUser ? ' class="user-row"' : '') + '>' +
+          '<td style="text-align:right;' + (!homeWon ? 'color:var(--text-muted)' : 'font-weight:600') + '">' + away.abbr + '</td>' +
+          '<td class="mono-num text-center" style="width:64px">' + g.awayScore + ' – ' + g.homeScore + '</td>' +
+          '<td style="' + (homeWon ? 'font-weight:600' : 'color:var(--text-muted)') + '">' + home.abbr + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+
+    html += '</div>';
+    return html;
+  },
+
+  // Build a compact agency weekly summary block for the recap popup. Shows capital, weekly burn,
+  // reputation, deals closed this week, and pending NIL offers awaiting the user's decision.
+  _buildAgencyWeekSummary() {
+    const agency = this.state.agency;
+    if (!agency) return '';
+    // Count NIL deals + overhead logged THIS week from the ledger.
+    const wk = this.state.week, yr = this.state.year;
+    let dealsThisWeek = 0, commissionThisWeek = 0, overheadThisWeek = 0;
+    (agency.ledger || []).forEach(e => {
+      if (e.week === wk && e.year === yr) {
+        if (e.type === 'nil') { dealsThisWeek++; commissionThisWeek += e.amount; }
+        if (e.type === 'overhead') overheadThisWeek += -e.amount;
+      }
+    });
+    const pendingOffers = (agency.pendingNilOffers ? agency.pendingNilOffers.length : 0) + (agency.currentNilOffer ? 1 : 0);
+    const repColor = agency.reputation >= 70 ? 'var(--success)' : agency.reputation >= 40 ? 'var(--warning)' : 'var(--danger)';
+    const capColor = agency.capital >= 0 ? 'var(--text)' : 'var(--danger)';
+    let html = '<div style="background:var(--surface-2);border:1px solid var(--border);padding:12px 14px;margin-bottom:14px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:6px">' + agency.agencyName + ' · week ' + wk + '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Capital</div><div style="font-weight:700;color:' + capColor + '">' + formatMoney(agency.capital) + '</div></div>' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Weekly burn</div><div style="font-weight:700">' + formatMoney(overheadThisWeek || agency.weeklyOverhead) + '</div></div>' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Reputation</div><div style="font-weight:700;color:' + repColor + '">' + Math.round(agency.reputation) + '/100</div></div>' +
+      '</div>';
+    if (dealsThisWeek > 0) {
+      html += '<div style="margin-top:8px;font-size:12px;color:var(--success)">✓ ' + dealsThisWeek + ' NIL deal' + (dealsThisWeek === 1 ? '' : 's') + ' closed · ' + formatMoney(commissionThisWeek) + ' commission</div>';
+    }
+    if (pendingOffers > 0) {
+      html += '<div style="margin-top:6px;font-size:12px;color:var(--warning)">⚠ ' + pendingOffers + ' NIL offer' + (pendingOffers === 1 ? '' : 's') + ' awaiting your decision</div>';
+    }
+    if (agency.reputation < 70) {
+      html += '<div style="margin-top:6px;font-size:11px;color:var(--text-muted)">NFL representation unlocks at 70 reputation. Keep landing clients and closing deals.</div>';
+    }
+    html += '</div>';
+    return html;
+  },
+
+  // Build an agency season-in-review block for the yearly awards ceremony. Tallies the year's
+  // deals, commission, overhead, and net for the agency from the ledger.
+  _buildAgencyYearSummary(year) {
+    const agency = this.state.agency;
+    if (!agency) return '';
+    let deals = 0, commission = 0, overhead = 0, signings = 0, net = 0;
+    (agency.ledger || []).forEach(e => {
+      if (e.year !== year) return;
+      if (e.type === 'nil') { deals++; commission += e.amount; }
+      if (e.type === 'overhead') overhead += -e.amount;
+      if (e.type === 'sign') signings++;
+      net += (e.amount || 0);
+    });
+    const repColor = agency.reputation >= 70 ? 'var(--success)' : agency.reputation >= 40 ? 'var(--warning)' : 'var(--danger)';
+    const netColor = net >= 0 ? 'var(--success)' : 'var(--danger)';
+    let html = '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:0;padding:14px 16px;margin-bottom:18px">' +
+      '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted);font-weight:600;margin-bottom:10px;text-align:center">' + agency.agencyName + ' · ' + year + ' in review</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;text-align:center">' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Clients</div><div style="font-weight:700;font-size:16px">' + agency.clients.length + '</div></div>' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Signings</div><div style="font-weight:700;font-size:16px">' + signings + '</div></div>' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">NIL deals</div><div style="font-weight:700;font-size:16px">' + deals + '</div></div>' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Reputation</div><div style="font-weight:700;font-size:16px;color:' + repColor + '">' + Math.round(agency.reputation) + '</div></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;text-align:center;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Commission earned</div><div style="font-weight:700;color:var(--success)">' + formatMoney(commission) + '</div></div>' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Overhead paid</div><div style="font-weight:700;color:var(--danger)">' + formatMoney(overhead) + '</div></div>' +
+      '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Net</div><div style="font-weight:700;color:' + netColor + '">' + (net >= 0 ? '+' : '') + formatMoney(net) + '</div></div>' +
+      '</div>' +
+      '<div style="text-align:center;margin-top:10px;font-size:11px;color:var(--text-muted)">Capital on hand: <strong style="color:var(--text)">' + formatMoney(agency.capital) + '</strong></div>' +
+      '</div>';
+    return html;
+  },
+
+  // After the recap modal is dismissed, surface any forced agent popups (NIL offers, contract
+  // decisions). Called from closeModal via the _pendingForcedAfterRecap flag.
+  _agentMaybeShowForcedPopup() {
+    if (!(this.state && this.state.career && this.state.career.mode === 'agent' && this.state.agency)) return false;
+    const agency = this.state.agency;
+    if (agency.currentNilOffer) {
+      this.showModal('NIL offer · ' + agency.currentNilOffer.prospectName, this._buildNilOfferPopup());
+      return true;
+    }
+    if (agency.currentContractDecision) {
+      // Route the user to the agency page where the sticky contract popup already renders.
+      this.currentView = 'myagency';
+      this.render();
+      return true;
+    }
+    return false;
+  },
+
+  // Build the forced NIL offer popup body. The user must Accept or Decline; no close button path
+  // resolves it (closeModal re-invokes this until the queue is empty).
+  _buildNilOfferPopup() {
+    const agency = this.state.agency;
+    const o = agency.currentNilOffer;
+    if (!o) return '';
+    const queued = agency.pendingNilOffers ? agency.pendingNilOffers.length : 0;
+    let html = '<div style="padding:18px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:4px">Incoming endorsement offer</div>' +
+      '<div style="font-size:16px;font-weight:700;margin-bottom:2px">' + o.prospectName + ' <span class="muted" style="font-weight:400;font-size:13px">' + o.position + ' · ' + o.school + '</span></div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">A <strong>' + o.brand + '</strong> brand wants a ' + o.lengthYears + '-year deal.</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;margin-bottom:16px">' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:10px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Total value</div><div style="font-weight:700">' + formatMoney(o.totalValue) + '</div></div>' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:10px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Per year</div><div style="font-weight:700">' + formatMoney(o.annualValue) + '</div></div>' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:10px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Your cut</div><div style="font-weight:700;color:var(--success)">' + formatMoney(o.commission) + '</div></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:10px">' +
+      '<button class="btn btn-primary btn-lg" style="flex:1" onclick="game.agentAcceptNilOffer()">Accept deal</button>' +
+      '<button class="btn btn-lg" style="flex:1" onclick="game.agentDeclineNilOffer()">Decline</button>' +
+      '</div>';
+    if (queued > 0) html += '<div style="margin-top:10px;font-size:11px;color:var(--text-muted);text-align:center">' + queued + ' more offer' + (queued === 1 ? '' : 's') + ' after this</div>';
+    if (this._agentHasJuniorAgent()) {
+      html += '<div style="margin-top:10px;font-size:11px;color:var(--text-muted);text-align:center;border-top:1px solid var(--border);padding-top:10px">Tip: toggle on your Junior Agent\'s auto-handling on the agency page to skip these popups.</div>';
+    }
+    html += '</div>';
+    return html;
+  },
+
 
   // Round a candidate score down/up to the nearest valid NFL score: 7*TD + 3*FG for non-negative TD, FG.
   // Examples: 23 → 23 (2TD + 3FG), 22 → 21 or 24, 11 → 10 or 13. Bias toward nearest valid value.
@@ -11402,21 +11633,21 @@ let game = {
       label: 'Former Player',
       tagline: 'You played in the league. Coaches and GMs trust you.',
       description: 'Mid-range starting capital, but your NFL connections give you instant credibility with players and front offices.',
-      capital: 250000, ovr: 60, reputation: 65, overhead: 8000,
+      capital: 250000, ovr: 60, reputation: 55, overhead: 5000,
       color: '#2d7a2d'
     },
     trust_fund: {
       label: 'Trust Fund Kid',
       tagline: 'Daddy\'s money built a downtown office. Now prove you belong.',
-      description: 'Huge starting bankroll lets you outspend competitors, but a fancy office means $15K/wk overhead, and players don\'t know your name.',
-      capital: 1500000, ovr: 40, reputation: 20, overhead: 15000,
+      description: 'Huge starting bankroll lets you outspend competitors, but a fancy office means $9K/wk overhead, and players don\'t know your name. The NFL won\'t take your calls until you build a real reputation.',
+      capital: 1500000, ovr: 40, reputation: 20, overhead: 9000,
       color: '#a67c00'
     },
     self_made: {
       label: 'Self-Made',
       tagline: 'A laptop and a dream. Working out of your apartment.',
-      description: 'Tiny operating budget but tiny overhead. You\'ll need to grind walk-ons and JUCO guys before anyone good signs.',
-      capital: 50000, ovr: 45, reputation: 30, overhead: 4000,
+      description: 'Tiny operating budget but tiny overhead. You\'ll need to grind walk-ons and JUCO guys before anyone good signs — and the NFL is off-limits until you earn a name for yourself.',
+      capital: 50000, ovr: 45, reputation: 30, overhead: 2500,
       color: '#5a6770'
     }
   },
@@ -11427,9 +11658,9 @@ let game = {
   AGENT_OFFICE_TIERS: [
     { level: 1, name: 'Apartment',     upgradeCost: 0,        overheadAdd: 0,     clientSlots: 2,  staffSlots: 0,
       description: 'Working out of your kitchen. Two clients max. Just you.' },
-    { level: 2, name: 'Small office',  upgradeCost: 250000,   overheadAdd: 3000,  clientSlots: 5,  staffSlots: 1,
+    { level: 2, name: 'Small office',  upgradeCost: 250000,   overheadAdd: 2000,  clientSlots: 5,  staffSlots: 1,
       description: 'A real office with a real address. Room for 5 clients and one hire.' },
-    { level: 3, name: 'Shared floor',  upgradeCost: 1000000,  overheadAdd: 8000,  clientSlots: 12, staffSlots: 3,
+    { level: 3, name: 'Shared floor',  upgradeCost: 1000000,  overheadAdd: 6000,  clientSlots: 12, staffSlots: 3,
       description: 'Co-working a downtown floor with your name on the door. 12 clients, 3 staff.' },
     { level: 4, name: 'Full floor',    upgradeCost: 5000000,  overheadAdd: 25000, clientSlots: 25, staffSlots: 8,
       description: 'Whole-floor lease, conference rooms, glass everything. 25 clients, 8 staff.' },
@@ -11510,6 +11741,14 @@ let game = {
     if (byRole.marketer.length > 0) marketer = byRole.marketer[0] + (byRole.marketer.slice(1).reduce((s, o) => s + o, 0)) * 0.3;
     if (byRole.junior_agent.length > 0) junior = byRole.junior_agent[0] + (byRole.junior_agent.slice(1).reduce((s, o) => s + o, 0)) * 0.3;
     return { scoutOvr: scout, marketerOvr: marketer, juniorOvr: junior };
+  },
+
+  // Does the agency employ at least one junior agent? Junior agents unlock the option to
+  // auto-resolve incoming NIL deals (otherwise every deal is a forced popup the user must approve).
+  _agentHasJuniorAgent() {
+    const agency = this.state.agency;
+    if (!agency || !agency.staff) return false;
+    return agency.staff.some(s => s.role === 'junior_agent');
   },
 
   showAgentCreation() {
@@ -11599,6 +11838,9 @@ let game = {
       availableStaff: [],               // generated each offseason; pool of candidates to hire
       pendingContractDecisions: [],     // queue of expiring contracts; forces the user through popups
       currentContractDecision: null,    // active forced popup (modal won't close until resolved)
+      pendingNilOffers: [],             // queue of incoming NIL/endorsement offers awaiting approval
+      currentNilOffer: null,            // active forced NIL popup (must accept/decline)
+      autoNilDeals: false,              // when true AND a junior agent is on staff, NIL offers auto-resolve
       lifetimeEarnings: 0               // for tracking — drives some achievements/lore later
     };
     this.state.career.entityType = 'agent';
@@ -12028,9 +12270,10 @@ let game = {
     const scoutPitchesBonus = Math.floor(bonuses.scoutOvr / 20);
     
     // The "meeting ceiling" is how high a prospect's marketability can be for them to still
-    // take a meeting with you. Without a scout, this caps around 70 for a startup agent;
-    // with a top-tier scout, it can reach 85+ which opens up real talent.
-    const ceiling = 25 + agency.agentOvr * 0.85 + agency.reputation * 0.25 + scoutCeilingBonus;
+    // take a meeting with you. Without a scout, this caps lower for a startup agent;
+    // with a top-tier scout, it can reach higher which opens up real talent. Tightened so good
+    // prospects are genuinely hard to land early — you must build OVR and reputation first.
+    const ceiling = 12 + agency.agentOvr * 0.72 + agency.reputation * 0.22 + scoutCeilingBonus;
     
     const allEligible = (this.state.collegeProspects || [])
       .filter(p => !p.isUserControlled && !signedIds.has(p.id) && p.agentId !== 'user')
@@ -12047,12 +12290,13 @@ let game = {
       })
       .filter(({ m, poachable }) => m <= ceiling + 5 && poachable);
     
-    // NFL REPRESENTATION POOL — reputation-gated. At rep ≥ 50, free agents start considering
-    // you. At rep ≥ 70, mid-tier vets with expiring rep contracts. At rep ≥ 85, stars.
-    // We additionally only show NFL players whose representation contract (`repContractYears`)
-    // is at or near 0 OR who are currently unrepresented entirely.
-    if (agency.reputation >= 50) {
-      const repMax = agency.reputation >= 85 ? 80 : agency.reputation >= 70 ? 65 : 50; // marketability cap
+    // NFL REPRESENTATION POOL — reputation-gated. Breaking into the NFL is HARD: no NFL player
+    // will take your call until your agency reputation reaches 70. This is effectively impossible
+    // at the start for trust-fund (rep 20) and self-made (rep 30) origins — you must first build a
+    // name by landing college clients and closing NIL deals. At rep ≥ 70 mid-tier vets with
+    // expiring rep contracts appear; at rep ≥ 85, stars do.
+    if (agency.reputation >= 70) {
+      const repMax = agency.reputation >= 85 ? 80 : 65; // marketability cap
       (this.state.players || []).forEach(p => {
         if (p.retired) return;
         if (p.agentId === 'user') return; // already yours
@@ -12098,10 +12342,10 @@ let game = {
     const officeLevel = (agency.office && agency.office.level) || 1;
     const baseSlots = 8 + officeLevel * 2 + scoutPitchesBonus; // L1 = 10, L2 = 12 + scout, etc.
     const targetCounts = {
-      elite: Math.min(tiers.elite.length, Math.random() < 0.4 + scoutCeilingBonus / 30 ? 1 : 0),
-      good:  Math.min(tiers.good.length,  Math.floor(baseSlots * 0.30) + (bonuses.scoutOvr > 70 ? 1 : 0)),
-      mid:   Math.min(tiers.mid.length,   Math.floor(baseSlots * 0.40)),
-      low:   Math.min(tiers.low.length,   Math.floor(baseSlots * 0.35))
+      elite: Math.min(tiers.elite.length, Math.random() < 0.20 + scoutCeilingBonus / 35 ? 1 : 0),
+      good:  Math.min(tiers.good.length,  Math.floor(baseSlots * 0.18) + (bonuses.scoutOvr > 75 ? 1 : 0)),
+      mid:   Math.min(tiers.mid.length,   Math.floor(baseSlots * 0.42)),
+      low:   Math.min(tiers.low.length,   Math.floor(baseSlots * 0.45))
     };
     
     let picks = [];
@@ -12308,8 +12552,12 @@ let game = {
     });
     
     // 2. NIL deals for each client. Marketer staff boosts both frequency and value.
+    // Each generated deal becomes an OFFER. By default the user must approve every offer via a
+    // forced popup. Only with a junior agent on staff AND auto-NIL toggled on do offers auto-accept.
+    const autoResolve = agency.autoNilDeals && this._agentHasJuniorAgent();
     const dealProbMult = 1 + bonuses.marketerOvr / 200;   // OVR 80 marketer = +40% frequency
     const dealValueMult = 1 + bonuses.marketerOvr / 250;  // OVR 80 marketer = +32% value
+    agency.pendingNilOffers = agency.pendingNilOffers || [];
     agency.clients.forEach(client => {
       const prospect = this._agentResolveClient(client.prospectId);
       if (!prospect) return;
@@ -12325,19 +12573,22 @@ let game = {
         const brand = brandTypes[Math.floor(Math.random() * brandTypes.length)];
         const totalValue = annualValue * lengthYears;
         const commission = Math.round(totalValue * (client.commissionRate / 100));
-        client.nilDeals.push({
+        const offer = {
+          prospectId: client.prospectId,
+          prospectName: prospect.name,
+          position: prospect.position,
+          school: prospect.school,
           brand, annualValue, lengthYears, totalValue, commission,
-          signedWeek: this.state.week, signedYear: this.state.year
-        });
-        agency.capital += commission;
-        agency.lifetimeEarnings = (agency.lifetimeEarnings || 0) + commission;
-        agency.ledger.push({
-          week: this.state.week, year: this.state.year, type: 'nil',
-          amount: commission,
-          description: prospect.name + ' · ' + brand + ' NIL deal · ' + formatMoney(totalValue) + ' (commission ' + formatMoney(commission) + ')'
-        });
+          week: this.state.week, year: this.state.year
+        };
+        if (autoResolve) {
+          this._agentFinalizeNilDeal(offer);
+        } else {
+          agency.pendingNilOffers.push(offer);
+        }
       }
     });
+
     
     // 3. Refresh available pitches
     this._agentRefreshPitches();
@@ -12366,6 +12617,98 @@ let game = {
     if (!agency.currentContractDecision && agency.pendingContractDecisions && agency.pendingContractDecisions.length > 0) {
       agency.currentContractDecision = agency.pendingContractDecisions.shift();
     }
+
+    // 6. Forced NIL offer: surface the first queued offer (unless auto-handled). These are shown
+    // as sticky popups the user must accept or decline before sim can advance.
+    this._agentSurfaceNextNilOffer();
+  },
+
+  // Apply an accepted NIL deal: credit commission, log it, build the client's deal record,
+  // and award reputation. Successful clients (landing deals) are how an agent builds a name.
+  _agentFinalizeNilDeal(offer) {
+    const agency = this.state.agency;
+    if (!agency) return;
+    const client = agency.clients.find(c => c.prospectId === offer.prospectId);
+    const prospect = this._agentResolveClient(offer.prospectId);
+    if (client) {
+      client.nilDeals = client.nilDeals || [];
+      client.nilDeals.push({
+        brand: offer.brand, annualValue: offer.annualValue, lengthYears: offer.lengthYears,
+        totalValue: offer.totalValue, commission: offer.commission,
+        signedWeek: offer.week, signedYear: offer.year
+      });
+    }
+    agency.capital += offer.commission;
+    agency.lifetimeEarnings = (agency.lifetimeEarnings || 0) + offer.commission;
+    agency.ledger.push({
+      week: this.state.week, year: this.state.year, type: 'nil',
+      amount: offer.commission,
+      description: offer.prospectName + ' · ' + offer.brand + ' NIL deal · ' + formatMoney(offer.totalValue) + ' (commission ' + formatMoney(offer.commission) + ')'
+    });
+    // REPUTATION FROM SUCCESSFUL CLIENTS — closing deals for your clients builds your name.
+    // Bigger deals (more marketable clients) move the needle more. This is the primary path
+    // toward the rep threshold needed to break into the NFL.
+    if (prospect) {
+      const m = this._agentMarketability(prospect);
+      const repGain = Math.min(2.5, 0.15 + (offer.totalValue / 1000000) * 0.8 + (m / 100) * 0.6);
+      agency.reputation = Math.min(100, agency.reputation + repGain);
+      if (this.state.agencies && this.state.agencies.user) {
+        this.state.agencies.user.reputation = agency.reputation;
+      }
+    }
+  },
+
+  // User accepts the active NIL offer. Finalizes the deal, then surfaces the next queued offer.
+  agentAcceptNilOffer() {
+    const agency = this.state.agency;
+    if (!agency || !agency.currentNilOffer) return;
+    this._agentFinalizeNilDeal(agency.currentNilOffer);
+    agency.currentNilOffer = null;
+    this._agentSurfaceNextNilOffer();
+    this.render();
+  },
+
+  // User declines the active NIL offer. No money, small reputation ding (a missed opportunity
+  // for the client reflects poorly on the agent). Then surfaces the next queued offer.
+  agentDeclineNilOffer() {
+    const agency = this.state.agency;
+    if (!agency || !agency.currentNilOffer) return;
+    const offer = agency.currentNilOffer;
+    agency.reputation = Math.max(0, agency.reputation - 0.3);
+    agency.ledger.push({
+      week: this.state.week, year: this.state.year, type: 'nil-declined', amount: 0,
+      description: 'Declined ' + offer.brand + ' NIL offer for ' + offer.prospectName + ' (' + formatMoney(offer.totalValue) + ')'
+    });
+    agency.currentNilOffer = null;
+    this._agentSurfaceNextNilOffer();
+    this.render();
+  },
+
+  // Pull the next queued NIL offer into the active slot (if any).
+  _agentSurfaceNextNilOffer() {
+    const agency = this.state.agency;
+    if (!agency) return;
+    if (!agency.currentNilOffer && agency.pendingNilOffers && agency.pendingNilOffers.length > 0) {
+      agency.currentNilOffer = agency.pendingNilOffers.shift();
+    }
+  },
+
+  // Toggle the junior-agent auto-NIL handling. Only meaningful with a junior agent on staff.
+  agentToggleAutoNil() {
+    const agency = this.state.agency;
+    if (!agency) return;
+    if (!this._agentHasJuniorAgent()) {
+      alert('You need a Junior Agent on staff to auto-handle NIL deals. Hire one from the Office & Staff card.');
+      return;
+    }
+    agency.autoNilDeals = !agency.autoNilDeals;
+    // If turning auto ON, immediately clear any backlog of pending offers by auto-accepting them.
+    if (agency.autoNilDeals && agency.pendingNilOffers && agency.pendingNilOffers.length > 0) {
+      agency.pendingNilOffers.forEach(o => this._agentFinalizeNilDeal(o));
+      agency.pendingNilOffers = [];
+      if (agency.currentNilOffer) { this._agentFinalizeNilDeal(agency.currentNilOffer); agency.currentNilOffer = null; }
+    }
+    this.render();
   },
 
   // ============================================================
@@ -13027,7 +13370,22 @@ let game = {
       });
       html += '</tbody></table>';
     }
-    
+
+    // AUTO-NIL TOGGLE — only enabled if a junior agent is on staff. Lets the junior agent
+    // auto-handle incoming NIL offers so the user isn't forced through a popup for each one.
+    const hasJunior = this._agentHasJuniorAgent();
+    const autoOn = !!agency.autoNilDeals && hasJunior;
+    html += '<div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:16px">' +
+      '<div><div style="font-size:13px;font-weight:600">Auto-handle NIL deals</div>' +
+      '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' +
+      (hasJunior
+        ? 'Your junior agent reviews and accepts incoming NIL offers automatically — no popups.'
+        : 'Hire a Junior Agent to let them auto-accept NIL offers. Until then, every offer is a forced decision.') +
+      '</div></div>' +
+      '<button class="btn btn-sm ' + (autoOn ? 'btn-success' : '') + '" onclick="game.agentToggleAutoNil()" ' + (hasJunior ? '' : 'disabled style="opacity:0.5"') + '>' +
+      (autoOn ? 'ON' : 'OFF') + '</button>' +
+      '</div>';
+
     html += '</div>';
     return html;
   },
@@ -20389,6 +20747,12 @@ let game = {
       '<div style="font-size:11px;color:var(--text-muted);letter-spacing:1.5px;font-weight:600;margin-bottom:6px">' + data.year + ' SEASON AWARDS</div>' +
       '<div style="font-size:18px;font-weight:700;letter-spacing:-0.3px">A look back at the year</div>' +
       '</div>';
+
+    // AGENCY YEAR-IN-REVIEW (agent careers) — surfaced atop the awards so the agent sees how their
+    // firm did this season before continuing to the offseason.
+    if (this.state.career && this.state.career.mode === 'agent' && this.state.agency) {
+      body += this._buildAgencyYearSummary(data.year);
+    }
     
     // Tab toggle
     body += '<div style="display:flex;gap:0;margin-bottom:16px;justify-content:center">' +
@@ -20556,6 +20920,7 @@ let game = {
     if (titleEl) titleEl.innerHTML = backBtn + '<span>' + title + '</span>';
     if (bodyEl) bodyEl.innerHTML = body;
     document.getElementById('modal').classList.add('show');
+    if (typeof _syncModalCloseVisibility === 'function') _syncModalCloseVisibility();
   },
   
   // Pop the modal history and restore the previous modal content.
@@ -20969,9 +21334,30 @@ let game = {
 };
 
 function closeModal() {
+  // STICKY POPUP GUARD: a forced NIL offer must be resolved (accept/decline) — it can't be
+  // dismissed by clicking away or the X. Bounce the close attempt.
+  if (typeof game !== 'undefined' && game.state && game.state.agency && game.state.agency.currentNilOffer) {
+    return;
+  }
   document.getElementById('modal').classList.remove('show');
   // Clear modal history so next open starts fresh
   if (typeof game !== 'undefined') game._modalHistory = [];
+  // If a weekly recap was just dismissed, chain into any forced agent popups (NIL offers /
+  // contract decisions) that were queued during the week's sim.
+  if (typeof game !== 'undefined' && game._pendingForcedAfterRecap) {
+    game._pendingForcedAfterRecap = false;
+    if (typeof game._agentMaybeShowForcedPopup === 'function') game._agentMaybeShowForcedPopup();
+  }
+}
+
+// Hide the modal close (×) button when a sticky forced popup is active, so the UI matches the
+// can't-dismiss behaviour. Re-shown otherwise.
+function _syncModalCloseVisibility() {
+  const btn = document.querySelector('#modal .modal-close');
+  if (!btn) return;
+  const sticky = (typeof game !== 'undefined' && game.state && game.state.agency &&
+                  (game.state.agency.currentNilOffer || game.state.agency.currentContractDecision));
+  btn.style.visibility = sticky ? 'hidden' : 'visible';
 }
 
 document.getElementById('modal').addEventListener('click', (e) => {
