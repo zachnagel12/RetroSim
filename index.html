@@ -420,6 +420,7 @@ select { font-family: inherit; }
         <div class="nav-item" data-view="records"><span>Record Book</span></div>
         <div class="nav-item" data-view="champions"><span>Champions</span></div>
         <div class="nav-item" data-view="hof"><span>Hall of Fame</span></div>
+        <div class="nav-item" data-view="goat"><span>GOAT Board</span></div>
         <div class="nav-item" data-view="teamhistory"><span>Team History</span></div>
       </div>
       
@@ -3196,6 +3197,29 @@ let game = {
         });
       }
     }
+    // ===== TEAM RING OF HONOR ===== — find the franchise where they spent the most seasons; if
+    // they gave it 5+ years with notable production or an award, enshrine them.
+    const tenureByTeam = {};
+    (p.seasonHistory || []).forEach(h => {
+      if (h.teamId !== null && h.teamId !== undefined) tenureByTeam[h.teamId] = (tenureByTeam[h.teamId] || 0) + 1;
+    });
+    let primaryTeamId = null, maxYears = 0;
+    Object.entries(tenureByTeam).forEach(([tid, n]) => { if (n > maxYears) { maxYears = n; primaryTeamId = parseInt(tid); } });
+    const hasNotableProduction = (cs.passingYards || 0) > 12000 || (cs.rushingYards || 0) > 4000 ||
+      (cs.receivingYards || 0) > 4000 || (cs.sacks || 0) > 40 || (cs.touchdowns || 0) > 40;
+    const ringTeam = (primaryTeamId !== null && maxYears >= 5 && (hasNotableProduction || awardScore >= 2))
+      ? this.state.teams[primaryTeamId] : null;
+    if (ringTeam) {
+      if (!ringTeam.teamHOF) ringTeam.teamHOF = [];
+      if (!ringTeam.teamHOF.some(e => e.playerId === p.id)) {
+        ringTeam.teamHOF.push({
+          playerId: p.id, name: p.name, position: p.position,
+          yearsWithTeam: maxYears, inductedYear: this.state.year + 2,
+          careerStats: { ...cs }, awards: Array.isArray(p.awards) ? [...p.awards] : []
+        });
+      }
+      p.teamHofInducted = true;
+    }
     this.state.career.careerStage = 'retired';
     this.state.career.pendingOffers = null;
     this.state.offseasonPhase = null;
@@ -3205,7 +3229,50 @@ let game = {
     });
     this.currentView = 'mycareer';
     this.render();
+    // ===== ENSHRINEMENT CEREMONY ===== — celebrate the legacy with a ceremony popup.
+    this._showRetirementCeremony(p, { isHOF: p.hofInducted, ringTeam });
     this.saveGame();
+  },
+
+  // A celebratory retirement-ceremony popup summarizing the player's enshrinements and final
+  // all-time standing. Fires once, right after the user retires.
+  _showRetirementCeremony(p, opts) {
+    opts = opts || {};
+    const score = this._playerLegacyScore(p);
+    const full = this._buildGoatBoard();
+    const mine = full.find(e => e.player.id === p.id);
+    const rank = mine ? mine.rank : null;
+    const rings = this._playerRingCount(p);
+    const mvps = (p.awards || []).filter(a => a.type === 'MVP').length;
+    let html = '<div style="padding:20px;text-align:center">';
+    html += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">The career of</div>';
+    html += '<div style="font-size:24px;font-weight:800;margin:4px 0 2px">' + p.name + '</div>';
+    html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">' + p.position + ' · ' + (p.yearsInLeague || 0) + ' seasons</div>';
+    // Enshrinement badges.
+    const badges = [];
+    if (opts.isHOF) badges.push({ icon: '🏛️', label: 'Pro Football Hall of Fame' });
+    if (opts.ringTeam) badges.push({ icon: '🎽', label: opts.ringTeam.city + ' ' + opts.ringTeam.name + ' Ring of Honor' });
+    if (rank && rank <= 100) badges.push({ icon: '🐐', label: 'GOAT Board — #' + rank + ' of all time' });
+    if (badges.length > 0) {
+      html += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">';
+      badges.forEach(b => {
+        html += '<div style="background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--accent);padding:10px 14px;display:flex;align-items:center;gap:10px;text-align:left">' +
+          '<span style="font-size:20px">' + b.icon + '</span>' +
+          '<span style="font-weight:700;font-size:14px">' + b.label + '</span></div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">A solid career hangs up the cleats. The legend board awaits the next generation.</div>';
+    }
+    // Final standing line.
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:18px">' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Legacy</div><div style="font-weight:700">' + score + '</div></div>' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">All-time</div><div style="font-weight:700">' + (rank ? '#' + rank : '—') + '</div></div>' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Rings · MVPs</div><div style="font-weight:700">' + rings + ' · ' + mvps + '</div></div>' +
+      '</div>';
+    html += '<button class="btn btn-primary btn-lg" style="width:100%" onclick="closeModal()">Begin my next chapter →</button>';
+    html += '</div>';
+    this.showModal('Career honored · ' + this.state.year, html);
   },
 
   // Build the legacy profile that bankrolls a second career. Reputation from on-field success,
@@ -4479,6 +4546,8 @@ let game = {
       this._agentRefreshStaffCandidates();
       // Annual solvency check — two consecutive losing years folds the agency for good.
       this._agentAnnualSolvencyCheck();
+      // Annual leaderboard check — promote the agency up a tier if it has climbed enough.
+      if (!this.state.agency.bankrupted) this._agentCheckPromotion();
     }
     
     return graduates;
@@ -11228,6 +11297,7 @@ let game = {
       case 'agencyfinances': this.renderAgencyFinances(); break;
       case 'agencies': this.renderAgencies(); break;
       case 'hof': this.renderHOF(); break;
+      case 'goat': this.renderGoatBoard(); break;
       case 'records': this.renderRecords(); break;
       case 'champions': this.renderChampions(); break;
       case 'about': this.renderAbout(); break;
@@ -11279,6 +11349,10 @@ let game = {
       const celebration = this._pendingUserDraftCelebration;
       this._pendingUserDraftCelebration = null;
       try { this.showDraftCelebration(celebration); } catch (e) { /* defensive */ }
+    }
+    // AGENCY PROMOTION — celebrate when the user agency climbs into a higher tier.
+    if (this.state && this.state._agentPendingPromotion) {
+      try { this._maybeShowAgentPromotion(); } catch (e) { /* defensive */ }
     }
     // FORCED PRE-DRAFT FLOW — when the user declares for the draft, they MUST sequentially
     // experience: combine reveal popup → each team interview → draft anticipation. The flow
@@ -12379,6 +12453,94 @@ let game = {
     return html;
   },
 
+  // Subtle legacy widget for the player career page: current GOAT standing + the single nearest
+  // milestone to chase. Intentionally compact — one line of standing, one line of "what's next".
+  _renderLegacyWidget(p) {
+    if (!p) return '';
+    const score = this._playerLegacyScore(p);
+    const rankInfo = this._userGoatRank();
+    const milestone = this._nextPlayerMilestone(p, rankInfo);
+    let standing;
+    if (rankInfo && rankInfo.rank <= 100) {
+      standing = 'GOAT Board #' + rankInfo.rank + ' of all time';
+    } else if (rankInfo) {
+      standing = 'All-time rank #' + rankInfo.rank + (rankInfo.total ? ' of ' + rankInfo.total : '');
+    } else {
+      standing = 'Legacy score ' + score;
+    }
+    let html = '<div class="card" style="border-left:3px solid var(--accent)"><div style="padding:12px 16px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Legacy</div>' +
+      '<div style="font-size:12px;color:var(--text-muted)">Legacy score <strong style="color:var(--text)">' + score + '</strong></div>' +
+      '</div>' +
+      '<div style="font-size:15px;font-weight:700;margin-top:2px">' + standing + '</div>';
+    if (milestone) {
+      html += '<div style="margin-top:8px;font-size:12px;color:var(--text-muted)">Next: <span style="color:var(--text);font-weight:600">' + milestone.label + '</span>';
+      if (milestone.detail) html += ' <span style="color:var(--text-muted)">— ' + milestone.detail + '</span>';
+      html += '</div>';
+      if (milestone.pct !== undefined) {
+        const pct = Math.max(0, Math.min(100, Math.round(milestone.pct)));
+        html += '<div style="margin-top:6px;height:5px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden">' +
+          '<div style="height:100%;width:' + pct + '%;background:var(--accent)"></div></div>';
+      }
+    }
+    html += '</div></div>';
+    return html;
+  },
+
+  // Determine the single most compelling next milestone for the user player. Priority order favors
+  // attainable, motivating targets. Returns { label, detail?, pct? } or null.
+  _nextPlayerMilestone(p, rankInfo) {
+    const cs = p.careerStats || {};
+    const yrs = p.yearsInLeague || 0;
+    const awardScore = (p.awards || []).reduce((s, a) => {
+      const t = a.type || '';
+      if (t === 'MVP' || t === 'OPOY' || t === 'DPOY') return s + 5;
+      if (t === 'All-Pro 1st') return s + 3;
+      if (t === 'All-Pro 2nd') return s + 2;
+      if (t === 'OROY' || t === 'DROY') return s + 2;
+      if (t === 'Pro Bowl') return s + 0.5;
+      return s;
+    }, 0);
+    // 1) HOF chase (active, not yet a lock) — the marquee career goal.
+    if (!p.hofInducted) {
+      const hofStatHit = (cs.passingYards || 0) > 25000 || (cs.rushingYards || 0) > 8000 ||
+        (cs.receivingYards || 0) > 8000 || (cs.touchdowns || 0) > 100 || awardScore >= 10;
+      if (yrs < 8) {
+        return { label: 'Hall of Fame résumé', detail: (8 - yrs) + ' more season' + (8 - yrs === 1 ? '' : 's') + ' to hit the 8-year minimum', pct: (yrs / 8) * 100 };
+      }
+      if (!hofStatHit) {
+        // Show the closest HOF statistical gate by their primary production.
+        const gates = [
+          { v: cs.passingYards || 0, t: 25000, label: 'passing yards' },
+          { v: cs.rushingYards || 0, t: 8000, label: 'rushing yards' },
+          { v: cs.receivingYards || 0, t: 8000, label: 'receiving yards' },
+          { v: cs.touchdowns || 0, t: 100, label: 'touchdowns' }
+        ].filter(g => g.v > 0).sort((a, b) => (b.v / b.t) - (a.v / a.t))[0];
+        if (awardScore >= 6) {
+          return { label: 'Hall of Fame (on the bubble)', detail: 'Keep stacking All-Pros and MVPs to lock it in' };
+        }
+        if (gates) {
+          const remaining = Math.max(0, gates.t - gates.v);
+          return { label: 'Hall of Fame milestone', detail: remaining.toLocaleString() + ' more ' + gates.label + ' for a HOF-caliber career', pct: (gates.v / gates.t) * 100 };
+        }
+        return { label: 'Hall of Fame case', detail: 'Win hardware and pile up production to make your case' };
+      }
+      return { label: 'Hall of Fame lock', detail: 'You\'ve met the bar — finish strong and wait for the call' };
+    }
+    // 2) GOAT board climb (post-HOF or already qualified).
+    if (rankInfo) {
+      if (rankInfo.rank > 100) {
+        return { label: 'Crack the all-time top 100', detail: 'Currently #' + rankInfo.rank + ' — keep climbing the GOAT board' };
+      }
+      if (rankInfo.rank > 1) {
+        return { label: 'Climb to #' + (rankInfo.rank - 1) + ' all-time', detail: 'You\'re #' + rankInfo.rank + ' on the GOAT board' };
+      }
+      return { label: 'Cement the GOAT throne', detail: 'You are #1 of all time — extend the gap' };
+    }
+    return null;
+  },
+
   renderPlayerCareerNFL(p, stage) {
     const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
     const rc = this.ratingClass(p.rating);
@@ -12402,6 +12564,10 @@ let game = {
       '<div class="my-team-stat"><div class="my-team-stat-label">Awards</div><div class="my-team-stat-value">' + (p.awards ? p.awards.length : 0) + '</div></div>' +
       '<div class="my-team-stat"><div class="my-team-stat-label">Status</div><div class="my-team-stat-value" style="font-size:13px">' + (p.retired ? (p.hofInducted ? 'HOF' : 'Retired') : (p.injury && p.injury.weeksRemaining > 0 ? 'Injured' : 'Active')) + '</div></div>' +
       '</div></div>';
+
+    // Subtle legacy widget — GOAT rank + the single nearest milestone to chase. Drives the
+    // "one more sim" pull without being loud.
+    html += this._renderLegacyWidget(p);
     
     // Injury banner — prominent if user player is currently hurt
     if (p.injury && p.injury.weeksRemaining > 0 && !p.retired) {
@@ -13429,6 +13595,83 @@ let game = {
   // Full-page league agencies browser. Lists all 17 firms grouped by tier with the basics:
   // tier badge, OVR, reputation, client count, style. Each row clickable → showAgencyCard modal.
   // Lives under the NFL > Insights nav as "Agencies".
+  // Composite "agency power" score — blends reputation, agent OVR, client volume, and market
+  // share into one number that ranks every firm on a single board. Used by the standing banner
+  // and the tier-promotion logic.
+  _agencyPower(a) {
+    if (!a) return 0;
+    return (a.reputation || 0) * 1.2 +
+           (a.ovr || 0) * 0.8 +
+           (a.clientCount || 0) * 1.5 +
+           (a.marketShare || 0) * 200;
+  },
+
+  // All agencies ranked by power, descending. Each entry carries { id, name, tier, power }.
+  _agencyLeaderboard() {
+    const all = Object.values(this.state.agencies || {});
+    return all.map(a => ({ id: a.id, name: a.name, tier: a.tier, power: this._agencyPower(a), ref: a }))
+      .sort((x, y) => y.power - x.power);
+  },
+
+  // Annual check: has the user agency climbed enough to earn a tier promotion? Promotions are
+  // celebrated events. Tier is determined by overall rank: top 5 → tier 1, next 7 → tier 2, rest
+  // tier 3. We only ever PROMOTE the user here (never auto-demote — losing clients already hurts).
+  _agentCheckPromotion() {
+    const agencies = this.state.agencies;
+    if (!agencies || !agencies.user) return;
+    // Keep the leaderboard mirror current with the live agency before ranking.
+    const live = this.state.agency;
+    if (live) {
+      agencies.user.reputation = live.reputation;
+      agencies.user.ovr = live.agentOvr;
+      agencies.user.clientCount = (live.clients || []).length;
+      agencies.user.employees = 1 + ((live.staff || []).length);
+      // Market share grows with client volume relative to the league.
+      const totalClients = Object.values(agencies).reduce((s, a) => s + (a.clientCount || 0), 0) || 1;
+      agencies.user.marketShare = agencies.user.clientCount / totalClients;
+    }
+    const ranked = this._agencyLeaderboard();
+    const idx = ranked.findIndex(r => r.id === 'user');
+    if (idx === -1) return;
+    const overallRank = idx + 1;
+    let earnedTier;
+    if (overallRank <= 5) earnedTier = 1;
+    else if (overallRank <= 12) earnedTier = 2;
+    else earnedTier = 3;
+    const currentTier = agencies.user.tier;
+    if (earnedTier < currentTier) {
+      // Promotion! (lower tier number = more prestigious)
+      agencies.user.tier = earnedTier;
+      const tierName = earnedTier === 1 ? 'Mega-agency' : 'Boutique firm';
+      const tierDesc = earnedTier === 1
+        ? 'Your agency now sits among the five most powerful firms in football. The biggest names take your calls.'
+        : 'Your shop has graduated from scrappy startup to an established boutique firm.';
+      this.addHeadline({
+        type: 'champ',
+        title: (this.state.agency ? this.state.agency.agencyName : 'Your agency') + ' promoted to ' + tierName + ' status',
+        body: 'Now ranked #' + overallRank + ' of ' + ranked.length + ' agencies league-wide. ' + tierDesc
+      });
+      // Queue a celebratory popup (shown on next render, after offseason processing settles).
+      this.state._agentPendingPromotion = { tier: earnedTier, tierName, rank: overallRank, total: ranked.length, desc: tierDesc };
+    }
+  },
+
+  // Show the queued promotion popup (called from render after offseason).
+  _maybeShowAgentPromotion() {
+    const promo = this.state._agentPendingPromotion;
+    if (!promo) return;
+    this.state._agentPendingPromotion = null;
+    const html = '<div style="padding:22px;text-align:center">' +
+      '<div style="font-size:40px;margin-bottom:6px">📈</div>' +
+      '<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">Agency promoted</div>' +
+      '<div style="font-size:24px;font-weight:800;margin:6px 0">' + promo.tierName + ' status</div>' +
+      '<div style="font-size:14px;color:var(--text-muted);margin-bottom:8px">Ranked <strong style="color:var(--text)">#' + promo.rank + '</strong> of ' + promo.total + ' agencies league-wide</div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-bottom:18px">' + promo.desc + '</div>' +
+      '<button class="btn btn-primary btn-lg" style="width:100%" onclick="closeModal()">Keep climbing →</button>' +
+      '</div>';
+    this.showModal('Moving up the board', html);
+  },
+
   renderAgencies() {
     if (!this.state.agencies) {
       document.getElementById('content').innerHTML = '<div class="page-header"><div class="page-title">Agencies</div><div class="page-subtitle">Agency league not initialized.</div></div>';
@@ -13445,7 +13688,35 @@ let game = {
       '<div class="page-title">Sports agencies</div>' +
       '<div class="page-subtitle">17 firms compete to represent every player in the league. Tap any agency to see their roster.</div>' +
       '</div>';
-    
+
+    // ===== YOUR STANDING ===== — only in agent mode. Shows overall rank among all firms and the
+    // gap to the next agency above, so the user always knows how to climb the board.
+    if (this.state.career && this.state.career.mode === 'agent' && this.state.agencies.user) {
+      const ranked = this._agencyLeaderboard();
+      const myIdx = ranked.findIndex(r => r.id === 'user');
+      if (myIdx !== -1) {
+        const me = ranked[myIdx];
+        const above = myIdx > 0 ? ranked[myIdx - 1] : null;
+        const tierName = me.tier === 1 ? 'Mega-agency' : me.tier === 2 ? 'Boutique firm' : 'Startup';
+        html += '<div class="card" style="border-left:4px solid var(--accent)"><div style="padding:14px 16px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">' +
+          '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Your standing</div>' +
+          '<div style="font-size:20px;font-weight:800;margin-top:2px">#' + (myIdx + 1) + ' of ' + ranked.length + ' · ' + tierName + '</div></div>' +
+          '<div style="text-align:right"><div style="font-size:10px;text-transform:uppercase;color:var(--text-muted)">Agency power</div><div style="font-size:18px;font-weight:700">' + Math.round(me.power) + '</div></div>' +
+          '</div>';
+        if (above) {
+          const gap = Math.max(0, above.power - me.power);
+          const pct = above.power > 0 ? Math.min(100, (me.power / above.power) * 100) : 0;
+          html += '<div style="margin-top:10px;font-size:12px;color:var(--text-muted)">Next up: <span style="color:var(--text);font-weight:600">' + above.name + '</span> (#' + myIdx + ') — close a ' + Math.round(gap) + '-point gap to overtake them.</div>' +
+            '<div style="margin-top:6px;height:6px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--accent)"></div></div>';
+        } else {
+          html += '<div style="margin-top:10px;font-size:12px;color:var(--success);font-weight:600">You sit atop the entire agency world. Defend the throne.</div>';
+        }
+        html += '<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">Climb by raising reputation, signing clients, growing your agent rating, and getting clients drafted. Reach the top of your tier to earn a promotion.</div>';
+        html += '</div></div>';
+      }
+    }
+
     [1, 2, 3].forEach(t => {
       const tier = tiers[t];
       tier.agencies.sort((a, b) => b.clientCount - a.clientCount);
@@ -18950,6 +19221,143 @@ let game = {
     }
     html += '</div>';
     return html;
+  },
+
+  // ============================================================
+  // LEGACY SCORE + GOAT BOARD
+  // ============================================================
+  // A single number that captures a player's all-time greatness, blending peak ability,
+  // longevity, hardware, championships, and statistical production. Drives the GOAT board (the
+  // top 100 players of all time) and the "next milestone" widget on the player's career page.
+  // Designed so that an average roster player scores low (~10-40), a long good starter lands
+  // mid (~50-90), and a generational, decorated, ring-laden legend tops out near 200+.
+  _playerLegacyScore(p) {
+    if (!p) return 0;
+    const cs = p.careerStats || {};
+    const peak = p.peakOvr || p.rating || 60;
+    const yrs = p.yearsInLeague || (cs.seasonsPlayed || 0);
+    // Peak ability: the single biggest factor. Quadratic-ish above 80 so elite peaks separate.
+    let score = Math.max(0, peak - 55) * 1.2;
+    if (peak >= 90) score += (peak - 90) * 4;
+    if (peak >= 95) score += 15; // generational bump
+    // Longevity: rewards a long career, with diminishing returns.
+    score += Math.min(40, yrs * 3);
+    // Hardware — weighted by prestige.
+    let mvp = 0, opoy = 0, dpoy = 0, ap1 = 0, ap2 = 0, roy = 0, pb = 0;
+    (p.awards || []).forEach(a => {
+      const t = a.type || '';
+      if (t === 'MVP') mvp++;
+      else if (t === 'OPOY') opoy++;
+      else if (t === 'DPOY') dpoy++;
+      else if (t === 'All-Pro 1st') ap1++;
+      else if (t === 'All-Pro 2nd') ap2++;
+      else if (t === 'OROY' || t === 'DROY') roy++;
+      else if (t === 'Pro Bowl') pb++;
+    });
+    score += mvp * 20 + opoy * 10 + dpoy * 10 + ap1 * 6 + ap2 * 3 + roy * 4 + pb * 1.5;
+    // Championships — cross-reference seasonHistory against league champions.
+    const rings = this._playerRingCount(p);
+    score += rings * 8;
+    // Statistical production milestones (position-agnostic — only credits what they actually did).
+    score += Math.min(35, (cs.passingYards || 0) / 4000 * 3);
+    score += Math.min(25, (cs.passingTDs || 0) / 30 * 3);
+    score += Math.min(30, (cs.rushingYards || 0) / 1500 * 3);
+    score += Math.min(30, (cs.receivingYards || 0) / 1500 * 3);
+    score += Math.min(18, (cs.touchdowns || 0) / 12 * 2);
+    score += Math.min(25, (cs.sacks || 0) / 12 * 3);
+    score += Math.min(18, (cs.interceptionsMade || 0) / 5 * 3);
+    score += Math.min(15, (cs.tackles || 0) / 120 * 2);
+    if (p.hofInducted) score += 25;
+    return Math.round(score * 10) / 10;
+  },
+
+  // Count a player's championships by matching their season-by-season team against league champions.
+  _playerRingCount(p) {
+    if (!p.seasonHistory || !this.state.champions) return 0;
+    const champByYear = {};
+    this.state.champions.forEach(c => { champByYear[c.year] = c.teamId; });
+    let rings = 0;
+    p.seasonHistory.forEach(h => {
+      if (h.teamId !== null && h.teamId !== undefined && champByYear[h.year] === h.teamId) rings++;
+    });
+    return rings;
+  },
+
+  // Build (and cache for this render pass) the all-time GOAT ranking: every player who ever
+  // played, scored and sorted. Includes active players, retirees, and culled stubs (their
+  // careerStats summary survives culling). Returns an array of { player, score, rank }.
+  _buildGoatBoard(limit) {
+    const scored = [];
+    (this.state.players || []).forEach(p => {
+      if (!p) return;
+      // Skip players who never logged a real career (e.g. undrafted camp bodies who washed out
+      // with zero games). Keep anyone with games played, awards, or a notable peak.
+      const cs = p.careerStats || {};
+      const played = (cs.gamesPlayed || 0) > 0 || (cs.seasonsPlayed || 0) > 0;
+      if (!played && !(p.awards && p.awards.length) && (p.peakOvr || 0) < 80) return;
+      scored.push({ player: p, score: this._playerLegacyScore(p) });
+    });
+    scored.sort((a, b) => b.score - a.score);
+    scored.forEach((e, i) => { e.rank = i + 1; });
+    return limit ? scored.slice(0, limit) : scored;
+  },
+
+  // The user player's current GOAT rank (or null if not applicable / unranked). Cheap enough to
+  // call from the career page widget.
+  _userGoatRank() {
+    if (!this.state.career || this.state.career.mode !== 'player') return null;
+    const up = this.getUserPlayer();
+    if (!up) return null;
+    const board = this._buildGoatBoard();
+    const entry = board.find(e => e.player.id === up.id);
+    return entry ? { rank: entry.rank, total: board.length, score: entry.score } : null;
+  },
+
+  // GOAT BOARD page — top 100 players of all time by legacy score.
+  renderGoatBoard() {
+    const board = this._buildGoatBoard(100);
+    const up = (this.state.career && this.state.career.mode === 'player') ? this.getUserPlayer() : null;
+    let html = '<div class="page-header"><div class="page-title">The GOAT Board</div>' +
+      '<div class="page-subtitle">Top 100 players of all time · ranked by career legacy</div></div>';
+    // If the user's player isn't in the top 100, show their standing in a banner so they can chase it.
+    if (up) {
+      const full = this._buildGoatBoard();
+      const mine = full.find(e => e.player.id === up.id);
+      if (mine && mine.rank > 100) {
+        html += '<div class="card" style="border-left:4px solid var(--accent)"><div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center">' +
+          '<div><div style="font-weight:700">' + up.name + ' · GOAT rank #' + mine.rank + ' of ' + full.length + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Legacy score ' + mine.score + ' · ' + (mine.rank <= 150 ? 'Knocking on the door of the top 100.' : 'Keep building your résumé to crack the all-time 100.') + '</div></div>' +
+          '</div></div>';
+      }
+    }
+    if (board.length === 0) {
+      html += '<div class="empty-state">No careers logged yet. Sim seasons to populate the all-time board.</div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+    html += '<div class="card"><table><thead><tr><th>#</th><th>Player</th><th>Pos</th><th class="text-right">Peak</th><th class="text-right">Seasons</th><th>Honors</th><th class="text-right">Legacy</th></tr></thead><tbody>';
+    board.forEach(e => {
+      const p = e.player;
+      const isUser = up && p.id === up.id;
+      const cs = p.careerStats || {};
+      const rings = this._playerRingCount(p);
+      const mvps = (p.awards || []).filter(a => a.type === 'MVP').length;
+      const honors = [];
+      if (mvps > 0) honors.push(mvps + '× MVP');
+      if (rings > 0) honors.push(rings + '× 🏆');
+      if (p.hofInducted) honors.push('HOF');
+      const medal = e.rank === 1 ? '🥇' : e.rank === 2 ? '🥈' : e.rank === 3 ? '🥉' : '';
+      html += '<tr onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer' + (isUser ? ';background:linear-gradient(90deg,var(--accent)18,transparent)' : '') + '">' +
+        '<td class="mono-num" style="font-weight:700">' + medal + ' ' + e.rank + '</td>' +
+        '<td><strong>' + p.name + '</strong>' + (isUser ? ' <span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:2px">YOU</span>' : '') + '</td>' +
+        '<td>' + p.position + '</td>' +
+        '<td class="text-right mono-num">' + (p.peakOvr || p.rating || '—') + '</td>' +
+        '<td class="text-right mono-num">' + (p.yearsInLeague || cs.seasonsPlayed || 0) + '</td>' +
+        '<td style="font-size:11px;color:var(--text-muted)">' + (honors.join(' · ') || '—') + '</td>' +
+        '<td class="text-right mono-num" style="font-weight:700">' + e.score + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    document.getElementById('content').innerHTML = html;
   },
 
   // HALL OF FAME
