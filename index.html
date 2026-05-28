@@ -421,6 +421,8 @@ select { font-family: inherit; }
         <div class="nav-item" data-view="champions"><span>Champions</span></div>
         <div class="nav-item" data-view="hof"><span>Hall of Fame</span></div>
         <div class="nav-item" data-view="goat"><span>GOAT Board</span></div>
+        <div class="nav-item" data-view="franchiselegacy"><span>Franchise Legacy</span></div>
+        <div class="nav-item" data-view="coachlegends"><span>Coaching Legends</span></div>
         <div class="nav-item" data-view="teamhistory"><span>Team History</span></div>
       </div>
       
@@ -446,6 +448,7 @@ select { font-family: inherit; }
         <div class="nav-item" data-view="agencyscout"><span>Scout Prospects</span></div>
         <div class="nav-item" data-view="agencystaff"><span>Office &amp; Staff</span></div>
         <div class="nav-item" data-view="agencyfinances"><span>Finances</span></div>
+        <div class="nav-item" data-view="agencylegacy"><span>Legacy &amp; Identity</span></div>
         
         <div class="nav-subtitle">Market</div>
         <div class="nav-item" data-view="agencies"><span>Rival Agencies</span></div>
@@ -1521,7 +1524,7 @@ let game = {
     // The dedicated agent sub-views always belong to the Agency tab (only ever reachable in agent
     // mode anyway). 'agencies' (the league directory) lives under NFL Insights for non-agents.
     const agentOnlyViews = new Set([
-      'myagency', 'agencyclients', 'agencyscout', 'agencystaff', 'agencyfinances'
+      'myagency', 'agencyclients', 'agencyscout', 'agencystaff', 'agencyfinances', 'agencylegacy'
     ]);
     if (agentOnlyViews.has(view)) return 'agency';
     if (view === 'agencies' && isAgent) return 'agency';
@@ -2291,7 +2294,7 @@ let game = {
       year: 2026, week: 0,
       teams: [], players: [], coaches: {}, headlines: [],
       hallOfFame: [], champions: [],
-      collegeProspects: [], collegeHistory: [], collegeHOF: [],
+      collegeProspects: [], collegeHistory: [], collegeHOF: [], schoolRingOfHonor: {},
       latestCollegeRecap: null, pendingDraftClass: null,
       records: {
         seasonPassingYards: { value: 0, player: null, year: null },
@@ -2491,6 +2494,9 @@ let game = {
     
     // CASE A: User is currently a HC. Check for firing.
     if (userCoach.role === 'HC' && userCoach.teamId !== null) {
+      // COACH #1 — coaching tree: the user's coordinators can get poached for HC jobs elsewhere.
+      // When one does, the user is credited as their mentor (builds the tree, boosts legacy).
+      this._coachDevelopProteges(userCoach);
       if (lastSeason && lastSeason.wins < 5) {
         const seasonBefore = userCoach.seasonHistory[userCoach.seasonHistory.length - 2];
         if (seasonBefore && seasonBefore.role === 'HC' && seasonBefore.wins < 5) {
@@ -2867,6 +2873,9 @@ let game = {
         // the NFL bridge, which runs after pendingDraftClass has been cleared by the draft.
         this.state.career.declaredIdentity.combineResults = inPending.combineResults;
         this.state.career.declaredIdentity.teamInterviews = inPending.teamInterviews;
+        // PLAYER #1 — capture the user's college legacy so school Ring of Honor / College HOF
+        // recognition follows them into the pros.
+        this._capturePlayerCollegeLegacy(inPending);
         // FORCED PRE-DRAFT FLOW — the user MUST go through the combine reveal + interviews
         // before the draft. We use a state machine on the player: preDraftStep tracks where
         // they are: 'combine_reveal' → 'interviews' → 'awaiting_draft' → null
@@ -3370,7 +3379,14 @@ let game = {
       pendingNilOffers: [],
       currentNilOffer: null,
       autoNilDeals: false,
-      lifetimeEarnings: 0
+      lifetimeEarnings: 0,
+      specialization: 'none',
+      clientsDrafted: 0,
+      topPicksRepped: 0,
+      championsRepped: 0,
+      negativeYears: 0,
+      pendingScandals: [],
+      currentScandal: null
     };
     // Register the user agency in the league map so it shows up among the firms.
     if (this.state.agencies) {
@@ -4338,6 +4354,74 @@ let game = {
     });
   },
 
+  // PLAYER #1 — totals the user's college career from their seasonHistory at the moment they
+  // declare, stores a legacy snapshot on the career, and evaluates School Ring of Honor + College
+  // Hall of Fame. These honors then follow the player into the NFL and show on their career page.
+  _capturePlayerCollegeLegacy(prospect) {
+    if (!prospect || !this.state.career) return;
+    const hist = prospect.seasonHistory || [];
+    const totals = { passYds: 0, passTDs: 0, rushYds: 0, rushTDs: 0, recYds: 0, recTDs: 0, tackles: 0, sacks: 0, ints: 0, seasons: hist.length };
+    let heismans = 0, allAwards = 0;
+    hist.forEach(line => {
+      totals.passYds += line.passYards || line.passYds || 0;
+      totals.passTDs += line.passTDs || 0;
+      totals.rushYds += line.rushYards || line.rushYds || 0;
+      totals.rushTDs += line.rushTDs || 0;
+      totals.recYds += line.recYards || line.recYds || 0;
+      totals.recTDs += line.recTDs || 0;
+      totals.tackles += line.tackles || 0;
+      totals.sacks += line.sacks || 0;
+      totals.ints += line.interceptions || line.ints || 0;
+      (line.awards || []).forEach(a => { if (a === 'Heisman') heismans++; allAwards++; });
+    });
+    const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === prospect.school);
+    const grade = prospect.prospectGrade || 70;
+    // College HOF worthiness — strong production OR a Heisman OR an elite prospect grade.
+    const productionHit = totals.passYds > 9000 || totals.rushYds > 3500 || totals.recYds > 3000 ||
+      (totals.passTDs + totals.rushTDs + totals.recTDs) > 70 || totals.sacks > 30 || totals.ints > 12;
+    const collegeHOF = heismans > 0 || grade >= 90 || productionHit;
+    // Ring of Honor at their school — a notable career (2+ seasons + production or a Heisman).
+    const ringOfHonor = totals.seasons >= 2 && (productionHit || heismans > 0 || grade >= 85);
+
+    const legacy = {
+      school: prospect.school,
+      schoolName: schoolInfo ? schoolInfo.name : prospect.school,
+      position: prospect.position,
+      seasons: totals.seasons,
+      totals,
+      heismans,
+      finalGrade: Math.round(grade * 10) / 10,
+      collegeHOF,
+      ringOfHonor,
+      inducted: false // college HOF induction is celebrated 5 yrs after the NFL career, like the pros
+    };
+    this.state.career.collegeLegacy = legacy;
+
+    // Record School Ring of Honor immediately (college honor, awarded on departure).
+    if (ringOfHonor && schoolInfo) {
+      if (!this.state.schoolRingOfHonor) this.state.schoolRingOfHonor = {};
+      if (!this.state.schoolRingOfHonor[prospect.school]) this.state.schoolRingOfHonor[prospect.school] = [];
+      this.state.schoolRingOfHonor[prospect.school].push({
+        name: prospect.name, position: prospect.position, seasons: totals.seasons,
+        heismans, year: this.state.year, isUser: true
+      });
+      this.addHeadline({
+        type: 'hof',
+        title: prospect.name + ' enshrined in the ' + (schoolInfo ? schoolInfo.name : prospect.school) + ' Ring of Honor',
+        body: 'After ' + totals.seasons + ' standout season' + (totals.seasons === 1 ? '' : 's') + (heismans > 0 ? ' and a Heisman Trophy' : '') + ', a college legend departs for the NFL.'
+      });
+    }
+    // Record College HOF candidacy (inducted flag flips later, but it's tracked now).
+    if (collegeHOF) {
+      this.state.career.collegeLegacy.inducted = true;
+      this.addHeadline({
+        type: 'hof',
+        title: prospect.name + ' headed for the College Football Hall of Fame',
+        body: 'One of the great college careers at ' + (schoolInfo ? schoolInfo.name : prospect.school) + ' earns a place among the immortals.'
+      });
+    }
+  },
+
   // Each offseason: age prospects, graduate seniors into draft, regenerate freshman class
   advanceCollegeSeason() {
     if (!this.state.collegeProspects) this.state.collegeProspects = [];
@@ -4548,6 +4632,9 @@ let game = {
       this._agentAnnualSolvencyCheck();
       // Annual leaderboard check — promote the agency up a tier if it has climbed enough.
       if (!this.state.agency.bankrupted) this._agentCheckPromotion();
+      // NFL client second contracts (Feature #2) — drafted clients hitting their veteran years can
+      // negotiate a new deal; the agent's approach sets the payout and commission.
+      if (!this.state.agency.bankrupted) this._agentGenerateNflContractTalks();
     }
     
     return graduates;
@@ -6796,6 +6883,9 @@ let game = {
     const repGain = orderInfo.round === 1 ? 6 : orderInfo.round === 2 ? 4 : orderInfo.round === 3 ? 3 : 2;
     agency.reputation = Math.min(100, agency.reputation + repGain);
     if (this.state.agencies && this.state.agencies.user) this.state.agencies.user.reputation = agency.reputation;
+    // Feature #5 legacy tracking — career counts that feed the super-agent board.
+    agency.clientsDrafted = (agency.clientsDrafted || 0) + 1;
+    if (overall <= 10) agency.topPicksRepped = (agency.topPicksRepped || 0) + 1;
     // Stash for the draft-night board + summary.
     if (!this.state._agentDraftNight) this.state._agentDraftNight = { drafted: [] };
     this.state._agentDraftNight.drafted.push({
@@ -7039,6 +7129,11 @@ let game = {
     }
     const isUserTurn = current.teamId === this.state.userTeamId;
     const userTeam = this.state.userTeamId !== null ? this.state.teams[this.state.userTeamId] : null;
+    // WAR ROOM (Dynasty #3) — compute the user team's positional needs so the big board can flag
+    // which prospects fill a hole. Strongest needs surface as a "top needs" strip.
+    const userNeeds = userTeam ? this.calculateTeamNeeds(userTeam) : {};
+    const topNeeds = Object.entries(userNeeds).sort((a, b) => b[1] - a[1]).filter(e => e[1] >= 2).slice(0, 4).map(e => e[0]);
+    const needSet = new Set(topNeeds);
     const filtered = this.draftFilter === 'ALL'
       ? this.state.draftPool.slice(0, 100)
       : this.state.draftPool.filter(p => p.position === this.draftFilter).slice(0, 100);
@@ -7058,6 +7153,10 @@ let game = {
       '<div class="card"><div class="card-header">' +
       '<div class="card-title">Available prospects · ranked by OVR</div>' +
       '<div class="card-meta">' + this.state.draftPool.length + ' remaining</div></div>' +
+      (userTeam && topNeeds.length > 0
+        ? '<div style="padding:8px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-size:11px;color:var(--text-muted)">🎯 <strong style="color:var(--text)">War room — top needs:</strong> ' +
+          topNeeds.map(pos => '<span style="display:inline-block;background:var(--accent);color:#fff;padding:1px 7px;margin:0 3px;border-radius:2px;font-weight:700">' + pos + '</span>').join('') + '</div>'
+        : '') +
       '<div class="draft-pick-row" style="background:var(--surface-2);font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">' +
       '<div>RK</div><div>POS</div><div>NAME</div><div>AGE</div><div>OVR</div></div>';
 
@@ -7067,10 +7166,11 @@ let game = {
       const rowClick = isUserTurn
         ? 'onclick="game.userPick(' + p.id + ')"'
         : 'onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer"';
-      html += '<div class="draft-pick-row ' + (isUserTurn ? 'clickable' : '') + '" ' + rowClick + '>' +
+      const fillsNeed = needSet.has(p.position);
+      html += '<div class="draft-pick-row ' + (isUserTurn ? 'clickable' : '') + '" ' + rowClick + (fillsNeed ? ' style="background:linear-gradient(90deg,var(--accent)11,transparent)"' : '') + '>' +
         '<div class="pick-num">' + (idx + 1) + '</div>' +
         '<div><span class="position-tag">' + p.position + '</span></div>' +
-        '<div>' + p.name + '</div>' +
+        '<div>' + p.name + (fillsNeed ? ' <span style="font-size:8px;background:var(--accent);color:#fff;padding:1px 4px;border-radius:2px;letter-spacing:0.3px;vertical-align:middle">NEED</span>' : '') + '</div>' +
         '<div class="mono-num">' + p.age + '</div>' +
         '<div>' + (isUserTurn ? '<button class="pick-btn" onclick="event.stopPropagation();game.userPick(' + p.id + ')">DRAFT</button>' : '<span class="rating ' + rc + '">' + p.rating + '</span>') + '</div></div>';
     });
@@ -10125,6 +10225,19 @@ let game = {
       teamId: champion.id, record: champion.wins + '-' + champion.losses,
       runnerUp: runnerUp.city + ' ' + runnerUp.name
     });
+    // Feature #5 (agent legacy): credit the user agency for any client on the champion roster.
+    if (this.state.career && this.state.career.mode === 'agent' && this.state.agency && this.state.agency.clients) {
+      const champRoster = new Set(champion.roster || []);
+      let clientChamps = 0;
+      this.state.agency.clients.forEach(c => {
+        const numericId = parseInt(c.prospectId, 10);
+        if (!isNaN(numericId) && champRoster.has(numericId)) clientChamps++;
+      });
+      if (clientChamps > 0) {
+        this.state.agency.championsRepped = (this.state.agency.championsRepped || 0) + clientChamps;
+        this.state.agency.reputation = Math.min(100, this.state.agency.reputation + clientChamps * 2);
+      }
+    }
     const aw = this.awardScores();
     const awardRecord = { year: this.state.year };
     const award = (key, list, type) => {
@@ -11295,9 +11408,12 @@ let game = {
       case 'agencyscout': this.renderAgencyScout(); break;
       case 'agencystaff': this.renderAgencyStaff(); break;
       case 'agencyfinances': this.renderAgencyFinances(); break;
+      case 'agencylegacy': this.renderAgencyLegacy(); break;
       case 'agencies': this.renderAgencies(); break;
       case 'hof': this.renderHOF(); break;
       case 'goat': this.renderGoatBoard(); break;
+      case 'franchiselegacy': this.renderFranchiseBoard(); break;
+      case 'coachlegends': this.renderCoachBoard(); break;
       case 'records': this.renderRecords(); break;
       case 'champions': this.renderChampions(); break;
       case 'about': this.renderAbout(); break;
@@ -11415,7 +11531,20 @@ let game = {
       '<div class="my-team-stat"><div class="my-team-stat-label">PF</div><div class="my-team-stat-value">' + team.pointsFor + '</div></div>' +
       '<div class="my-team-stat"><div class="my-team-stat-label">PA</div><div class="my-team-stat-value">' + team.pointsAgainst + '</div></div>' +
       '<div class="my-team-stat"><div class="my-team-stat-label">Titles</div><div class="my-team-stat-value">' + team.championships + '</div></div>' +
-      '</div></div>' +
+      '</div></div>';
+
+    // DYNASTY #2 — subtle franchise legacy standing widget (the team-level parallel to the GOAT board).
+    const frank = this._userFranchiseRank();
+    if (frank) {
+      const ordinal = frank.rank === 1 ? '1st' : frank.rank === 2 ? '2nd' : frank.rank === 3 ? '3rd' : frank.rank + 'th';
+      html += '<div class="card" style="border-left:3px solid var(--accent);cursor:pointer" onclick="game.currentView=\'franchiselegacy\';game.render()"><div style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center">' +
+        '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Franchise legacy</div>' +
+        '<div style="font-size:15px;font-weight:700;margin-top:2px">' + ordinal + ' of ' + frank.total + ' all-time</div></div>' +
+        '<div style="text-align:right"><div style="font-size:10px;text-transform:uppercase;color:var(--text-muted)">Legacy</div><div style="font-size:18px;font-weight:700">' + frank.score + '</div></div>' +
+        '</div></div>';
+    }
+
+    html += 
       '<div class="card"><div class="card-header">' +
       '<div class="card-title">Salary cap · ' + this.state.year + '</div>' +
       '<div class="card-meta">' + formatMoney(capUsed) + ' of ' + formatMoney(cap) + ' · ' + formatMoney(capSpace) + ' space</div>' +
@@ -11717,6 +11846,20 @@ let game = {
       '<div class="my-team-stat"><div class="my-team-stat-label">Win PCT</div><div class="my-team-stat-value">' + careerPct + '</div></div>' +
       '<div class="my-team-stat"><div class="my-team-stat-label">COY</div><div class="my-team-stat-value">' + (userCoach.coachOfYears || 0) + '</div></div>' +
       '</div></div>';
+
+    // COACH #1 — subtle coaching-legacy standing widget (parallel to the player GOAT board).
+    const crank = this._userCoachRank();
+    if (crank) {
+      const ord = crank.rank === 1 ? '1st' : crank.rank === 2 ? '2nd' : crank.rank === 3 ? '3rd' : crank.rank + 'th';
+      const proteges = (userCoach.proteges || []).length;
+      html += '<div class="card" style="border-left:3px solid var(--accent);cursor:pointer" onclick="game.currentView=\'coachlegends\';game.render()"><div style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center">' +
+        '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Coaching legacy</div>' +
+        '<div style="font-size:15px;font-weight:700;margin-top:2px">' + ord + ' of ' + crank.total + ' all-time</div>' +
+        (proteges > 0 ? '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + proteges + ' HC protege' + (proteges === 1 ? '' : 's') + ' on your coaching tree</div>' : '') +
+        '</div>' +
+        '<div style="text-align:right"><div style="font-size:10px;text-transform:uppercase;color:var(--text-muted)">Legacy</div><div style="font-size:18px;font-weight:700">' + crank.score + '</div></div>' +
+        '</div></div>';
+    }
     
     // STAGE 3: Pending job offers — shown when promotion eligible or FA
     if (this.state.offseasonPhase === 'coachJobChoice' && this.state.career.pendingCoachOffers && this.state.career.pendingCoachOffers.length > 0) {
@@ -12488,6 +12631,32 @@ let game = {
     return html;
   },
 
+  // PLAYER #1 — a small card showing the college honors that follow the player into the pros:
+  // School Ring of Honor and College Hall of Fame, plus their college stat line. Only shown if a
+  // college legacy was captured (i.e. the player came up through the college path).
+  _renderCollegeHonorsCard() {
+    const legacy = this.state.career && this.state.career.collegeLegacy;
+    if (!legacy) return '';
+    if (!legacy.ringOfHonor && !legacy.collegeHOF) return ''; // only show when there's an honor
+    const t = legacy.totals || {};
+    const statBits = [];
+    if (t.passYds > 0) statBits.push(t.passYds.toLocaleString() + ' pass yds');
+    if (t.rushYds > 0) statBits.push(t.rushYds.toLocaleString() + ' rush yds');
+    if (t.recYds > 0) statBits.push(t.recYds.toLocaleString() + ' rec yds');
+    if (t.sacks > 0) statBits.push(t.sacks + ' sacks');
+    if (t.ints > 0) statBits.push(t.ints + ' INTs');
+    let html = '<div class="card" style="border-left:3px solid #a67c00"><div style="padding:12px 16px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">College legacy · ' + legacy.schoolName + '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">';
+    if (legacy.collegeHOF) html += '<span style="font-size:12px;font-weight:700;background:var(--surface-2);border:1px solid var(--border);border-left:3px solid #a67c00;padding:6px 10px">🏛️ College Hall of Fame</span>';
+    if (legacy.ringOfHonor) html += '<span style="font-size:12px;font-weight:700;background:var(--surface-2);border:1px solid var(--border);border-left:3px solid #a67c00;padding:6px 10px">🎽 ' + legacy.schoolName + ' Ring of Honor</span>';
+    if (legacy.heismans > 0) html += '<span style="font-size:12px;font-weight:700;background:var(--surface-2);border:1px solid var(--border);border-left:3px solid #a67c00;padding:6px 10px">🏆 ' + (legacy.heismans > 1 ? legacy.heismans + '× ' : '') + 'Heisman</span>';
+    html += '</div>';
+    if (statBits.length > 0) html += '<div style="font-size:11px;color:var(--text-muted);margin-top:8px">' + legacy.seasons + ' seasons · ' + statBits.join(' · ') + '</div>';
+    html += '</div></div>';
+    return html;
+  },
+
   // Determine the single most compelling next milestone for the user player. Priority order favors
   // attainable, motivating targets. Returns { label, detail?, pct? } or null.
   _nextPlayerMilestone(p, rankInfo) {
@@ -12568,6 +12737,7 @@ let game = {
     // Subtle legacy widget — GOAT rank + the single nearest milestone to chase. Drives the
     // "one more sim" pull without being loud.
     html += this._renderLegacyWidget(p);
+    html += this._renderCollegeHonorsCard();
     
     // Injury banner — prominent if user player is currently hurt
     if (p.injury && p.injury.weeksRemaining > 0 && !p.retired) {
@@ -12684,6 +12854,18 @@ let game = {
   // - Each simWeek call ticks: deducts overhead, generates NIL deals for clients, refreshes pitches
   // - Render path: 'myagency' view shows dashboard + clients + available prospects
   // ============================================================
+
+  // Agency specializations (Feature #3). A niche the agency leans into. Each gives an edge with a
+  // group of players (better acceptance odds + a marketability discount when recruiting them) and
+  // shapes the agency's identity/lore. Chosen at founding; can be re-specialized later for a fee.
+  AGENT_SPECIALIZATIONS: {
+    none: { label: 'Generalist', blurb: 'No specialty — balanced across the board.', match: () => false },
+    qb_whisperer: { label: 'QB Whisperer', blurb: 'You build quarterbacks. Signal-callers trust you to maximize their brand and second contract.', positions: ['QB'], match: p => p.position === 'QB' },
+    trench_master: { label: 'Trench Master', blurb: 'Linemen on both sides know you get them paid. OL and DL flock to you.', positions: ['OT','OG','C','EDGE','DT','DE'], match: p => ['OT','OG','C','EDGE','DT','DE'].includes(p.position) },
+    skill_specialist: { label: 'Skill-Position Specialist', blurb: 'Playmakers — RB/WR/TE — chase the spotlight you can deliver.', positions: ['RB','WR','TE'], match: p => ['RB','WR','TE'].includes(p.position) },
+    defensive_back: { label: 'Secondary Specialist', blurb: 'DBs and linebackers value your defensive market expertise.', positions: ['CB','S','LB'], match: p => ['CB','S','LB'].includes(p.position) },
+    small_school: { label: 'Small-School Gem Finder', blurb: 'You mine overlooked talent from tiny programs and turn longshots into pros.', match: p => (p.recruitStars !== undefined && p.recruitStars <= 2) || (p.prospectGrade !== undefined && p.prospectGrade < 70) }
+  },
 
   // Starting parameters per origin. Tuned so each origin feels distinct but viable:
   //   former_player: middle capital + high rep (NFL connections) → easy to sign mid-tier clients
@@ -13314,6 +13496,7 @@ let game = {
       agencyName: agencyName,
       founded: this.state.year,
       origin: origin,
+      specialization: 'none',           // Feature #3 — set via the specialization chooser
       capital: o.capital,
       weeklyOverhead: o.overhead,
       agentOvr: o.ovr,
@@ -13336,7 +13519,14 @@ let game = {
       pendingNilOffers: [],             // queue of incoming NIL/endorsement offers awaiting approval
       currentNilOffer: null,            // active forced NIL popup (must accept/decline)
       autoNilDeals: false,              // when true AND a junior agent is on staff, NIL offers auto-resolve
-      lifetimeEarnings: 0               // for tracking — drives some achievements/lore later
+      lifetimeEarnings: 0,              // for tracking — drives some achievements/lore later
+      // NEW immersion systems:
+      clientsDrafted: 0,                // Feature #5 legacy — count of clients ever drafted
+      topPicksRepped: 0,                // Feature #5 legacy — # of top-10 overall picks repped
+      championsRepped: 0,               // Feature #5 legacy — # of client championship seasons
+      negativeYears: 0,                 // consecutive losing years (bankruptcy)
+      pendingScandals: [],              // Feature #4 — queued reputation/loyalty events
+      currentScandal: null              // active scandal popup
     };
     this.state.career.entityType = 'agent';
     this.state.career.entityId = 'agency'; // singleton
@@ -13969,7 +14159,22 @@ let game = {
       p += youthBonus;
     }
 
+    // SPECIALIZATION (Feature #3) — if this prospect fits the agency's niche, they trust you more.
+    // A clean +12% acceptance for matching players, reflecting your reputation in that space.
+    if (this._agentSpecializationMatches(prospect)) {
+      p += 0.12;
+    }
+
     return Math.max(0.02, Math.min(0.95, p));
+  },
+
+  // Does a prospect/player fall under the agency's chosen specialization?
+  _agentSpecializationMatches(prospect) {
+    const agency = this.state.agency;
+    if (!agency || !agency.specialization || agency.specialization === 'none') return false;
+    const spec = this.AGENT_SPECIALIZATIONS[agency.specialization];
+    if (!spec || typeof spec.match !== 'function') return false;
+    try { return spec.match(prospect); } catch (e) { return false; }
   },
 
   // Class-year availability gate. Underclassmen (freshmen, sophomores) are far less likely to be
@@ -14025,9 +14230,12 @@ let game = {
           const currentAgencyOvr = agencies[p.agentId].ovr;
           if (currentAgencyOvr - agency.agentOvr > 12) poachable = false;
         }
-        return { p, m, poachable };
+        // SPECIALIZATION: prospects in your niche are more reachable — effectively discount their
+        // marketability so they clear the ceiling more often.
+        const mEff = this._agentSpecializationMatches(p) ? m - 10 : m;
+        return { p, m, mEff, poachable };
       })
-      .filter(({ m, poachable }) => m <= ceiling + 5 && poachable);
+      .filter(({ mEff, poachable }) => mEff <= ceiling + 5 && poachable);
     
     // NFL REPRESENTATION POOL — reputation-gated. Breaking into the NFL is HARD: no NFL player
     // will take your call until your agency reputation reaches 70. This is effectively impossible
@@ -14138,12 +14346,29 @@ let game = {
     }
     if (!prospect) return;
     const expected = this._agentExpectedCommission(prospect);
+    // RECRUITING WAR (Feature #1) — marketable prospects attract rival suitors. Build a short list
+    // of competing agencies so the pitch feels contested. Specialization-match and high reputation
+    // reduce the field's pull.
+    const m = this._agentMarketability(prospect);
+    let suitors = [];
+    if (m >= 45 && this.state.agencies) {
+      const specMatch = this._agentSpecializationMatches(prospect);
+      let suitorCount = m >= 75 ? 3 : m >= 60 ? 2 : 1;
+      if (specMatch) suitorCount = Math.max(0, suitorCount - 1); // your niche scares some off
+      const pool = Object.values(this.state.agencies)
+        .filter(a => a.id !== 'user' && a.ovr >= 50 + m * 0.25)
+        .sort(() => Math.random() - 0.5)
+        .slice(0, suitorCount);
+      suitors = pool.map(a => ({ name: a.name, tier: a.tier, ovr: Math.round(a.ovr) }));
+    }
     agency.currentNegotiation = {
       prospectId: prospect.id,
       expectedCommission: expected,
       agentOffer: expected,
       contractYears: 2, // default contract length
       status: 'open',
+      suitors,
+      specMatch: this._agentSpecializationMatches(prospect),
       isNflPlayer: prospect.rating !== undefined // distinguishes the two cases for UI copy
     };
     this.currentView = 'myagency';
@@ -14193,6 +14418,7 @@ let game = {
         nilDeals: [],
         nflContract: null,
         nflSigningBonusPaid: false,
+        loyalty: 60, // Feature #4 — starts neutral-positive; scandals/wins move it
         previousAgentId: previousAgentId // remembered so drop can return them to a fitting agency
       });
       // Flip representation: the prospect now belongs to the user agency.
@@ -14436,6 +14662,309 @@ let game = {
 
     // 6. NIL offers stay in the reviewable inbox (pendingNilOffers). They are NOT force-surfaced —
     // the user reviews them from the weekly recap link or the agency page and signs the best ones.
+
+    // 7. SCANDALS & REPUTATION EVENTS (Feature #4) — random life happens. Roughly once every few
+    // weeks, an event hits a client: trouble, a rival tampering, a trade demand, or good news.
+    // These queue into an inbox the user resolves via choices that swing reputation and loyalty.
+    this._agentMaybeGenerateScandal();
+  },
+
+  // Possibly generate a scandal/loyalty/opportunity event for a random client. Low weekly chance,
+  // scaled down when the agency has few clients so early game isn't event-spammy.
+  _agentMaybeGenerateScandal() {
+    const agency = this.state.agency;
+    if (!agency || agency.bankrupted) return;
+    if (!agency.clients || agency.clients.length === 0) return;
+    agency.pendingScandals = agency.pendingScandals || [];
+    // Don't pile up more than 3 unresolved at once.
+    if (agency.pendingScandals.length >= 3) return;
+    const weeklyChance = Math.min(0.14, 0.04 + agency.clients.length * 0.012);
+    if (Math.random() > weeklyChance) return;
+    const client = agency.clients[Math.floor(Math.random() * agency.clients.length)];
+    const prospect = this._agentResolveClient(client.prospectId);
+    if (!prospect) return;
+    const event = this._agentRollScandalType(prospect, client);
+    if (!event) return;
+    event.id = 'sc_' + this.state.year + '_' + this.state.week + '_' + Math.floor(Math.random() * 10000);
+    event.prospectId = client.prospectId;
+    event.clientName = prospect.name;
+    event.week = this.state.week;
+    event.year = this.state.year;
+    agency.pendingScandals.push(event);
+    this.addHeadline({
+      title: 'Situation with ' + prospect.name,
+      body: event.headline + ' Review it on your agency page.'
+    });
+  },
+
+  // Pick a scandal/event type appropriate to the client. Returns an event descriptor with choices.
+  _agentRollScandalType(prospect, client) {
+    const m = this._agentMarketability(prospect);
+    const types = [];
+    // Off-field trouble — hurts marketability/rep if mishandled.
+    types.push({
+      kind: 'trouble',
+      title: 'Off-field incident',
+      headline: prospect.name + ' was involved in an off-field incident that\'s drawing headlines.',
+      body: prospect.name + ' is in the news for the wrong reasons. How you respond shapes both your reputation and your client\'s trust in you.',
+      choices: [
+        { label: 'Get ahead of it — issue a statement & damage control', repDelta: 2, loyaltyDelta: 8, cost: 25000, resultGood: 'Your PR push contains the story. ' + prospect.name + ' is grateful you had their back.' },
+        { label: 'Stay quiet and let it blow over', repDelta: -4, loyaltyDelta: -6, cost: 0, resultBad: 'The silence reads as abandonment. The story festers and your reputation takes a hit.' },
+        { label: 'Publicly distance the agency from the incident', repDelta: 3, loyaltyDelta: -18, cost: 0, resultMixed: 'You protect the brand, but ' + prospect.name + ' feels thrown under the bus.' }
+      ]
+    });
+    // Rival tampering — a CPU agency is trying to poach.
+    types.push({
+      kind: 'tampering',
+      title: 'Rival agency circling',
+      headline: 'A rival agency is whispering in ' + prospect.name + '\'s ear.',
+      body: 'Word is a competitor is courting ' + prospect.name + ', promising bigger deals. You can fight to keep them.',
+      choices: [
+        { label: 'Renegotiate — drop your commission 1% to show commitment', repDelta: 1, loyaltyDelta: 14, commissionDelta: -1, resultGood: 'The gesture lands. ' + prospect.name + ' re-commits to you.' },
+        { label: 'Sell them on your track record', repDelta: 0, loyaltyDelta: 4, gamble: 0.6, resultGood: 'Your pitch holds them — for now.', resultBad: prospect.name + ' isn\'t convinced and the relationship cools.' },
+        { label: 'Call their bluff and do nothing', repDelta: 0, loyaltyDelta: -10, gamble: 0.45, resultGood: 'The rival\'s interest fizzles. Crisis averted.', resultBad: 'Loyalty erodes — you may lose them at contract\'s end.' }
+      ]
+    });
+    // Good news — a marketability/brand boost opportunity.
+    types.push({
+      kind: 'opportunity',
+      title: 'Breakout moment',
+      headline: prospect.name + ' is having a viral moment and brands are noticing.',
+      body: prospect.name + ' is suddenly hot. Strike while the iron\'s hot to convert buzz into value.',
+      choices: [
+        { label: 'Invest in a marketing push to capitalize', repDelta: 4, loyaltyDelta: 10, cost: 40000, marketBoost: true, resultGood: 'The campaign pays off — ' + prospect.name + '\'s profile soars and brands line up.' },
+        { label: 'Let it ride organically', repDelta: 1, loyaltyDelta: 2, resultGood: 'You bank a little goodwill without spending a dime.' }
+      ]
+    });
+    // Trade demand (NFL client only).
+    if (m !== undefined && prospect.rating !== undefined && prospect.team !== null && prospect.team !== undefined) {
+      types.push({
+        kind: 'trade_demand',
+        title: 'Client wants out',
+        headline: prospect.name + ' has privately asked you to engineer a trade.',
+        body: prospect.name + ' is unhappy with their situation and wants you to push for a move.',
+        choices: [
+          { label: 'Go to bat — publicly request a trade', repDelta: -2, loyaltyDelta: 16, resultMixed: 'You burn a bridge with the front office, but ' + prospect.name + ' knows you fight for them.' },
+          { label: 'Counsel patience and smooth it over', repDelta: 3, loyaltyDelta: -4, resultGood: 'You keep the peace with the team and preserve your standing — though your client wanted more.' }
+        ]
+      });
+    }
+    return types[Math.floor(Math.random() * types.length)];
+  },
+
+  // Open the scandal inbox / surface the next event as a card on the agency page.
+  agentReviewScandals() {
+    const agency = this.state.agency;
+    if (!agency || !agency.pendingScandals || agency.pendingScandals.length === 0) return;
+    agency.currentScandal = agency.pendingScandals[0];
+    this.currentView = 'myagency';
+    this.render();
+  },
+
+  // Resolve the active scandal with the chosen option index.
+  agentResolveScandal(choiceIdx) {
+    const agency = this.state.agency;
+    if (!agency || !agency.currentScandal) return;
+    const event = agency.currentScandal;
+    const choice = event.choices[choiceIdx];
+    if (!choice) return;
+    const client = agency.clients.find(c => c.prospectId === event.prospectId);
+    const prospect = this._agentResolveClient(event.prospectId);
+    let resultText = '';
+    let good = true;
+    // Gamble-type choices roll for success.
+    if (choice.gamble !== undefined) {
+      good = Math.random() < choice.gamble;
+    }
+    // Apply cost.
+    if (choice.cost) {
+      agency.capital -= choice.cost;
+      agency.ledger.push({ week: this.state.week, year: this.state.year, type: 'overhead', amount: -choice.cost, description: 'Crisis/PR spend · ' + event.clientName });
+    }
+    // Apply reputation + loyalty.
+    let repDelta = choice.repDelta || 0;
+    let loyaltyDelta = choice.loyaltyDelta || 0;
+    if (choice.gamble !== undefined && !good) { repDelta = Math.min(repDelta, -2); loyaltyDelta = Math.min(loyaltyDelta, -8); }
+    agency.reputation = Math.max(0, Math.min(100, agency.reputation + repDelta));
+    if (this.state.agencies && this.state.agencies.user) this.state.agencies.user.reputation = agency.reputation;
+    if (client) client.loyalty = Math.max(0, Math.min(100, (client.loyalty !== undefined ? client.loyalty : 60) + loyaltyDelta));
+    // Commission concession.
+    if (choice.commissionDelta && client) {
+      client.commissionRate = Math.max(1, (client.commissionRate || 4) + choice.commissionDelta);
+    }
+    // Marketing boost — bump the prospect's marketability inputs slightly.
+    if (choice.marketBoost && prospect) {
+      if (prospect.prospectGrade !== undefined) prospect.prospectGrade = Math.min(99, prospect.prospectGrade + 2);
+      if (prospect.recruitStars !== undefined) prospect.recruitStars = Math.min(5, prospect.recruitStars + 0);
+    }
+    resultText = good
+      ? (choice.resultGood || choice.resultMixed || 'Handled.')
+      : (choice.resultBad || choice.resultMixed || 'It didn\'t go as planned.');
+    // Pop from queue.
+    agency.pendingScandals = agency.pendingScandals.filter(s => s.id !== event.id);
+    agency.currentScandal = null;
+    // Show outcome modal.
+    const repStr = (repDelta >= 0 ? '+' : '') + repDelta + ' rep';
+    const loyStr = (loyaltyDelta >= 0 ? '+' : '') + loyaltyDelta + ' loyalty';
+    this.showModal('Situation resolved', '<div style="padding:18px">' +
+      '<div style="font-size:13px;margin-bottom:12px">' + resultText + '</div>' +
+      '<div style="display:flex;gap:8px;margin-bottom:14px">' +
+      '<span style="font-size:12px;padding:3px 8px;background:var(--surface-2);border:1px solid var(--border);color:' + (repDelta >= 0 ? 'var(--success)' : 'var(--danger)') + '">' + repStr + '</span>' +
+      '<span style="font-size:12px;padding:3px 8px;background:var(--surface-2);border:1px solid var(--border);color:' + (loyaltyDelta >= 0 ? 'var(--success)' : 'var(--danger)') + '">' + loyStr + '</span>' +
+      (choice.cost ? '<span style="font-size:12px;padding:3px 8px;background:var(--surface-2);border:1px solid var(--border);color:var(--danger)">-' + formatMoney(choice.cost) + '</span>' : '') +
+      '</div>' +
+      '<button class="btn btn-primary" style="width:100%" onclick="closeModal()">Done</button></div>');
+    this.render();
+  },
+
+  // Render the active scandal as a decision card (called from renderMyAgency).
+  _renderScandalCard() {
+    const agency = this.state.agency;
+    const event = agency && agency.currentScandal;
+    if (!event) return '';
+    let html = '<div class="card" style="border-left:4px solid var(--warning)"><div style="padding:16px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--warning);font-weight:700">' + event.title + '</div>' +
+      '<div style="font-size:15px;font-weight:700;margin:4px 0 6px">' + event.clientName + '</div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">' + event.body + '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:8px">';
+    event.choices.forEach((c, i) => {
+      html += '<button class="btn" style="text-align:left;justify-content:flex-start" onclick="game.agentResolveScandal(' + i + ')">' + c.label + '</button>';
+    });
+    html += '</div></div></div>';
+    return html;
+  },
+
+  // FEATURE #2 — NFL client second contracts. Each offseason, drafted clients who are 3+ years
+  // into the league and not already mid-negotiation can hit free agency / an extension window.
+  // We queue these as decisions the user resolves (push hard / fair deal / threaten holdout).
+  _agentGenerateNflContractTalks() {
+    const agency = this.state.agency;
+    if (!agency || !agency.clients) return;
+    agency.pendingNflTalks = agency.pendingNflTalks || [];
+    agency.clients.forEach(client => {
+      const numericId = parseInt(client.prospectId, 10);
+      if (isNaN(numericId)) return; // college client, skip
+      const player = (this.state.players || []).find(p => p.id === numericId && !p.retired);
+      if (!player) return;
+      if (!client.nflContract) return; // only drafted/signed NFL clients
+      const yearsIn = player.yearsInLeague || 0;
+      // Trigger window: every ~4 years of league service, and not already queued.
+      if (yearsIn < 3) return;
+      if (client._lastTalkYear && this.state.year - client._lastTalkYear < 3) return;
+      if (Math.random() > 0.5) return; // not every eligible client each year
+      if (agency.pendingNflTalks.some(t => t.prospectId === client.prospectId)) return;
+      // Base market value for the new deal from the player's rating/age.
+      const base = this._agentNflMarketValue(player);
+      agency.pendingNflTalks.push({
+        prospectId: client.prospectId,
+        playerName: player.name,
+        position: player.position,
+        baseValue: base,
+        year: this.state.year
+      });
+      client._lastTalkYear = this.state.year;
+    });
+    // Surface the first as a decision if none active.
+    if (!agency.currentNflTalk && agency.pendingNflTalks.length > 0) {
+      agency.currentNflTalk = agency.pendingNflTalks.shift();
+    }
+  },
+
+  // Rough market value (total contract $) for an NFL veteran based on rating + age.
+  _agentNflMarketValue(player) {
+    const r = player.rating || 70;
+    const age = player.age || 27;
+    // Stars command huge deals; age discount past 30.
+    let v = Math.max(2, (r - 60)) * 4000000;            // OVR 90 ≈ $120M ballpark
+    if (age >= 31) v *= 0.7;
+    else if (age >= 29) v *= 0.88;
+    const posMult = { QB: 1.6, EDGE: 1.25, WR: 1.2, CB: 1.1, OT: 1.15, DT: 1.0, S: 0.85, RB: 0.8, LB: 0.85, TE: 0.8, OG: 0.85, C: 0.8, K: 0.4, P: 0.4 };
+    v *= (posMult[player.position] || 0.9);
+    return Math.round(v);
+  },
+
+  // Open the NFL contract talk as a decision card (called from render flow).
+  agentReviewNflTalk() {
+    const agency = this.state.agency;
+    if (!agency) return;
+    if (!agency.currentNflTalk && agency.pendingNflTalks && agency.pendingNflTalks.length > 0) {
+      agency.currentNflTalk = agency.pendingNflTalks.shift();
+    }
+    this.currentView = 'myagency';
+    this.render();
+  },
+
+  // Resolve an NFL contract talk with the chosen strategy.
+  // 0 = play it safe (sure thing, modest), 1 = push hard (gamble for more), 2 = threaten holdout (high risk/reward)
+  agentResolveNflTalk(strategy) {
+    const agency = this.state.agency;
+    const talk = agency && agency.currentNflTalk;
+    if (!talk) return;
+    const client = agency.clients.find(c => c.prospectId === talk.prospectId);
+    const player = (this.state.players || []).find(p => p.id === parseInt(talk.prospectId, 10));
+    let mult = 1, successChance = 1, label = '';
+    if (strategy === 0) { mult = 1.0; successChance = 0.95; label = 'A fair-market deal'; }
+    else if (strategy === 1) { mult = 1.30; successChance = 0.6; label = 'A push for top-of-market money'; }
+    else { mult = 1.55; successChance = 0.4; label = 'A holdout gambit'; }
+    const success = Math.random() < successChance;
+    let finalValue, resultText, repDelta = 0, loyaltyDelta = 0;
+    if (success) {
+      finalValue = Math.round(talk.baseValue * mult);
+      resultText = label + ' lands! ' + talk.playerName + ' signs for ' + formatMoney(finalValue) + '.';
+      repDelta = strategy === 0 ? 1 : strategy === 1 ? 3 : 4;
+      loyaltyDelta = strategy === 0 ? 3 : strategy === 1 ? 8 : 12;
+    } else {
+      // Failure: deal still gets done but below market, and aggressive tactics cost goodwill.
+      finalValue = Math.round(talk.baseValue * (strategy === 2 ? 0.8 : 0.9));
+      resultText = strategy === 2
+        ? 'The holdout backfires — ' + talk.playerName + ' settles for ' + formatMoney(finalValue) + ' and isn\'t thrilled.'
+        : 'The market doesn\'t bite; ' + talk.playerName + ' takes ' + formatMoney(finalValue) + '.';
+      repDelta = strategy === 2 ? -3 : -1;
+      loyaltyDelta = strategy === 2 ? -10 : -2;
+    }
+    // Commission paid upfront on the new deal.
+    const rate = (client && client.commissionRate ? client.commissionRate : 4) / 100;
+    const commission = Math.round(finalValue * rate);
+    agency.capital += commission;
+    agency.lifetimeEarnings = (agency.lifetimeEarnings || 0) + commission;
+    agency.reputation = Math.max(0, Math.min(100, agency.reputation + repDelta));
+    if (this.state.agencies && this.state.agencies.user) this.state.agencies.user.reputation = agency.reputation;
+    if (client) {
+      client.nflContract = { totalValue: finalValue, signedYear: this.state.year };
+      client.loyalty = Math.max(0, Math.min(100, (client.loyalty !== undefined ? client.loyalty : 60) + loyaltyDelta));
+    }
+    if (player && player.contract) {
+      // Reflect on the player's deal so the rest of the sim sees the new money (approx).
+      player.contract.totalValue = finalValue;
+      player.contract.aav = Math.round(finalValue / (player.contract.years || 4));
+    }
+    agency.ledger.push({
+      week: this.state.week, year: this.state.year, type: 'rookie-contract',
+      amount: commission,
+      description: talk.playerName + ' new contract ' + formatMoney(finalValue) + ' (commission ' + formatMoney(commission) + ')'
+    });
+    agency.currentNflTalk = null;
+    this.showModal('Contract negotiated', '<div style="padding:18px">' +
+      '<div style="font-size:13px;margin-bottom:12px">' + resultText + '</div>' +
+      '<div style="font-size:14px;font-weight:700;color:var(--success);margin-bottom:14px">Your commission: +' + formatMoney(commission) + '</div>' +
+      '<button class="btn btn-primary" style="width:100%" onclick="closeModal()">Done</button></div>');
+    this.render();
+  },
+
+  // Render the active NFL contract talk as a decision card.
+  _renderNflTalkCard() {
+    const agency = this.state.agency;
+    const talk = agency && agency.currentNflTalk;
+    if (!talk) return '';
+    return '<div class="card" style="border-left:4px solid var(--accent)"><div style="padding:16px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--accent);font-weight:700">Contract negotiation</div>' +
+      '<div style="font-size:15px;font-weight:700;margin:4px 0 4px">' + talk.playerName + ' · ' + talk.position + '</div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-bottom:6px">Their deal is up. Market value is around <strong style="color:var(--text)">' + formatMoney(talk.baseValue) + '</strong>. How do you play it?</div>' +
+      '<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">' +
+      '<button class="btn" style="text-align:left;justify-content:flex-start" onclick="game.agentResolveNflTalk(0)">Take the fair-market deal (safe · ~' + formatMoney(talk.baseValue) + ')</button>' +
+      '<button class="btn" style="text-align:left;justify-content:flex-start" onclick="game.agentResolveNflTalk(1)">Push for top-of-market money (risky · up to ' + formatMoney(Math.round(talk.baseValue * 1.3)) + ')</button>' +
+      '<button class="btn" style="text-align:left;justify-content:flex-start" onclick="game.agentResolveNflTalk(2)">Threaten a holdout (high risk · up to ' + formatMoney(Math.round(talk.baseValue * 1.55)) + ')</button>' +
+      '</div></div></div>';
   },
 
   // Prune NIL offers that have sat unaddressed too long — brands move on. Keeps the inbox from
@@ -15197,6 +15726,124 @@ let game = {
   // Render the main agency dashboard. Default view when career.mode === 'agent'.
   // The agency UI is now split into sub-tabs (Dashboard / Clients / Scout / Staff / Finances)
   // surfaced under the Agency top-level nav tab. This method renders the DASHBOARD overview.
+  // ============================================================
+  // AGENT LEGACY & IDENTITY (Features #3 specialization chooser + #5 super-agent board)
+  // ============================================================
+
+  // A super-agent legacy score blending lifetime earnings, clients drafted, top-10 picks repped,
+  // championships repped, peak reputation, and agency longevity. Works for CPU agencies too (with
+  // estimates) so the user is ranked against the whole field.
+  _agentLegacyScore(a, isUser) {
+    if (!a) return 0;
+    let score = 0;
+    if (isUser) {
+      score += Math.min(80, (a.lifetimeEarnings || 0) / 1000000 * 2); // $1M lifetime ≈ 2 pts, cap 80
+      score += (a.clientsDrafted || 0) * 4;
+      score += (a.topPicksRepped || 0) * 10;
+      score += (a.championsRepped || 0) * 8;
+      score += (a.reputation || 0) * 0.6;
+      score += (a.agentOvr || 0) * 0.4;
+      const yrs = this.state.year - (a.founded || this.state.year);
+      score += Math.min(30, yrs * 2);
+    } else {
+      // CPU agencies: estimate from their standing (reputation, ovr, client volume, tier, age).
+      score += (a.reputation || 0) * 0.9;
+      score += (a.ovr || 0) * 0.7;
+      score += (a.clientCount || 0) * 1.2;
+      score += (a.marketShare || 0) * 250;
+      score += (4 - (a.tier || 3)) * 25;
+      const yrs = this.state.year - (a.founded || this.state.year);
+      score += Math.min(40, yrs * 0.6);
+    }
+    return Math.round(score * 10) / 10;
+  },
+
+  // All agencies ranked by all-time legacy score.
+  _buildAgentLegacyBoard() {
+    const all = [];
+    Object.values(this.state.agencies || {}).forEach(a => {
+      const isUser = a.id === 'user';
+      const ref = isUser ? this.state.agency : a;
+      all.push({ id: a.id, name: a.name, tier: a.tier, isUser, score: this._agentLegacyScore(ref, isUser) });
+    });
+    all.sort((x, y) => y.score - x.score);
+    all.forEach((e, i) => { e.rank = i + 1; });
+    return all;
+  },
+
+  // Set/clear the agency specialization. First pick is free; re-specializing costs $250k.
+  agentSetSpecialization(key) {
+    const agency = this.state.agency;
+    if (!agency || !this.AGENT_SPECIALIZATIONS[key]) return;
+    const current = agency.specialization || 'none';
+    if (current === key) return;
+    const isFirstPick = current === 'none';
+    const cost = isFirstPick ? 0 : 250000;
+    if (!isFirstPick) {
+      if (agency.capital < cost) { alert('Re-specializing costs ' + formatMoney(cost) + '. You can\'t afford it right now.'); return; }
+      if (!confirm('Re-specialize as "' + this.AGENT_SPECIALIZATIONS[key].label + '" for ' + formatMoney(cost) + '?')) return;
+      agency.capital -= cost;
+      agency.ledger.push({ week: this.state.week, year: this.state.year, type: 'overhead', amount: -cost, description: 'Agency re-branding · ' + this.AGENT_SPECIALIZATIONS[key].label });
+    }
+    agency.specialization = key;
+    if (this.state.agencies && this.state.agencies.user) this.state.agencies.user.style = this.AGENT_SPECIALIZATIONS[key].label;
+    this.addHeadline({
+      title: agency.agencyName + ' establishes an identity',
+      body: 'Now known across the league as a ' + this.AGENT_SPECIALIZATIONS[key].label + '. ' + this.AGENT_SPECIALIZATIONS[key].blurb
+    });
+    // Re-pitch so the niche pool reflects immediately.
+    this._agentRefreshPitches();
+    this.render();
+  },
+
+  renderAgencyLegacy() {
+    const agency = this.state.agency;
+    if (!agency) { document.getElementById('content').innerHTML = this._agencyPageHeader('agencylegacy'); return; }
+    let html = this._agencyPageHeader('agencylegacy');
+
+    // ---- Super-agent legacy board ----
+    const board = this._buildAgentLegacyBoard();
+    const me = board.find(e => e.isUser);
+    if (me) {
+      html += '<div class="card" style="border-left:4px solid var(--accent)"><div style="padding:14px 16px">' +
+        '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">All-time agent ranking</div>' +
+        '<div style="font-size:22px;font-weight:800;margin-top:2px">#' + me.rank + ' of ' + board.length + ' · legacy ' + me.score + '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px;text-align:center">' +
+        '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Lifetime</div><div style="font-weight:700">' + formatMoney(agency.lifetimeEarnings || 0) + '</div></div>' +
+        '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Drafted</div><div style="font-weight:700">' + (agency.clientsDrafted || 0) + '</div></div>' +
+        '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Top-10 picks</div><div style="font-weight:700">' + (agency.topPicksRepped || 0) + '</div></div>' +
+        '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Champions</div><div style="font-weight:700">' + (agency.championsRepped || 0) + '</div></div>' +
+        '</div></div></div>';
+    }
+    html += '<div class="card"><div class="card-header"><div class="card-title">Super-agent board</div><div class="card-meta">All-time greatness</div></div>' +
+      '<table><thead><tr><th>#</th><th>Agency</th><th class="text-right">Legacy</th></tr></thead><tbody>';
+    board.slice(0, 20).forEach(e => {
+      const medal = e.rank === 1 ? '🥇' : e.rank === 2 ? '🥈' : e.rank === 3 ? '🥉' : '';
+      html += '<tr' + (e.isUser ? ' style="background:var(--surface-2)"' : '') + '>' +
+        '<td class="mono-num" style="font-weight:700">' + medal + ' ' + e.rank + '</td>' +
+        '<td><strong>' + e.name + '</strong>' + (e.isUser ? ' <span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px">YOU</span>' : '') + '</td>' +
+        '<td class="text-right mono-num" style="font-weight:700">' + e.score + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+
+    // ---- Specialization / identity ----
+    const cur = agency.specialization || 'none';
+    html += '<div class="card"><div class="card-header"><div class="card-title">Agency identity</div>' +
+      '<div class="card-meta">' + (cur === 'none' ? 'Choose a niche (first pick free)' : 'Re-specialize · $250K') + '</div></div>' +
+      '<div style="padding:8px">';
+    Object.entries(this.AGENT_SPECIALIZATIONS).forEach(([key, spec]) => {
+      const active = key === cur;
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border)' + (active ? ';background:var(--surface-2)' : '') + '">' +
+        '<div style="flex:1"><div style="font-weight:700">' + spec.label + (active ? ' <span style="font-size:9px;background:var(--success);color:#fff;padding:1px 5px">ACTIVE</span>' : '') + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">' + spec.blurb + '</div></div>' +
+        (active ? '' : '<button class="btn btn-sm" style="margin-left:10px" onclick="game.agentSetSpecialization(\'' + key + '\')">' + (cur === 'none' ? 'Choose' : 'Switch') + '</button>') +
+        '</div>';
+    });
+    html += '</div></div>';
+
+    document.getElementById('content').innerHTML = html;
+  },
+
   renderMyAgency() {
     const agency = this.state.agency;
     if (!agency) {
@@ -15233,6 +15880,42 @@ let game = {
     // Active negotiation card — takes top spot if one is open
     if (agency.currentNegotiation) {
       html += this._renderAgentNegotiation();
+    }
+
+    // NFL CONTRACT TALK (Feature #2) — active negotiation decision, or a banner to start one.
+    if (agency.currentNflTalk) {
+      html += this._renderNflTalkCard();
+    } else if (agency.pendingNflTalks && agency.pendingNflTalks.length > 0) {
+      const n = agency.pendingNflTalks.length;
+      html += '<div class="card" style="border-left:4px solid var(--accent);cursor:pointer" onclick="game.agentReviewNflTalk()">' +
+        '<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center">' +
+        '<div><div style="font-weight:700">💰 ' + n + ' client contract' + (n === 1 ? '' : 's') + ' to negotiate</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Veteran clients are up for new deals. Bigger contracts mean bigger commission.</div></div>' +
+        '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();game.agentReviewNflTalk()">Negotiate →</button>' +
+        '</div></div>';
+    }
+
+    // SCANDAL / EVENT — active decision card, or a banner prompting review of the inbox.
+    if (agency.currentScandal) {
+      html += this._renderScandalCard();
+    } else if (agency.pendingScandals && agency.pendingScandals.length > 0) {
+      const n = agency.pendingScandals.length;
+      html += '<div class="card" style="border-left:4px solid var(--warning);cursor:pointer" onclick="game.agentReviewScandals()">' +
+        '<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center">' +
+        '<div><div style="font-weight:700">⚠️ ' + n + ' client situation' + (n === 1 ? '' : 's') + ' need your call</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">How you handle them swings your reputation and your clients\' loyalty.</div></div>' +
+        '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();game.agentReviewScandals()">Review →</button>' +
+        '</div></div>';
+    }
+
+    // IDENTITY PROMPT — nudge the user to pick a specialization if they haven't.
+    if ((agency.specialization || 'none') === 'none' && agency.clients.length >= 2) {
+      html += '<div class="card" style="border-left:4px solid var(--accent);cursor:pointer" onclick="game.currentView=\'agencylegacy\';game.render()">' +
+        '<div style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center">' +
+        '<div><div style="font-weight:700">Define your agency\'s identity</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Pick a specialization to gain an edge recruiting your niche. First pick is free.</div></div>' +
+        '<button class="btn btn-sm" onclick="event.stopPropagation();game.currentView=\'agencylegacy\';game.render()">Choose →</button>' +
+        '</div></div>';
     }
 
     // Quick glance: clients summary + a prompt to use the sub-tabs for detail
@@ -15766,7 +16449,19 @@ let game = {
     }
     
     let html = '<div class="card" style="border-left:4px solid var(--accent)"><div class="card-header"><div class="card-title">Negotiating with ' + prospect.name + '</div><div class="card-meta">' + prospect.position + ' · ' + (schoolInfo ? schoolInfo.name : prospect.school) + ' · Marketability ' + m + '/100</div></div>' + repNote;
-    
+
+    // RECRUITING WAR — show the competing field and your edge.
+    if (neg.suitors && neg.suitors.length > 0) {
+      html += '<div style="padding:10px 16px;background:var(--surface-2);border-top:1px solid var(--border)">' +
+        '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--warning);font-weight:700">⚔️ You\'re not the only one chasing ' + prospect.name.split(' ')[0] + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">Also pitching: ' +
+        neg.suitors.map(s => '<strong style="color:var(--text)">' + s.name + '</strong> (T' + s.tier + ')').join(', ') + '. Land them before a rival does.</div>' +
+        (neg.specMatch ? '<div style="font-size:12px;color:var(--success);margin-top:4px;font-weight:600">Your specialization gives you a real edge here (+12% acceptance).</div>' : '') +
+        '</div>';
+    } else if (neg.specMatch) {
+      html += '<div style="padding:10px 16px;background:var(--surface-2);border-top:1px solid var(--border);font-size:12px;color:var(--success);font-weight:600">Your specialization makes you the natural fit (+12% acceptance).</div>';
+    }
+
     if (neg.status === 'open') {
       const prob = this._agentAcceptanceProbability(prospect, neg.agentOffer);
       const probPct = Math.round(prob * 100);
@@ -19313,6 +20008,235 @@ let game = {
     return entry ? { rank: entry.rank, total: board.length, score: entry.score } : null;
   },
 
+  // COACH #1 — Coaching legacy score + all-time coach GOAT board. Blends championships, total
+  // wins, win %, Coach of the Year awards, and the coaching tree (proteges who became HCs).
+  // Works for every coach (user + CPU) so the user is ranked against the whole profession.
+  _coachWinTotals(coach) {
+    let w = 0, l = 0, titles = 0;
+    const champByYear = {};
+    (this.state.champions || []).forEach(c => { champByYear[c.year] = c.teamId; });
+    (coach.seasonHistory || []).forEach(h => {
+      w += h.wins || 0;
+      l += h.losses || 0;
+      // Credit a title if they were an HC on a team that won it all that year.
+      if (h.role === 'HC' && h.teamId !== null && h.teamId !== undefined && champByYear[h.year] === h.teamId) titles++;
+    });
+    // Include the in-progress season.
+    w += coach.wins || 0;
+    l += coach.losses || 0;
+    return { wins: w, losses: l, titles };
+  },
+
+  _coachLegacyScore(coach) {
+    if (!coach) return 0;
+    const t = this._coachWinTotals(coach);
+    let score = 0;
+    score += t.titles * 45;
+    score += t.wins * 0.8;
+    const games = t.wins + t.losses;
+    if (games >= 16) score += (t.wins / games) * 50; // win pct, once they have a real sample
+    score += (coach.coachOfYears || 0) * 12;
+    score += ((coach.proteges || []).length) * 8; // coaching tree — proteges who became HCs
+    score += Math.max(0, (coach.ovr || 60) - 60) * 0.5;
+    return Math.round(score * 10) / 10;
+  },
+
+  _buildCoachBoard(limit) {
+    const scored = [];
+    Object.values(this.state.coaches || {}).forEach(c => {
+      if (!c) return;
+      const t = this._coachWinTotals(c);
+      // Skip coaches with no real résumé yet (keeps the board meaningful).
+      if ((t.wins + t.losses) < 16 && (t.titles === 0) && !(c.isUserControlled)) return;
+      scored.push({ coach: c, score: this._coachLegacyScore(c), totals: t });
+    });
+    scored.sort((a, b) => b.score - a.score);
+    scored.forEach((e, i) => { e.rank = i + 1; });
+    return limit ? scored.slice(0, limit) : scored;
+  },
+
+  _userCoachRank() {
+    const uc = this.getUserCoach();
+    if (!uc) return null;
+    const board = this._buildCoachBoard();
+    const entry = board.find(e => e.coach.id === uc.id);
+    return entry ? { rank: entry.rank, total: board.length, score: entry.score } : null;
+  },
+
+  // COACH #1 — coaching tree. When the user is an HC, their coordinators (the OC/DC on their team)
+  // can be hired away as head coaches by teams with vacancies. A successful, high-OVR coordinator
+  // under a winning HC is a hot candidate. When one lands an HC job, the user is recorded as their
+  // mentor and the protege moves to the hiring team.
+  _coachDevelopProteges(userCoach) {
+    if (!userCoach || userCoach.teamId === null || userCoach.teamId === undefined) return;
+    const team = this.state.teams[userCoach.teamId];
+    if (!team || !team.staff) return;
+    const last = userCoach.seasonHistory && userCoach.seasonHistory.length > 0 ? userCoach.seasonHistory[userCoach.seasonHistory.length - 1] : null;
+    const hcWon = last && last.wins >= 9; // proteges of winning HCs are more sought-after
+    ['OC', 'DC'].forEach(role => {
+      const coord = this.getCoach(team.staff[role]);
+      if (!coord || coord.isUserControlled) return;
+      // Candidacy: solid OVR + a winning season under the user makes them a real HC candidate.
+      const baseChance = coord.ovr >= 80 ? 0.35 : coord.ovr >= 74 ? 0.22 : coord.ovr >= 68 ? 0.10 : 0.03;
+      const chance = baseChance * (hcWon ? 1.6 : 1.0);
+      if (Math.random() > chance) return;
+      // Find a team with an HC vacancy (or create the opening by picking a weak team's HC to replace).
+      let targetTeam = this.state.teams.find(t => t.id !== team.id && t.staff && !t.staff.HC);
+      if (!targetTeam) {
+        // Pick a CPU team with a poor record to make the opening.
+        const candidates = this.state.teams.filter(t => t.id !== team.id && t.id !== this.state.userTeamId && t.staff && t.staff.HC);
+        candidates.sort((a, b) => (a.wins || 0) - (b.wins || 0));
+        targetTeam = candidates[0];
+        if (targetTeam) {
+          const oldHc = this.getCoach(targetTeam.staff.HC);
+          if (oldHc) { oldHc.teamId = null; oldHc.salary = 0; }
+          targetTeam.staff.HC = null;
+        }
+      }
+      if (!targetTeam) return;
+      // Promote the coordinator to HC of the target team.
+      team.staff[role] = null;
+      coord.teamId = targetTeam.id;
+      coord.role = 'HC';
+      coord.salary = calculateCoachSalary('HC', coord.ovr);
+      targetTeam.staff.HC = coord.id;
+      // Record the mentorship on the user coach.
+      if (!userCoach.proteges) userCoach.proteges = [];
+      userCoach.proteges.push({ coachId: coord.id, name: coord.name, teamId: targetTeam.id, year: this.state.year });
+      // Mentoring HCs who spawn other HCs is prestigious — small OVR + a headline.
+      userCoach.ovr = Math.min(99, (userCoach.ovr || 70) + 1);
+      this.addHeadline({
+        type: 'contract',
+        title: coord.name + ' hired as ' + targetTeam.city + ' ' + targetTeam.name + ' head coach',
+        body: 'Your ' + COACH_ROLE_NAMES[role] + ' lands a top job — another branch on your coaching tree.'
+      });
+    });
+  },
+
+  // Coach GOAT board page.
+  renderCoachBoard() {
+    const board = this._buildCoachBoard(100);
+    const uc = this.getUserCoach();
+    let html = '<div class="page-header"><div class="page-title">Coaching Legends</div>' +
+      '<div class="page-subtitle">All-time coach rankings · titles, wins, and the trees they built</div></div>';
+    if (uc) {
+      const full = this._buildCoachBoard();
+      const mine = full.find(e => e.coach.id === uc.id);
+      if (mine) {
+        html += '<div class="card" style="border-left:4px solid var(--accent)"><div style="padding:14px 16px">' +
+          '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Your standing</div>' +
+          '<div style="font-size:22px;font-weight:800;margin-top:2px">#' + mine.rank + ' of ' + full.length + ' all-time · legacy ' + mine.score + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">' + mine.totals.wins + '-' + mine.totals.losses + ' · ' + mine.totals.titles + ' title' + (mine.totals.titles === 1 ? '' : 's') + ' · ' + (uc.coachOfYears || 0) + '× COY · ' + ((uc.proteges || []).length) + ' HC proteges</div>' +
+          '</div></div>';
+      }
+    }
+    if (board.length === 0) {
+      html += '<div class="empty-state">No established coaching résumés yet. Sim seasons to populate the board.</div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+    html += '<div class="card"><table><thead><tr><th>#</th><th>Coach</th><th class="text-right">Titles</th><th class="text-right">Record</th><th class="text-right">COY</th><th class="text-right">Tree</th><th class="text-right">Legacy</th></tr></thead><tbody>';
+    board.forEach(e => {
+      const c = e.coach;
+      const isUser = uc && c.id === uc.id;
+      const medal = e.rank === 1 ? '🥇' : e.rank === 2 ? '🥈' : e.rank === 3 ? '🥉' : '';
+      html += '<tr' + (isUser ? ' style="background:var(--surface-2)"' : '') + '>' +
+        '<td class="mono-num" style="font-weight:700">' + medal + ' ' + e.rank + '</td>' +
+        '<td><strong>' + c.name + '</strong>' + (isUser ? ' <span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px">YOU</span>' : '') + ' <span class="muted" style="font-size:11px">' + (c.role || '') + '</span></td>' +
+        '<td class="text-right mono-num">' + e.totals.titles + '</td>' +
+        '<td class="text-right mono-num">' + e.totals.wins + '-' + e.totals.losses + '</td>' +
+        '<td class="text-right mono-num">' + (c.coachOfYears || 0) + '</td>' +
+        '<td class="text-right mono-num">' + ((c.proteges || []).length) + '</td>' +
+        '<td class="text-right mono-num" style="font-weight:700">' + e.score + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+
+    // Coaching tree for the user — who they developed that went on to be a head coach.
+    if (uc && uc.proteges && uc.proteges.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Your coaching tree</div>' +
+        '<div class="card-meta">Assistants who became head coaches</div></div><div style="padding:8px 0">';
+      uc.proteges.forEach(pr => {
+        const protege = this.getCoach(pr.coachId);
+        const name = protege ? protege.name : pr.name;
+        const team = pr.teamId !== null && pr.teamId !== undefined ? this.state.teams[pr.teamId] : null;
+        html += '<div style="padding:8px 16px;border-bottom:1px solid var(--border);font-size:13px">' +
+          '<strong>' + name + '</strong> <span class="muted" style="font-size:11px">became HC' + (team ? ' · ' + team.city + ' ' + team.name : '') + ' (' + pr.year + ')</span></div>';
+      });
+      html += '</div></div>';
+    }
+
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // DYNASTY #2 — Franchise dynasty score. Ranks all 32 franchises by all-time greatness:
+  // championships (heavily weighted), playoff appearances, sustained winning, stars developed
+  // (Ring of Honor inductees), and total wins. The user's franchise place in history is the
+  // team-level parallel to the player GOAT board.
+  _franchiseLegacyScore(team) {
+    if (!team) return 0;
+    let score = 0;
+    score += (team.championships || 0) * 50;       // titles dominate
+    score += (team.playoffAppearances || 0) * 6;
+    score += ((team.teamHOF || []).length) * 8;     // Ring of Honor legends developed
+    const hist = team.historicalStats || {};
+    const totalWins = hist.totalWins || 0;
+    const totalLosses = hist.totalLosses || 0;
+    score += totalWins * 0.5;
+    const games = totalWins + totalLosses;
+    if (games > 0) score += (totalWins / games) * 40; // win pct
+    return Math.round(score * 10) / 10;
+  },
+
+  _buildFranchiseBoard() {
+    const scored = (this.state.teams || []).map(t => ({
+      team: t, score: this._franchiseLegacyScore(t)
+    }));
+    scored.sort((a, b) => b.score - a.score);
+    scored.forEach((e, i) => { e.rank = i + 1; });
+    return scored;
+  },
+
+  // The user franchise's rank (dynasty mode). Returns { rank, total, score } or null.
+  _userFranchiseRank() {
+    if (this.state.userTeamId === null || this.state.userTeamId === undefined) return null;
+    const board = this._buildFranchiseBoard();
+    const entry = board.find(e => e.team.id === this.state.userTeamId);
+    return entry ? { rank: entry.rank, total: board.length, score: entry.score } : null;
+  },
+
+  // Dynasty legacy page — all-time franchise rankings.
+  renderFranchiseBoard() {
+    const board = this._buildFranchiseBoard();
+    const userId = this.state.userTeamId;
+    let html = '<div class="page-header"><div class="page-title">Franchise Legacy</div>' +
+      '<div class="page-subtitle">All-time franchise rankings · titles, sustained success, and legends built</div></div>';
+    if (userId !== null && userId !== undefined) {
+      const mine = board.find(e => e.team.id === userId);
+      if (mine) {
+        html += '<div class="card" style="border-left:4px solid var(--accent)"><div style="padding:14px 16px">' +
+          '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Your franchise</div>' +
+          '<div style="font-size:22px;font-weight:800;margin-top:2px">#' + mine.rank + ' of ' + board.length + ' all-time · legacy ' + mine.score + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">' + mine.team.championships + ' titles · ' + mine.team.playoffAppearances + ' playoff appearances · ' + ((mine.team.teamHOF || []).length) + ' Ring of Honor legends</div>' +
+          '</div></div>';
+      }
+    }
+    html += '<div class="card"><table><thead><tr><th>#</th><th>Franchise</th><th class="text-right">Titles</th><th class="text-right">Playoffs</th><th class="text-right">Legends</th><th class="text-right">Legacy</th></tr></thead><tbody>';
+    board.forEach(e => {
+      const t = e.team;
+      const isUser = t.id === userId;
+      const medal = e.rank === 1 ? '🥇' : e.rank === 2 ? '🥈' : e.rank === 3 ? '🥉' : '';
+      html += '<tr onclick="game.showTeam(' + t.id + ')" style="cursor:pointer' + (isUser ? ';background:var(--surface-2)' : '') + '">' +
+        '<td class="mono-num" style="font-weight:700">' + medal + ' ' + e.rank + '</td>' +
+        '<td><strong>' + t.city + ' ' + t.name + '</strong>' + (isUser ? ' <span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px">YOURS</span>' : '') + '</td>' +
+        '<td class="text-right mono-num">' + (t.championships || 0) + '</td>' +
+        '<td class="text-right mono-num">' + (t.playoffAppearances || 0) + '</td>' +
+        '<td class="text-right mono-num">' + ((t.teamHOF || []).length) + '</td>' +
+        '<td class="text-right mono-num" style="font-weight:700">' + e.score + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    document.getElementById('content').innerHTML = html;
+  },
+
   // GOAT BOARD page — top 100 players of all time by legacy score.
   renderGoatBoard() {
     const board = this._buildGoatBoard(100);
@@ -21068,6 +21992,24 @@ let game = {
           '</tr>';
       });
       html += '</tbody></table></div>';
+    }
+    // PLAYER #1 — School Ring of Honor: where the user (and notable alumni) are enshrined by their
+    // college program. Highlights the user's induction.
+    const rings = this.state.schoolRingOfHonor || {};
+    const ringSchools = Object.keys(rings).filter(k => (rings[k] || []).length > 0);
+    if (ringSchools.length > 0) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">School Rings of Honor</div>' +
+        '<div class="card-meta">Program legends</div></div><div style="padding:8px 0">';
+      ringSchools.forEach(abbr => {
+        const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
+        const list = rings[abbr];
+        html += '<div style="padding:8px 16px;border-bottom:1px solid var(--border)">' +
+          '<div style="font-weight:700;font-size:13px">' + (schoolInfo ? schoolInfo.name : abbr) + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-top:3px">' +
+          list.map(e => '<span' + (e.isUser ? ' style="color:var(--accent);font-weight:700"' : '') + '>' + e.name + ' (' + e.position + (e.heismans > 0 ? ', ' + e.heismans + '× Heisman' : '') + ')</span>').join(' · ') +
+          '</div></div>';
+      });
+      html += '</div></div>';
     }
     document.getElementById('content').innerHTML = html;
   },
