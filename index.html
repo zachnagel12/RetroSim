@@ -383,6 +383,10 @@ select { font-family: inherit; }
         <div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>
         <div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>
       </div>
+      <div class="nav-section" id="navAgentCareer" style="display:none">
+        <div class="nav-title">Your Agency</div>
+        <div class="nav-item" data-view="myagency"><span class="nav-icon">💼</span><span>My Agency</span></div>
+      </div>
       <div class="nav-section" id="navPlayoffs" style="display:none">
         <div class="nav-title">Postseason</div>
         <div class="nav-item playoffs-nav" data-view="playoffs"><span class="nav-icon">◆</span><span>Playoffs</span></div>
@@ -1515,16 +1519,30 @@ let game = {
     const tag = document.getElementById('userTeamTag');
     const myTeamNav = document.getElementById('navMyTeam');
     const coachCareerNav = document.getElementById('navCoachCareer');
+    const agentCareerNav = document.getElementById('navAgentCareer');
     const tradesNav = document.getElementById('navTrades');
     
     // Default: hide everything user-specific
     tag.style.display = 'none';
     myTeamNav.style.display = 'none';
     if (coachCareerNav) coachCareerNav.style.display = 'none';
+    if (agentCareerNav) agentCareerNav.style.display = 'none';
     if (tradesNav) tradesNav.style.display = 'none';
     
     if (!this.state) return;
     const mode = this.state.career ? this.state.career.mode : 'dynasty';
+    
+    if (mode === 'agent') {
+      const agency = this.state.agency;
+      if (agency) {
+        tag.textContent = agency.name + ' · ' + agency.agencyName;
+      } else {
+        tag.textContent = 'Agent Career';
+      }
+      tag.style.display = '';
+      if (agentCareerNav) agentCareerNav.style.display = '';
+      return;
+    }
     
     if (mode === 'coach') {
       // Coach career: show coach-career nav. User's team is derived from where the coach works.
@@ -1640,7 +1658,7 @@ let game = {
       '<div class="mode-card" onclick="game.chooseCareerMode(\'dynasty\')"><h3>🏟️ Dynasty</h3><p>Take over an NFL franchise. Build the roster, manage the cap, win Super Bowls. Full GM control of one team.</p></div>' +
       '<div class="mode-card" onclick="game.chooseCareerMode(\'coach\')"><h3>🎯 Coach Career</h3><p>Create a coach and build your career. Start as an OC/DC, work up to head coach, move between teams. Win COY hardware.</p></div>' +
       '<div class="mode-card" onclick="game.chooseCareerMode(\'player\')"><h3>🏈 Player Career</h3><p>Create a college prospect, play 3-4 years of college football, declare for the NFL Draft, then play out your career.</p></div>' +
-      '<div class="mode-card" style="opacity:0.45;cursor:not-allowed" onclick="alert(\'Agent Career coming in Stage 4. Pick another mode for now.\')"><h3>💼 Agent Career <span style="font-size:11px;color:var(--text-muted)">(coming soon)</span></h3><p>Run a sports agency. Sign clients, negotiate their contracts, build a stable of 20-30 stars.</p></div>' +
+      '<div class="mode-card" onclick="game.chooseCareerMode(\'agent\')"><h3>💼 Agent Career</h3><p>Start your own sports agency. Sign college clients to NIL deals, negotiate commissions, manage operating costs, build a stable of stars.</p></div>' +
       '</div>' +
       '<button class="btn" onclick="game.showSlotPicker()">← Back to slots</button></div>';
   },
@@ -1654,6 +1672,8 @@ let game = {
       this.showCoachCreation();
     } else if (careerMode === 'player') {
       this.showPlayerCreation();
+    } else if (careerMode === 'agent') {
+      this.showAgentCreation();
     }
   },
   
@@ -2203,6 +2223,12 @@ let game = {
       this.playerCareerParams = null;
     }
     
+    // Agent career mode: bootstrap the agency state. Agents don't have a team, so userTeamId stays null.
+    if (this.pendingCareerMode === 'agent' && this.agentCareerParams) {
+      this.installUserAgency(this.agentCareerParams);
+      this.agentCareerParams = null;
+    }
+    
     if (this.pendingMode === 'draft') {
       this.startDraft();
     } else {
@@ -2215,10 +2241,13 @@ let game = {
       this.updateUserTag();
       // Default landing view depends on mode:
       // - Coach/Player career: 'mycareer' so the user sees their identity and any pending offers
+      // - Agent career: 'myagency' so the user sees their agency dashboard
       // - Dynasty: 'myteam' since they have a franchise to manage
       // - No career, no team: 'standings' as a neutral browse view
       if (this.state.career && (this.state.career.mode === 'coach' || this.state.career.mode === 'player')) {
         this.currentView = 'mycareer';
+      } else if (this.state.career && this.state.career.mode === 'agent') {
+        this.currentView = 'myagency';
       } else {
         this.currentView = userTeamId !== null ? 'myteam' : 'standings';
       }
@@ -5213,17 +5242,30 @@ let game = {
       const s = p._heismanStats;
       const school = COLLEGE_SCHOOLS.find(x => x.abbr === p.school);
       const teamPrestige = prestigeMap[p.school] !== undefined ? prestigeMap[p.school] : (school ? school.prestige : 70);
-      // POSITION-WEIGHTED SCORING — QBs dominate Heisman votes historically. Of the last 25
-      // Heismans, ~17 were QBs, ~6 were RBs, ~2 were WRs. We boost QB weight to match.
+      // POSITION-WEIGHTED SCORING — calibrated so elite seasons at QB / RB / WR/TE produce
+      // similar peak scores, while *average* QBs sit below elite skill players. The old version
+      // had a +25 QB base + steep passing-yard slope, which let a mediocre 2500-yd QB outscore
+      // a 1500-yd elite receiver and led to top-5 finalists being all QBs. Real Heisman finalist
+      // groups historically average ~2-3 QBs + 1-2 RBs/WRs; we recalibrate to match.
+      //
+      // Calibration targets (elite seasons):
+      //   Elite QB (3800 pass / 35 TD / 8 INT / 400 rush / 5 rTD): ~700-750
+      //   Elite RB (1900 rush / 22 TD + 300 rec / 2 TD):           ~700-750
+      //   Elite WR (1500 rec / 15 TD / 90 rec):                    ~650-720
+      //   Average QB (2500 pass / 22 TD / 12 INT):                 ~350-400 (below good skill)
       let score = 0;
       if (p.position === 'QB') {
-        // QB: 25 base + production-driven points. The base ensures even a solid QB outranks
-        // a great RB on a mediocre team, mirroring real voting.
-        score = 25 + (s.passYds / 9) + (s.passTDs * 13) - (s.ints * 5) + (s.rushYds / 7) + (s.rushTDs * 8);
+        // No flat base. Passing-yard slope reduced (was /9, now /12) so volume alone doesn't
+        // carry mediocre QBs. TD/INT weights unchanged — they correctly reward efficiency.
+        score = (s.passYds / 12) + (s.passTDs * 13) - (s.ints * 5) + (s.rushYds / 7) + (s.rushTDs * 8);
       } else if (p.position === 'RB') {
-        score = (s.rushYds / 4.5) + (s.rushTDs * 13) + (s.recYds / 6) + (s.recTDs * 10);
+        // Lift rushing-yard slope slightly (was /4.5, now /4.2) — elite RB seasons now compete
+        // with elite QB seasons at the top of the board.
+        score = (s.rushYds / 4.2) + (s.rushTDs * 13) + (s.recYds / 6) + (s.recTDs * 10);
       } else if (p.position === 'WR' || p.position === 'TE') {
-        score = (s.recYds / 5.5) + (s.recTDs * 13) + (s.receptions * 1.4);
+        // Lift receiving-yard slope (was /5.5, now /5) and reception multiplier (was 1.4, now 1.8).
+        // Elite receivers should make the top 5 most years even if rarely winning.
+        score = (s.recYds / 5) + (s.recTDs * 13) + (s.receptions * 1.8);
       }
       // CLASS-YEAR BIAS — Heisman voters historically favor upperclassmen. Of the last 30
       // Heismans, only a handful went to freshmen/sophomores (Manziel, Mayfield's first year,
@@ -5634,6 +5676,28 @@ let game = {
     if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'declared') {
       return;
     }
+    // AGENT GUARD: agents don't have a team, so a userTeamId of null would make the loop run
+    // every pick without stopping. The user wants to *watch* the draft to see if their clients
+    // get picked — running through 224 picks synchronously would freeze the UI. Cap iterations
+    // per call so the user can resume by clicking through screens. Future: a dedicated agent
+    // draft-night view that shows client selections.
+    if (this.state.career && this.state.career.mode === 'agent') {
+      // Run the whole annual draft in a single pass — for agents this is fine because we don't
+      // need to pause for input. The pool is only 224 deep so this completes in <100ms even
+      // including the calculateTeamNeeds calls.
+      const userId = -1; // sentinel; no team can match
+      let safety = 0;
+      while (this.state.draftCurrentIdx < this.state.draftOrder.length) {
+        if (++safety > 2000) { this.finishDraft(); return; }
+        const current = this.state.draftOrder[this.state.draftCurrentIdx];
+        if (!current) { this.state.draftCurrentIdx++; continue; }
+        const before = this.state.draftCurrentIdx;
+        this.cpuPick(current.teamId);
+        if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
+      }
+      this.finishDraft();
+      return;
+    }
     const userId = this.state.userTeamId;
     let safety = 0;
     while (this.state.draftCurrentIdx < this.state.draftOrder.length) {
@@ -5757,7 +5821,11 @@ let game = {
     this.applyPick(this.state.userTeamId, player);
     this.state.draftCurrentIdx++;
     this.advanceDraftUntilUser();
-    this.saveGame();
+    // NOTE: deliberately NOT calling saveGame() here. compressStateForSave() walks every player
+    // (thousands) plus 5,400+ college prospects plus the full schedule, then JSON.stringify runs
+    // over the result. On a 53-round startup draft that's 53 freezes of several seconds each.
+    // The draft completes in memory; finishDraft() saves once at the end, and the manual Save
+    // button in the header is always available if the user wants to checkpoint mid-draft.
     this.renderDraft();
   },
 
@@ -6115,7 +6183,7 @@ let game = {
     const before = this.state.draftCurrentIdx;
     this.cpuPick(current.teamId);
     if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
-    this.saveGame();
+    // No per-pick save — see comment in userPick. finishDraft() saves on completion.
     // Render — if user was just picked, the celebration popup will fire via the render hook.
     this.render();
   },
@@ -6136,7 +6204,7 @@ let game = {
       // Stop if user was just picked
       if (this._pendingUserDraftCelebration) break;
     }
-    this.saveGame();
+    // No save here either — finishDraft() handles it. Mid-draft saves cost seconds each.
     this.render();
   },
   
@@ -6667,6 +6735,11 @@ let game = {
     this.clearWeeklyTraining();
     // Tick down injury timers and post a return-from-injury headline for the user player.
     this.tickInjuries();
+    // Agent career: tick agency overhead, generate NIL deals, refresh pitch list.
+    // Runs after college week so marketability reflects the latest stats.
+    if (this.state.career && this.state.career.mode === 'agent') {
+      this._agentWeeklyTick();
+    }
     document.getElementById('newsFeed').style.display = '';
     document.getElementById('mainGrid').style.gridTemplateColumns = '200px 1fr 320px';
     this.saveGame();
@@ -10033,6 +10106,7 @@ let game = {
       case 'combine': this.renderCombine(); break;
       case 'trades': this.renderTrades(); break;
       case 'mycareer': this.renderMyCareer(); break;
+      case 'myagency': this.renderMyAgency(); break;
       case 'hof': this.renderHOF(); break;
       case 'records': this.renderRecords(); break;
       case 'champions': this.renderChampions(); break;
@@ -11228,6 +11302,600 @@ let game = {
     html += this._renderPressReactionsSection(p);
     
     document.getElementById('content').innerHTML = html;
+  },
+
+  // ============================================================
+  // ====================== AGENT CAREER ========================
+  // ============================================================
+  // Run a sports agency. Sign college clients to NIL deals, take a commission cut, negotiate
+  // their NFL rookie contracts when they declare, and grow your agency over time.
+  //
+  // Architecture:
+  // - state.agency: persisted agency state (capital, ovr, reputation, clients, ledger)
+  // - state.career.mode = 'agent' triggers the agent UI/flow
+  // - Each simWeek call ticks: deducts overhead, generates NIL deals for clients, refreshes pitches
+  // - Render path: 'myagency' view shows dashboard + clients + available prospects
+  // ============================================================
+
+  // Starting parameters per origin. Tuned so each origin feels distinct but viable:
+  //   former_player: middle capital + high rep (NFL connections) → easy to sign mid-tier clients
+  //   trust_fund:    huge capital but low rep + high burn → must lure clients with $ or fail
+  //   self_made:     low capital, low rep, low overhead → grind from the bottom
+  AGENT_ORIGINS: {
+    former_player: {
+      label: 'Former Player',
+      tagline: 'You played in the league. Coaches and GMs trust you.',
+      description: 'Mid-range starting capital, but your NFL connections give you instant credibility with players and front offices.',
+      capital: 250000, ovr: 60, reputation: 65, overhead: 8000,
+      color: '#2d7a2d'
+    },
+    trust_fund: {
+      label: 'Trust Fund Kid',
+      tagline: 'Daddy\'s money built a downtown office. Now prove you belong.',
+      description: 'Huge starting bankroll lets you outspend competitors, but a fancy office means $15K/wk overhead, and players don\'t know your name.',
+      capital: 1500000, ovr: 40, reputation: 20, overhead: 15000,
+      color: '#a67c00'
+    },
+    self_made: {
+      label: 'Self-Made',
+      tagline: 'A laptop and a dream. Working out of your apartment.',
+      description: 'Tiny operating budget but tiny overhead. You\'ll need to grind walk-ons and JUCO guys before anyone good signs.',
+      capital: 50000, ovr: 45, reputation: 30, overhead: 4000,
+      color: '#5a6770'
+    }
+  },
+
+  showAgentCreation() {
+    const namePool = () => this.generateName(2026);
+    const suggestedName = this._agentCreationSuggestedName || namePool();
+    this._agentCreationSuggestedName = suggestedName;
+    const selectedOrigin = this._agentCreationOrigin || 'self_made';
+    const agencyName = this._agentCreationAgencyName || (suggestedName.split(' ').pop() + ' Sports Group');
+
+    let html = '<div class="welcome" style="max-width:880px">' +
+      '<h1 class="welcome-title">Found your agency</h1>' +
+      '<p class="welcome-subtitle">You\'re an aspiring sports agent. Choose your background — it determines starting capital, reputation, and the kind of clients who\'ll take your call.</p>';
+
+    // Name fields
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:24px 0">' +
+      '<div><label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Your name</label>' +
+      '<input id="agentNameInput" type="text" value="' + suggestedName + '" style="width:100%;padding:10px 12px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:15px;font-family:inherit;margin-top:6px"></div>' +
+      '<div><label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Agency name</label>' +
+      '<input id="agencyNameInput" type="text" value="' + agencyName + '" style="width:100%;padding:10px 12px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:15px;font-family:inherit;margin-top:6px"></div>' +
+      '</div>';
+
+    // Origin cards
+    html += '<div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:10px">Background</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px">';
+    Object.entries(this.AGENT_ORIGINS).forEach(([key, o]) => {
+      const sel = selectedOrigin === key;
+      html += '<div onclick="game._agentCreationOrigin=\'' + key + '\';game.showAgentCreation()" style="cursor:pointer;background:' + (sel ? 'var(--surface-2)' : 'var(--surface)') + ';border:' + (sel ? '2px solid ' + o.color : '1px solid var(--border)') + ';padding:16px">' +
+        '<div style="font-size:11px;color:' + o.color + ';font-weight:700;letter-spacing:0.5px;text-transform:uppercase">' + o.label + '</div>' +
+        '<div style="font-size:13px;margin:6px 0 10px;font-style:italic;color:var(--text-muted)">' + o.tagline + '</div>' +
+        '<div style="font-size:12px;line-height:1.5;margin-bottom:12px">' + o.description + '</div>' +
+        '<div style="font-size:11px;font-family:var(--font-mono);border-top:1px solid var(--border);padding-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px;color:var(--text-muted)">' +
+        '<div>CAPITAL <strong style="color:var(--text);float:right">' + formatMoney(o.capital) + '</strong></div>' +
+        '<div>AGENT OVR <strong style="color:var(--text);float:right">' + o.ovr + '</strong></div>' +
+        '<div>REP <strong style="color:var(--text);float:right">' + o.reputation + '/100</strong></div>' +
+        '<div>OVERHEAD <strong style="color:var(--text);float:right">' + formatMoney(o.overhead) + '/wk</strong></div>' +
+        '</div></div>';
+    });
+    html += '</div>';
+
+    html += '<div style="display:flex;gap:10px;justify-content:flex-end">' +
+      '<button class="btn" onclick="game.showModeChoice()">← Back</button>' +
+      '<button class="btn btn-primary" onclick="game._commitAgentCreation()">Found agency →</button>' +
+      '</div>';
+    html += '</div>';
+
+    document.getElementById('content').innerHTML = html;
+  },
+
+  _commitAgentCreation() {
+    const nameEl = document.getElementById('agentNameInput');
+    const agencyEl = document.getElementById('agencyNameInput');
+    const name = (nameEl && nameEl.value.trim()) || this._agentCreationSuggestedName;
+    const agencyName = (agencyEl && agencyEl.value.trim()) || (name + ' Sports Group');
+    const origin = this._agentCreationOrigin || 'self_made';
+
+    this.agentCareerParams = { name, agencyName, origin };
+    // Reuse the team picker flow but skip — agents don't pick a team. Jump straight to startLeague
+    // with userTeamId = null. The agency state is initialized inside startLeague.
+    this.pendingMode = 'default'; // default-rosters; agent doesn't care about startup draft
+    this.startLeague(null);
+  },
+
+  // Called from startLeague when career.mode === 'agent'. Builds the initial agency state.
+  installUserAgency({ name, agencyName, origin }) {
+    const o = this.AGENT_ORIGINS[origin] || this.AGENT_ORIGINS.self_made;
+    this.state.agency = {
+      name: name,
+      agencyName: agencyName,
+      founded: this.state.year,
+      origin: origin,
+      capital: o.capital,
+      weeklyOverhead: o.overhead,
+      agentOvr: o.ovr,
+      reputation: o.reputation,
+      clients: [],
+      ledger: [
+        { week: 0, year: this.state.year, type: 'founding', amount: o.capital, description: 'Agency founded · starting capital' }
+      ],
+      pendingPitches: [], // prospects available to pitch this week
+      currentNegotiation: null, // {prospectId, expectedCommission, agentOffer, status}
+      consecutiveNegativeWeeks: 0,
+      bankrupted: false,
+      faceSeed: Math.floor(Math.random() * 1000000)
+    };
+    this.state.career.entityType = 'agent';
+    this.state.career.entityId = 'agency'; // singleton
+
+    this.addHeadline({
+      title: agencyName + ' opens for business',
+      body: name + ' founds a new sports agency with ' + formatMoney(o.capital) + ' in starting capital. ' + o.tagline
+    });
+    // Generate initial pitch list so the first week isn't empty
+    this._agentRefreshPitches();
+  },
+
+  // Find the live player/prospect entity for a client. Clients are stored by their original
+  // collegeProspect id, but when the prospect graduates and is converted to an NFL player, the
+  // new player has a fresh integer id and references back via `fromProspectId`. Check both pools.
+  _agentResolveClient(prospectId) {
+    return (this.state.collegeProspects || []).find(p => p.id === prospectId)
+      || (this.state.pendingDraftClass || []).find(p => p.id === prospectId)
+      || (this.state.players || []).find(p => p.fromProspectId === prospectId)
+      || null;
+  },
+
+  // ----- HELPERS -----
+
+  // Compute a prospect's "marketability score" — drives NIL deal sizes and which agents they consider.
+  // Range roughly 0-100. Top-of-class 5-star QB at Alabama: ~95. Walk-on punter at Vandy: ~5.
+  _agentMarketability(prospect) {
+    const grade = prospect.prospectGrade || 50;
+    const stars = prospect.recruitStars || 0;
+    const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === prospect.school);
+    const prestige = schoolInfo ? schoolInfo.prestige : 60;
+    // Position multiplier — QBs print money, OL/specialists don't
+    const posMult = { QB: 1.6, RB: 1.1, WR: 1.15, TE: 0.9, EDGE: 1.0, DT: 0.8, LB: 0.85,
+                     CB: 0.95, S: 0.85, OT: 0.7, OG: 0.5, C: 0.5, K: 0.3, P: 0.25 }[prospect.position] || 0.7;
+    // Heisman buzz amplifies marketability massively
+    const heisman = prospect._heismanStats && prospect._heismanStats.games > 0;
+    let heismanBoost = 0;
+    if (heisman) {
+      try {
+        const race = this.getHeismanRace(15);
+        const rank = race.findIndex(r => r.player.id === prospect.id);
+        if (rank === 0) heismanBoost = 25;
+        else if (rank >= 0 && rank < 3) heismanBoost = 15;
+        else if (rank >= 0 && rank < 6) heismanBoost = 8;
+      } catch (e) { /* defensive */ }
+    }
+    const base = ((grade - 50) * 0.7) + (stars * 4) + ((prestige - 60) * 0.5);
+    return Math.max(0, Math.min(100, Math.round((base + heismanBoost) * posMult)));
+  },
+
+  // Annual NIL deal size in dollars for a given prospect's marketability.
+  // Calibrated against 2024-2025 real NIL deals:
+  //   Arch Manning ~$3M, top-tier QB ~$1-2M, 4-star skill ~$100-300K, 3-star ~$10-50K, walk-on ~$1-5K
+  _agentNILDealValue(marketability) {
+    if (marketability >= 90) return Math.round(800000 + Math.random() * 1500000); // $800K-$2.3M
+    if (marketability >= 75) return Math.round(250000 + Math.random() * 600000);  // $250K-$850K
+    if (marketability >= 60) return Math.round(80000 + Math.random() * 200000);   // $80K-$280K
+    if (marketability >= 45) return Math.round(25000 + Math.random() * 70000);    // $25K-$95K
+    if (marketability >= 30) return Math.round(5000 + Math.random() * 25000);     // $5K-$30K
+    if (marketability >= 15) return Math.round(1000 + Math.random() * 8000);      // $1K-$9K
+    return Math.round(200 + Math.random() * 1500);                                // $200-$1.7K
+  },
+
+  // What commission % does this prospect "expect" by default? Higher-end prospects know their
+  // worth and want lower commission rates from agents (more competition for their representation).
+  _agentExpectedCommission(prospect) {
+    const m = this._agentMarketability(prospect);
+    if (m >= 85) return 3;   // top prospects: many agents fighting → low commission expectation
+    if (m >= 70) return 4;
+    if (m >= 50) return 5;
+    if (m >= 30) return 6;
+    return 7;                // walk-on tier: they'll take what they can get
+  },
+
+  // Compute acceptance probability when the agent offers a specific commission rate.
+  // Returns 0-1. Factors: how far off expected commission, agent OVR vs prospect quality,
+  // agent reputation, the prospect's stature.
+  _agentAcceptanceProbability(prospect, offeredCommissionPct) {
+    const expected = this._agentExpectedCommission(prospect);
+    const marketability = this._agentMarketability(prospect);
+    const agency = this.state.agency;
+    
+    // Commission delta: every percentage point below expected is a huge benefit to the prospect.
+    // Going 2pts under expected → +30%. Going 2pts over → -40%.
+    const commissionGap = expected - offeredCommissionPct;
+    let p = 0.5 + commissionGap * 0.15;
+    
+    // Agent OVR vs prospect tier: a low-OVR agent has a hard time landing elite prospects.
+    // Required OVR scales with marketability — m=90 prospect won't sign with <70 OVR easily.
+    const requiredOvr = 35 + marketability * 0.55;
+    const ovrGap = agency.agentOvr - requiredOvr;
+    p += ovrGap * 0.015; // ±15% per 10 OVR gap
+    
+    // Reputation: top prospects need to trust your name. Bottom tier doesn't care.
+    const repFactor = (agency.reputation - 50) / 100;
+    p += repFactor * (marketability / 100) * 0.4;
+    
+    return Math.max(0.02, Math.min(0.95, p));
+  },
+
+  // Refresh the list of prospects you can pitch to this week. Pulled from collegeProspects
+  // but FILTERED so you only see ones who would even consider taking a meeting with you.
+  // Higher agent OVR + reputation → broader pool of prospects shows up.
+  _agentRefreshPitches() {
+    if (!this.state.agency) return;
+    const agency = this.state.agency;
+    const signedIds = new Set(agency.clients.map(c => c.prospectId));
+    
+    // Pull all unsigned college prospects, sort by marketability with some noise so it's not the
+    // exact same order every week. Then cap based on agent OVR (better agents see more options).
+    const candidates = (this.state.collegeProspects || [])
+      .filter(p => !p.isUserControlled && !signedIds.has(p.id))
+      .map(p => {
+        const m = this._agentMarketability(p);
+        // Will this prospect even take a meeting? Roughly: their marketability shouldn't be too far
+        // above what the agent could reasonably attract.
+        const ceiling = 25 + agency.agentOvr * 0.85 + agency.reputation * 0.25; // m=85 needs ovr~70+rep~50
+        return { p, m, ceiling };
+      })
+      .filter(({ m, ceiling }) => m <= ceiling + 5) // small slack so longshots occasionally appear
+      .map(({ p, m }) => ({ p, m, sortScore: m + Math.random() * 15 }))
+      .sort((a, b) => b.sortScore - a.sortScore);
+    
+    // Show 4-8 pitches per week, weighted toward the middle of what's available
+    const count = Math.min(candidates.length, 4 + Math.floor(Math.random() * 5));
+    agency.pendingPitches = candidates.slice(0, count).map(({ p }) => p.id);
+  },
+
+  // Begin a negotiation with a prospect. Opens the modal/inline UI on the agency page.
+  agentBeginNegotiation(prospectId) {
+    const prospect = (this.state.collegeProspects || []).find(p => p.id === prospectId);
+    if (!prospect) return;
+    const expected = this._agentExpectedCommission(prospect);
+    this.state.agency.currentNegotiation = {
+      prospectId: prospectId,
+      expectedCommission: expected,
+      agentOffer: expected, // start at expected
+      status: 'open' // 'open' | 'accepted' | 'declined'
+    };
+    this.currentView = 'myagency';
+    this.render();
+  },
+
+  // Adjust the offer up/down. Re-renders the agency view so the live probability updates.
+  agentAdjustOffer(delta) {
+    const neg = this.state.agency && this.state.agency.currentNegotiation;
+    if (!neg) return;
+    neg.agentOffer = Math.max(1, Math.min(15, +(neg.agentOffer + delta).toFixed(1)));
+    this.render();
+  },
+
+  // Submit the offer. Rolls acceptance probability. On success → client added.
+  agentSubmitOffer() {
+    const agency = this.state.agency;
+    const neg = agency && agency.currentNegotiation;
+    if (!neg || neg.status !== 'open') return;
+    const prospect = (this.state.collegeProspects || []).find(p => p.id === neg.prospectId);
+    if (!prospect) return;
+    
+    const prob = this._agentAcceptanceProbability(prospect, neg.agentOffer);
+    const accepted = Math.random() < prob;
+    
+    if (accepted) {
+      agency.clients.push({
+        prospectId: prospect.id,
+        signedYear: this.state.year,
+        signedWeek: this.state.week,
+        commissionRate: neg.agentOffer,
+        nilDeals: [],
+        nflContract: null,
+        nflSigningBonusPaid: false
+      });
+      // Reputation bump for landing a deal (more for higher-profile prospects)
+      const m = this._agentMarketability(prospect);
+      agency.reputation = Math.min(100, agency.reputation + Math.max(0.5, m / 25));
+      // Agent OVR also creeps up slightly from successful negotiations
+      agency.agentOvr = Math.min(99, agency.agentOvr + 0.3);
+      agency.ledger.push({
+        week: this.state.week, year: this.state.year, type: 'sign',
+        amount: 0,
+        description: 'Signed ' + prospect.name + ' (' + prospect.position + ', ' + prospect.school + ') at ' + neg.agentOffer + '% commission'
+      });
+      // Remove from pending pitches
+      agency.pendingPitches = agency.pendingPitches.filter(id => id !== prospect.id);
+      neg.status = 'accepted';
+      this.addHeadline({
+        title: agency.agencyName + ' signs ' + prospect.name,
+        body: prospect.position + ' at ' + prospect.school + ' joins ' + agency.agencyName + ' on a ' + neg.agentOffer + '% commission deal.'
+      });
+    } else {
+      // Reputation slightly dings on a flat rejection (especially if you lowballed)
+      const expectedDelta = neg.agentOffer - neg.expectedCommission;
+      if (expectedDelta > 1.5) {
+        agency.reputation = Math.max(0, agency.reputation - 0.5);
+      }
+      neg.status = 'declined';
+      // Remove from pending pitches so they don't appear next week — they took another agent
+      agency.pendingPitches = agency.pendingPitches.filter(id => id !== prospect.id);
+    }
+    this.render();
+  },
+
+  agentCloseNegotiation() {
+    if (this.state.agency) this.state.agency.currentNegotiation = null;
+    this.render();
+  },
+
+  // Drop a client (e.g., they're underperforming and not worth the slot). Small rep ding.
+  agentDropClient(prospectId) {
+    if (!confirm('Drop this client? You\'ll lose any future commission and take a small reputation hit.')) return;
+    const agency = this.state.agency;
+    if (!agency) return;
+    const client = agency.clients.find(c => c.prospectId === prospectId);
+    if (!client) return;
+    const prospect = this._agentResolveClient(prospectId);
+    agency.clients = agency.clients.filter(c => c.prospectId !== prospectId);
+    agency.reputation = Math.max(0, agency.reputation - 2);
+    agency.ledger.push({
+      week: this.state.week, year: this.state.year, type: 'drop', amount: 0,
+      description: 'Dropped ' + (prospect ? prospect.name : 'client') + ' from roster'
+    });
+    this.render();
+  },
+
+  // Weekly tick — called from simWeek for agent careers. Deducts overhead, runs NIL deal RNG
+  // for each client, refreshes pitches, checks bankruptcy.
+  _agentWeeklyTick() {
+    if (!this.state.agency || this.state.agency.bankrupted) return;
+    const agency = this.state.agency;
+    
+    // 1. Overhead
+    agency.capital -= agency.weeklyOverhead;
+    agency.ledger.push({
+      week: this.state.week, year: this.state.year, type: 'overhead',
+      amount: -agency.weeklyOverhead,
+      description: 'Weekly operating costs'
+    });
+    
+    // 2. NIL deals for each client — probability scales with marketability
+    agency.clients.forEach(client => {
+      const prospect = (this.state.collegeProspects || []).find(p => p.id === client.prospectId);
+      if (!prospect) return; // client probably graduated / moved to NFL — handled separately
+      const m = this._agentMarketability(prospect);
+      // Higher marketability = more brands chasing them = more frequent deals.
+      // Base rate ~10% per week for low-tier, up to ~50% for elite.
+      const dealProb = 0.08 + (m / 100) * 0.42;
+      if (Math.random() < dealProb) {
+        const annualValue = this._agentNILDealValue(m);
+        const lengthYears = Math.random() < 0.6 ? 1 : (Math.random() < 0.5 ? 2 : 3);
+        const brandTypes = ['apparel', 'beverage', 'auto dealer', 'restaurant', 'gaming', 'crypto', 'energy drink', 'local business'];
+        const brand = brandTypes[Math.floor(Math.random() * brandTypes.length)];
+        const totalValue = annualValue * lengthYears;
+        const commission = Math.round(totalValue * (client.commissionRate / 100));
+        client.nilDeals.push({
+          brand, annualValue, lengthYears, totalValue, commission,
+          signedWeek: this.state.week, signedYear: this.state.year
+        });
+        agency.capital += commission;
+        agency.ledger.push({
+          week: this.state.week, year: this.state.year, type: 'nil',
+          amount: commission,
+          description: prospect.name + ' · ' + brand + ' NIL deal · ' + formatMoney(totalValue) + ' (commission ' + formatMoney(commission) + ')'
+        });
+      }
+    });
+    
+    // 3. Refresh available pitches
+    this._agentRefreshPitches();
+    
+    // 4. Bankruptcy watch
+    if (agency.capital < 0) {
+      agency.consecutiveNegativeWeeks = (agency.consecutiveNegativeWeeks || 0) + 1;
+      if (agency.consecutiveNegativeWeeks >= 3) {
+        agency.bankrupted = true;
+        this.addHeadline({
+          title: agency.agencyName + ' shuts its doors',
+          body: 'Unable to cover operating costs, the agency files for bankruptcy after weeks in the red.'
+        });
+      } else {
+        this.addHeadline({
+          title: agency.agencyName + ' running low on capital',
+          body: 'The agency is in the red. ' + (3 - agency.consecutiveNegativeWeeks) + ' more negative weeks until bankruptcy.'
+        });
+      }
+    } else {
+      agency.consecutiveNegativeWeeks = 0;
+    }
+  },
+
+  // Render the main agency dashboard. Default view when career.mode === 'agent'.
+  renderMyAgency() {
+    const agency = this.state.agency;
+    if (!agency) {
+      document.getElementById('content').innerHTML = '<div class="page-header"><div class="page-title">No agency</div><div class="page-subtitle">Agency state missing.</div></div>';
+      return;
+    }
+    const origin = this.AGENT_ORIGINS[agency.origin] || this.AGENT_ORIGINS.self_made;
+    const ovrRC = this.ratingClass(agency.agentOvr);
+    const repColor = agency.reputation >= 70 ? 'var(--success)' : agency.reputation >= 40 ? 'var(--warning)' : 'var(--danger)';
+    const capitalColor = agency.capital >= 100000 ? 'var(--text)' : agency.capital >= 0 ? 'var(--warning)' : 'var(--danger)';
+    
+    let html = '<div class="page-header">' +
+      '<div class="page-title">' + agency.agencyName + '</div>' +
+      '<div class="page-subtitle">' + agency.name + ' · ' + origin.label + ' · Founded ' + agency.founded + '</div>' +
+      '</div>';
+    
+    if (agency.bankrupted) {
+      html += '<div class="card" style="border-left:4px solid var(--danger)"><div style="padding:18px"><div style="font-size:18px;font-weight:700;color:var(--danger);margin-bottom:6px">Agency bankrupt</div><div style="font-size:13px;color:var(--text-muted)">Your agency has shut down. Start a new game to try again.</div></div></div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+    
+    // Hero block: agency stats
+    html += '<div class="my-team-hero">' +
+      '<div class="my-team-hero-left">' +
+      '<div class="player-face-large" style="width:88px;height:88px">' + pixelFaceSVG(agency.faceSeed) + '</div>' +
+      '<div><div class="my-team-name">' + agency.name + '</div>' +
+      '<div class="my-team-meta">' + origin.label + ' · ' + agency.clients.length + ' client' + (agency.clients.length === 1 ? '' : 's') + ' signed</div>' +
+      '<div style="margin-top:8px"><span class="rating ' + ovrRC + '" style="font-size:14px;padding:4px 10px">AGENT OVR ' + Math.round(agency.agentOvr) + '</span></div></div></div>' +
+      '<div class="my-team-stats">' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Capital</div><div class="my-team-stat-value" style="color:' + capitalColor + '">' + formatMoney(agency.capital) + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Weekly burn</div><div class="my-team-stat-value">' + formatMoney(agency.weeklyOverhead) + '</div></div>' +
+      '<div class="my-team-stat"><div class="my-team-stat-label">Reputation</div><div class="my-team-stat-value" style="color:' + repColor + '">' + Math.round(agency.reputation) + '/100</div></div>' +
+      '</div></div>';
+    
+    // Active negotiation card — takes top spot if one is open
+    if (agency.currentNegotiation) {
+      html += this._renderAgentNegotiation();
+    }
+    
+    // Clients card
+    html += '<div class="card"><div class="card-header"><div class="card-title">Your clients</div><div class="card-meta">' + agency.clients.length + ' on the books</div></div>';
+    if (agency.clients.length === 0) {
+      html += '<div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No clients yet. Pitch a prospect below to sign your first deal.</div>';
+    } else {
+      html += '<table><thead><tr><th>Client</th><th>School</th><th class="text-right">GRADE</th><th class="text-right">COMM</th><th class="text-right">DEALS</th><th class="text-right">EARNED</th><th></th></tr></thead><tbody>';
+      agency.clients.forEach(client => {
+        const prospect = this._agentResolveClient(client.prospectId);
+        if (!prospect) return;
+        const earned = client.nilDeals.reduce((s, d) => s + d.commission, 0);
+        const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === prospect.school);
+        const gradeRC = (prospect.prospectGrade || 0) >= 85 ? 'great' : (prospect.prospectGrade || 0) >= 75 ? 'good' : 'avg';
+        html += '<tr>' +
+          '<td><strong>' + prospect.name + '</strong> <span class="position-tag">' + prospect.position + '</span></td>' +
+          '<td>' + (schoolInfo ? schoolInfo.name : prospect.school) + '</td>' +
+          '<td class="text-right"><span class="rating ' + gradeRC + '" style="font-size:11px;padding:1px 6px">' + (prospect.prospectGrade || 0).toFixed(1) + '</span></td>' +
+          '<td class="text-right mono-num">' + client.commissionRate + '%</td>' +
+          '<td class="text-right mono-num">' + client.nilDeals.length + '</td>' +
+          '<td class="text-right mono-num">' + formatMoney(earned) + '</td>' +
+          '<td class="text-right"><button class="btn btn-sm" onclick="game.agentDropClient(\'' + client.prospectId + '\')" style="font-size:10px;padding:3px 8px">Drop</button></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    
+    // Available pitches
+    html += '<div class="card"><div class="card-header"><div class="card-title">Available prospects</div><div class="card-meta">Players willing to take a meeting · refreshes weekly</div></div>';
+    if (agency.pendingPitches.length === 0) {
+      html += '<div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No prospects available this week. Sim ahead to see new pitches.</div>';
+    } else {
+      html += '<table><thead><tr><th>Prospect</th><th>School</th><th class="text-right">POS</th><th class="text-right">GRADE</th><th class="text-right">MARKET</th><th class="text-right">EXPECTS</th><th></th></tr></thead><tbody>';
+      agency.pendingPitches.forEach(pid => {
+        const prospect = (this.state.collegeProspects || []).find(p => p.id === pid);
+        if (!prospect) return;
+        const m = this._agentMarketability(prospect);
+        const expected = this._agentExpectedCommission(prospect);
+        const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === prospect.school);
+        const gradeRC = (prospect.prospectGrade || 0) >= 85 ? 'great' : (prospect.prospectGrade || 0) >= 75 ? 'good' : 'avg';
+        const marketRC = m >= 75 ? 'great' : m >= 50 ? 'good' : 'avg';
+        const isNegotiating = agency.currentNegotiation && agency.currentNegotiation.prospectId === pid;
+        html += '<tr>' +
+          '<td><strong>' + prospect.name + '</strong> · ' + (prospect.year || '') + '</td>' +
+          '<td>' + (schoolInfo ? schoolInfo.name : prospect.school) + '</td>' +
+          '<td class="text-right"><span class="position-tag">' + prospect.position + '</span></td>' +
+          '<td class="text-right"><span class="rating ' + gradeRC + '" style="font-size:11px;padding:1px 6px">' + (prospect.prospectGrade || 0).toFixed(1) + '</span></td>' +
+          '<td class="text-right"><span class="rating ' + marketRC + '" style="font-size:11px;padding:1px 6px">' + m + '</span></td>' +
+          '<td class="text-right mono-num">' + expected + '%</td>' +
+          '<td class="text-right"><button class="btn btn-sm btn-primary" onclick="game.agentBeginNegotiation(\'' + pid + '\')" ' + (isNegotiating || (agency.currentNegotiation && agency.currentNegotiation.status === 'open') ? 'disabled' : '') + '>Pitch</button></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    
+    // Ledger — last 12 entries
+    html += '<div class="card"><div class="card-header"><div class="card-title">Recent transactions</div><div class="card-meta">Last 12 entries</div></div>';
+    const recent = agency.ledger.slice(-12).reverse();
+    if (recent.length === 0) {
+      html += '<div class="empty-state" style="padding:18px;text-align:center;color:var(--text-muted)">No transactions yet.</div>';
+    } else {
+      html += '<table><thead><tr><th>When</th><th>Description</th><th class="text-right">Amount</th></tr></thead><tbody>';
+      recent.forEach(entry => {
+        const amtColor = entry.amount > 0 ? 'var(--success)' : entry.amount < 0 ? 'var(--danger)' : 'var(--text-muted)';
+        const sign = entry.amount > 0 ? '+' : '';
+        html += '<tr>' +
+          '<td class="mono-num" style="font-size:11px">' + entry.year + ' wk ' + entry.week + '</td>' +
+          '<td style="font-size:12px">' + entry.description + '</td>' +
+          '<td class="text-right mono-num" style="color:' + amtColor + '">' + (entry.amount === 0 ? '—' : sign + formatMoney(entry.amount)) + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // Inline negotiation card. Lives inside renderMyAgency when a negotiation is open.
+  _renderAgentNegotiation() {
+    const agency = this.state.agency;
+    const neg = agency.currentNegotiation;
+    const prospect = (this.state.collegeProspects || []).find(p => p.id === neg.prospectId);
+    if (!prospect) {
+      // Defensive — prospect vanished somehow
+      agency.currentNegotiation = null;
+      return '';
+    }
+    const m = this._agentMarketability(prospect);
+    const schoolInfo = COLLEGE_SCHOOLS.find(s => s.abbr === prospect.school);
+    
+    let html = '<div class="card" style="border-left:4px solid var(--accent)"><div class="card-header"><div class="card-title">Negotiating with ' + prospect.name + '</div><div class="card-meta">' + prospect.position + ' · ' + (schoolInfo ? schoolInfo.name : prospect.school) + ' · Marketability ' + m + '/100</div></div>';
+    
+    if (neg.status === 'open') {
+      const prob = this._agentAcceptanceProbability(prospect, neg.agentOffer);
+      const probPct = Math.round(prob * 100);
+      const probColor = prob >= 0.7 ? 'var(--success)' : prob >= 0.4 ? 'var(--warning)' : 'var(--danger)';
+      // Estimated annual value at top of their range — gives the user something concrete to weigh
+      const estAnnual = this._agentNILDealValue(m);
+      const estCommissionPerDeal = Math.round(estAnnual * (neg.agentOffer / 100));
+      
+      html += '<div style="padding:18px">' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px">' +
+        '<div><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Their expected rate</div><div style="font-size:22px;font-weight:700;margin-top:4px">' + neg.expectedCommission + '%</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">Average for their tier</div></div>' +
+        '<div><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Your offer</div><div style="font-size:22px;font-weight:700;margin-top:4px;color:var(--accent)">' + neg.agentOffer + '%</div>' +
+        '<div style="display:flex;gap:4px;margin-top:6px">' +
+        '<button class="btn btn-sm" onclick="game.agentAdjustOffer(-1)" style="padding:4px 10px">−1.0%</button>' +
+        '<button class="btn btn-sm" onclick="game.agentAdjustOffer(-0.5)" style="padding:4px 10px">−0.5%</button>' +
+        '<button class="btn btn-sm" onclick="game.agentAdjustOffer(0.5)" style="padding:4px 10px">+0.5%</button>' +
+        '<button class="btn btn-sm" onclick="game.agentAdjustOffer(1)" style="padding:4px 10px">+1.0%</button>' +
+        '</div></div>' +
+        '</div>' +
+        '<div style="background:var(--surface-2);padding:12px;border-left:3px solid ' + probColor + ';margin-bottom:14px">' +
+        '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Acceptance probability</div>' +
+        '<div style="font-size:28px;font-weight:800;color:' + probColor + ';margin-top:2px">' + probPct + '%</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">Lower commission = higher chance they accept. Higher commission = more money per deal.</div>' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">' +
+        'Est. NIL deal value: ' + formatMoney(estAnnual) + '/yr · Your cut at ' + neg.agentOffer + '%: <strong style="color:var(--text)">~' + formatMoney(estCommissionPerDeal) + ' per deal</strong>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px">' +
+        '<button class="btn btn-primary" onclick="game.agentSubmitOffer()">Submit offer at ' + neg.agentOffer + '%</button>' +
+        '<button class="btn" onclick="game.agentCloseNegotiation()">Walk away</button>' +
+        '</div>' +
+        '</div>';
+    } else if (neg.status === 'accepted') {
+      html += '<div style="padding:18px">' +
+        '<div style="font-size:16px;color:var(--success);font-weight:700;margin-bottom:6px">✓ ' + prospect.name + ' signed with your agency</div>' +
+        '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Commission rate locked at ' + neg.agentOffer + '%. Future NIL deals will route through you.</div>' +
+        '<button class="btn" onclick="game.agentCloseNegotiation()">Continue</button>' +
+        '</div>';
+    } else if (neg.status === 'declined') {
+      html += '<div style="padding:18px">' +
+        '<div style="font-size:16px;color:var(--danger);font-weight:700;margin-bottom:6px">✗ ' + prospect.name + ' declined</div>' +
+        '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">They signed with another agent. The pitch is no longer available.</div>' +
+        '<button class="btn" onclick="game.agentCloseNegotiation()">Continue</button>' +
+        '</div>';
+    }
+    html += '</div>';
+    return html;
   },
 
   renderStaff() {
