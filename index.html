@@ -816,9 +816,15 @@ const ARCHETYPES = {
   ]
 };
 
-function generateAbilities(position, targetOvr) {
+function generateAbilities(position, targetOvr, forcedArchetypeName) {
   const archetypes = ARCHETYPES[position] || [];
-  const arch = archetypes[Math.floor(Math.random() * archetypes.length)];
+  // If a specific archetype was requested (user-chosen), use it. Otherwise pick randomly.
+  let arch;
+  if (forcedArchetypeName) {
+    arch = archetypes.find(a => a.name === forcedArchetypeName) || archetypes[Math.floor(Math.random() * archetypes.length)];
+  } else {
+    arch = archetypes[Math.floor(Math.random() * archetypes.length)];
+  }
   const primarySet = new Set(arch ? arch.primary : []);
   const abilities = {};
   const abilityList = POSITION_ABILITIES[position] || [];
@@ -1664,28 +1670,137 @@ let game = {
 
   showCoachCreation() {
     const namePool = () => this.generateName(2026);
-    const suggestedName = namePool();
-    document.getElementById('content').innerHTML = '<div class="welcome" style="max-width:560px">' +
+    const suggestedName = this._coachCreationSuggestedName || namePool();
+    this._coachCreationSuggestedName = suggestedName;
+    const selectedRole = this._coachCreationRole || 'OC';
+    const selectedAge = this._coachCreationAge || 38;
+    const selectedOvr = this._coachCreationOvr || 65;
+    
+    // Build role select with selected state
+    const roleOpts = [
+      { value: 'OC', label: 'Offensive Coordinator (calls offense, learning to be HC)' },
+      { value: 'DC', label: 'Defensive Coordinator (calls defense, learning to be HC)' },
+      { value: 'Scout', label: 'Scout (build a player evaluation career)' },
+      { value: 'HC', label: 'Head Coach (skip the climb, take a job at the top)' }
+    ];
+    let roleHtml = '';
+    roleOpts.forEach(r => {
+      roleHtml += '<option value="' + r.value + '"' + (r.value === selectedRole ? ' selected' : '') + '>' + r.label + '</option>';
+    });
+    
+    // PLAYSTYLE PICKER — show available playstyles for the selected role. The choice drives
+    // coach OVR application: an "Air Raid" OC will boost passing-game stats more than rushing;
+    // a "Smashmouth" OC tilts the other way. For HCs, they pick BOTH an offensive and defensive
+    // identity.
+    const selectedOff = this._coachCreationOffPlaystyle || OFFENSIVE_PLAYSTYLES[0];
+    const selectedDef = this._coachCreationDefPlaystyle || DEFENSIVE_PLAYSTYLES[0];
+    const selectedSpec = this._coachCreationScoutSpecialty || SCOUT_SPECIALTIES[0];
+    
+    const offDescs = {
+      'Air Raid': 'Pass-heavy, spread offense. Tilts game plan toward QB + WRs. Boosts passing stats, slight cost to rushing.',
+      'West Coast': 'Short, rhythmic passing game. Balanced but pass-leaning. Possession-style.',
+      'Smashmouth': 'Run the rock. Pound the defense into submission. Boosts rushing stats, slight cost to passing.',
+      'Balanced': 'No tells. 50/50 run-pass identity. Steady across the board.',
+      'Run-First': 'Establish the run, then play-action. Rushing focus with deep shots.',
+      'Vertical': 'Big-play passing offense. Boom-or-bust. Higher TD upside, more variance.'
+    };
+    const defDescs = {
+      'Blitz Heavy': 'Aggressive. Send extra rushers, force turnovers. Higher sack/INT upside, more big-play risk.',
+      'Coverage First': 'Drop into coverage. Limit explosive passes. Fewer sacks, fewer big plays allowed.',
+      'Bend Don\'t Break': 'Conservative. Give up yards, hold red zone. Lower scoring against.',
+      'Aggressive Front': 'Attack the LOS. Stuff the run, pressure the QB.',
+      'Balanced': 'Mix coverages and rushes. No tells.'
+    };
+    const specDescs = {
+      'College Scout': 'Specializes in evaluating college talent. Better draft picks.',
+      'Pro Scout': 'Evaluates pro free agents and trade targets. Better FA signings.',
+      'Analytics': 'Data-driven. Identifies undervalued players and roster inefficiencies.',
+      'Generalist': 'Balanced. Solid in all evaluation areas.'
+    };
+    
+    const buildPlaystyleButtons = (options, descs, selected, callback) => {
+      let html = '<div style="display:flex;flex-direction:column;gap:6px">';
+      options.forEach(opt => {
+        const isSelected = opt === selected;
+        const desc = descs[opt] || '';
+        html += '<button onclick="' + callback + '(\'' + opt + '\')" ' +
+          'style="text-align:left;padding:10px 14px;background:' + (isSelected ? 'var(--accent)' : 'var(--bg)') + ';color:' + (isSelected ? '#fff' : 'var(--text)') + ';border:1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border-strong)') + ';cursor:pointer;font-family:inherit;display:flex;flex-direction:column;gap:3px;line-height:1.4">' +
+          '<span style="font-size:13px;font-weight:700">' + opt + '</span>' +
+          '<span style="font-size:11px;opacity:' + (isSelected ? '0.95' : '0.75') + '">' + desc + '</span>' +
+          '</button>';
+      });
+      html += '</div>';
+      return html;
+    };
+    
+    let playstyleSection = '';
+    if (selectedRole === 'HC') {
+      playstyleSection =
+        '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Offensive identity</label>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;line-height:1.5">As HC, you pick how your offense plays. This affects how your team builds + executes.</div>' +
+        buildPlaystyleButtons(OFFENSIVE_PLAYSTYLES, offDescs, selectedOff, 'game._selectCoachOffPlaystyle') + '</div>' +
+        '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Defensive identity</label>' +
+        buildPlaystyleButtons(DEFENSIVE_PLAYSTYLES, defDescs, selectedDef, 'game._selectCoachDefPlaystyle') + '</div>';
+    } else if (selectedRole === 'OC') {
+      playstyleSection =
+        '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Offensive scheme</label>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;line-height:1.5">Your scheme defines your career identity. Teams will hire you based on system fit.</div>' +
+        buildPlaystyleButtons(OFFENSIVE_PLAYSTYLES, offDescs, selectedOff, 'game._selectCoachOffPlaystyle') + '</div>';
+    } else if (selectedRole === 'DC') {
+      playstyleSection =
+        '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Defensive scheme</label>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;line-height:1.5">Your scheme defines your career identity. Teams will hire you based on system fit.</div>' +
+        buildPlaystyleButtons(DEFENSIVE_PLAYSTYLES, defDescs, selectedDef, 'game._selectCoachDefPlaystyle') + '</div>';
+    } else if (selectedRole === 'Scout') {
+      playstyleSection =
+        '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Scouting specialty</label>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;line-height:1.5">Your area of expertise. Teams hire scouts for specific roles.</div>' +
+        buildPlaystyleButtons(SCOUT_SPECIALTIES, specDescs, selectedSpec, 'game._selectCoachScoutSpecialty') + '</div>';
+    }
+    
+    document.getElementById('content').innerHTML = '<div class="welcome" style="max-width:640px">' +
       '<h1 class="welcome-title">Create your coach</h1>' +
       '<p class="welcome-subtitle">Stage 1 · build your coach and pick where to start</p>' +
       '<div style="background:var(--surface);border:1px solid var(--border);padding:20px;text-align:left;margin-top:16px">' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Coach name</label>' +
-      '<input id="coachNameInput" type="text" value="' + suggestedName + '" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"></div>' +
+      '<input id="coachNameInput" type="text" value="' + suggestedName + '" onchange="game._coachCreationSuggestedName=this.value" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"></div>' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Starting role</label>' +
-      '<select id="coachRoleInput" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' +
-      '<option value="OC">Offensive Coordinator (calls offense, learning to be HC)</option>' +
-      '<option value="DC">Defensive Coordinator (calls defense, learning to be HC)</option>' +
-      '<option value="Scout">Scout (build a player evaluation career)</option>' +
-      '<option value="HC">Head Coach (skip the climb, take a job at the top)</option>' +
-      '</select></div>' +
+      '<select id="coachRoleInput" onchange="game._selectCoachRole(this.value)" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' + roleHtml + '</select></div>' +
+      playstyleSection +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Starting age</label>' +
-      '<input id="coachAgeInput" type="number" value="38" min="28" max="55" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"><div style="font-size:11px;color:var(--text-muted);margin-top:4px">Coaches typically start 28-45. Older = higher starting OVR, fewer career years.</div></div>' +
+      '<input id="coachAgeInput" type="number" value="' + selectedAge + '" min="28" max="55" onchange="game._coachCreationAge=parseInt(this.value)" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"><div style="font-size:11px;color:var(--text-muted);margin-top:4px">Coaches typically start 28-45. Older = higher starting OVR, fewer career years.</div></div>' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Starting OVR</label>' +
-      '<input id="coachOvrInput" type="number" value="65" min="50" max="80" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"><div style="font-size:11px;color:var(--text-muted);margin-top:4px">50-65 is realistic for a starting coach. You can grow into a top coach through wins and tenure.</div></div>' +
+      '<input id="coachOvrInput" type="number" value="' + selectedOvr + '" min="50" max="80" onchange="game._coachCreationOvr=parseInt(this.value)" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"><div style="font-size:11px;color:var(--text-muted);margin-top:4px">50-65 is realistic for a starting coach. You can grow into a top coach through wins and tenure.</div></div>' +
       '</div>' +
       '<div style="margin-top:20px;display:flex;gap:8px;justify-content:center"><button class="btn" onclick="game.showModeChoice()">← Back</button>' +
       '<button class="btn btn-primary" onclick="game.startCoachCareer()">Start Career →</button></div>' +
       '</div>';
+  },
+  
+  // Coach creation state persistence across re-renders
+  _selectCoachRole(role) {
+    this._coachCreationRole = role;
+    const nameInput = document.getElementById('coachNameInput');
+    if (nameInput) this._coachCreationSuggestedName = nameInput.value;
+    this.showCoachCreation();
+  },
+  _selectCoachOffPlaystyle(ps) {
+    this._coachCreationOffPlaystyle = ps;
+    const nameInput = document.getElementById('coachNameInput');
+    if (nameInput) this._coachCreationSuggestedName = nameInput.value;
+    this.showCoachCreation();
+  },
+  _selectCoachDefPlaystyle(ps) {
+    this._coachCreationDefPlaystyle = ps;
+    const nameInput = document.getElementById('coachNameInput');
+    if (nameInput) this._coachCreationSuggestedName = nameInput.value;
+    this.showCoachCreation();
+  },
+  _selectCoachScoutSpecialty(s) {
+    this._coachCreationScoutSpecialty = s;
+    const nameInput = document.getElementById('coachNameInput');
+    if (nameInput) this._coachCreationSuggestedName = nameInput.value;
+    this.showCoachCreation();
   },
 
   startCoachCareer() {
@@ -1693,18 +1808,113 @@ let game = {
     const role = document.getElementById('coachRoleInput').value;
     const age = Math.max(28, Math.min(55, parseInt(document.getElementById('coachAgeInput').value) || 38));
     const ovr = Math.max(50, Math.min(80, parseInt(document.getElementById('coachOvrInput').value) || 65));
+    // Build the chosen playstyle based on role.
+    let chosenPlaystyle;
+    if (role === 'HC') {
+      chosenPlaystyle = {
+        offense: this._coachCreationOffPlaystyle || OFFENSIVE_PLAYSTYLES[0],
+        defense: this._coachCreationDefPlaystyle || DEFENSIVE_PLAYSTYLES[0]
+      };
+    } else if (role === 'OC') {
+      chosenPlaystyle = this._coachCreationOffPlaystyle || OFFENSIVE_PLAYSTYLES[0];
+    } else if (role === 'DC') {
+      chosenPlaystyle = this._coachCreationDefPlaystyle || DEFENSIVE_PLAYSTYLES[0];
+    } else {
+      chosenPlaystyle = this._coachCreationScoutSpecialty || SCOUT_SPECIALTIES[0];
+    }
     // Stash creation params and proceed to default league setup (no GM team picked).
-    this.coachCareerParams = { name, role, age, ovr };
+    this.coachCareerParams = { name, role, age, ovr, chosenPlaystyle };
     this.pendingMode = 'default';
     this.startLeague(null); // null userTeamId — no GM ownership; team comes from job assignment
   },
 
   showPlayerCreation() {
     const namePool = () => this.generateName(2026);
-    const suggestedName = namePool();
+    const suggestedName = this._playerCreationSuggestedName || namePool();
+    // Persist the suggested name across re-renders (position change re-renders the page)
+    this._playerCreationSuggestedName = suggestedName;
     const positions = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
     let posOpts = '';
-    positions.forEach(p => { posOpts += '<option value="' + p + '">' + p + '</option>'; });
+    const selectedPos = this._playerCreationPosition || 'QB';
+    positions.forEach(p => { posOpts += '<option value="' + p + '"' + (p === selectedPos ? ' selected' : '') + '>' + p + '</option>'; });
+    
+    // ARCHETYPE PICKER — show available archetypes for the currently selected position.
+    // The user's choice determines which abilities will be boosted when they become an NFL player.
+    // Real NFL: a "Speed Rusher" EDGE and a "Run Stopper" EDGE have very different attribute
+    // distributions even at the same OVR.
+    const archetypes = ARCHETYPES[selectedPos] || [];
+    const selectedArchetype = this._playerCreationArchetype || (archetypes[0] ? archetypes[0].name : null);
+    
+    // Build a description of what each archetype means in plain language
+    const archetypeDescriptions = {
+      // QB
+      'Gunslinger': 'Big arm. Throws darts downfield. Higher arm strength, deep ball — lower accuracy.',
+      'Field General': 'Smart and accurate. Reads defenses, throws to the right guy. Higher accuracy, awareness — average arm.',
+      'Scrambler': 'Athletic and mobile. Extends plays with his legs. Higher mobility, arm strength — lower pocket awareness.',
+      // RB
+      'Power Back': 'Bruiser. Breaks tackles, wears defenses down. Higher power, vision — lower top-end speed.',
+      'Speedster': 'Home-run threat. One cut and gone. Higher speed, elusiveness — lower power.',
+      'Receiving Back': 'Three-down weapon. Catches the ball out of the backfield. Higher catching, elusiveness.',
+      // WR
+      'Deep Threat': 'Burner. Stretches the field vertically. Higher speed, ball skills — average route tree.',
+      'Route Technician': 'Precise. Wins with footwork and savvy. Higher route running, release — lower top-end speed.',
+      'Possession': 'Reliable hands. Moves the chains. Higher catching, route running — lower speed.',
+      // TE
+      'Receiving TE': 'Mismatch weapon. Wins against LBs and safeties. Higher route running, catching — lower blocking.',
+      'Blocking TE': 'Extra OL. Sets the edge in the run game. Higher blocking, strength — lower receiving.',
+      'H-Back': 'Versatile. Lines up everywhere. Balanced catching + blocking.',
+      // OL
+      'Pass Protector': 'Specialist. Locks down the edge in pass pro. Higher pass block, technique — lower run block.',
+      'Mauler': 'Power-blocker. Drives defenders off the ball. Higher run block, strength/anchor.',
+      'Athletic Tackle': 'Two-way OT. Effective in pass pro and run game. Balanced.',
+      'Road Grader': 'Tone-setter. Mauls in the run game.',
+      'Pass Specialist': 'Quick feet, technique-driven. Pass pro specialist.',
+      'Pulling Guard': 'Athletic, plays in space. Strong in run game.',
+      'Pass Anchor': 'Center specialist. Pass pro + line calls.',
+      // EDGE
+      'Speed Rusher': 'Wins with bend and burst around the edge. Higher speed, pass rush — lower run defense.',
+      'Power Rusher': 'Bull rush specialist. Wins through the OT. Higher strength, pass rush — lower lateral speed.',
+      'Run Stopper': 'Sets the edge. Anchors against the run. Higher run defense, strength — lower pass rush.',
+      // DT
+      'Run Stuffer': 'Plugs the A-gap. Eats double teams.',
+      'Pass Rusher': 'Interior pressure. Collapses the pocket.',
+      'Nose Tackle': 'Two-gap monster. Tilts the offense.',
+      // LB
+      'Coverage LB': 'Drops in coverage. Matches up with TEs/RBs. Higher coverage, speed.',
+      'Pass Rusher': 'Blitz specialist. Sent off the edge or A-gap. Higher blitz, speed.',
+      // CB
+      'Lockdown': 'Press-man CB. Erases his guy. Higher man skills, speed.',
+      'Zone Master': 'Reads QB eyes. Anticipates routes. Higher zone skills, awareness.',
+      'Ballhawk': 'Playmaker. Creates turnovers. Higher ball skills, coverage.',
+      // S
+      'Free Safety': 'Center fielder. Range and ball skills.',
+      'Box Safety': 'Plays downhill. Tackler and run support.',
+      'Hybrid': 'Versatile. Covers and tackles.',
+      // K/P
+      'Big Leg': 'Booming distance kicks. Range over consistency.',
+      'Money Kicker': 'Clutch. Hits when it matters.',
+      'Steady Eddie': 'Reliable. Boring and consistent.',
+      'Boomer': 'Big-distance punter. Field-position changer.',
+      'Coffin Corner': 'Precision. Pins opponents inside the 10.',
+      'Hangtime Specialist': 'High punts. Limits returns.'
+    };
+    
+    let archetypeButtons = '<div style="display:flex;flex-direction:column;gap:6px">';
+    archetypes.forEach(a => {
+      const desc = archetypeDescriptions[a.name] || 'A balanced approach to the position.';
+      const primaryLabel = a.primary.map(k => k.replace(/([A-Z])/g, ' $1').toLowerCase()).join(' + ');
+      const isSelected = a.name === selectedArchetype;
+      archetypeButtons +=
+        '<button class="archetype-btn" data-archetype="' + a.name + '" onclick="game._selectPlayerArchetype(\'' + a.name + '\')" ' +
+        'style="text-align:left;padding:12px 14px;background:' + (isSelected ? 'var(--accent)' : 'var(--bg)') + ';color:' + (isSelected ? '#fff' : 'var(--text)') + ';border:1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border-strong)') + ';cursor:pointer;font-family:inherit;display:flex;flex-direction:column;gap:4px;line-height:1.4">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline">' +
+        '<span style="font-size:13px;font-weight:700">' + a.name + '</span>' +
+        '<span style="font-size:10px;opacity:0.7;letter-spacing:0.5px">' + primaryLabel.toUpperCase() + ' FOCUS</span>' +
+        '</div>' +
+        '<span style="font-size:11px;opacity:' + (isSelected ? '0.95' : '0.75') + '">' + desc + '</span>' +
+        '</button>';
+    });
+    archetypeButtons += '</div>';
     
     // Build star-rating buttons. Each star tier maps to a recruit grade range matching real CFB recruiting.
     // 5★ = 90-99 grade (elite), 4★ = 82-89, 3★ = 72-81, 2★ = 62-71, 1★ = 52-61, 0★ = walk-on 40-51.
@@ -1729,20 +1939,43 @@ let game = {
     });
     starButtons += '</div>';
     
-    document.getElementById('content').innerHTML = '<div class="welcome" style="max-width:620px">' +
+    document.getElementById('content').innerHTML = '<div class="welcome" style="max-width:680px">' +
       '<h1 class="welcome-title">Create your prospect</h1>' +
       '<p class="welcome-subtitle">Stage 2 · build your recruit, then pick a school from your offers</p>' +
       '<div style="background:var(--surface);border:1px solid var(--border);padding:20px;text-align:left;margin-top:16px">' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Your name</label>' +
-      '<input id="playerNameInput" type="text" value="' + suggestedName + '" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)"></div>' +
+      '<input id="playerNameInput" type="text" value="' + suggestedName + '" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)" onchange="game._playerCreationSuggestedName=this.value"></div>' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Position</label>' +
-      '<select id="playerPositionInput" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' + posOpts + '</select></div>' +
+      '<select id="playerPositionInput" onchange="game._selectPlayerPosition(this.value)" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' + posOpts + '</select></div>' +
+      '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Playing style</label>' +
+      '<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;line-height:1.5">Your archetype determines which attributes get boosted. A "Gunslinger" QB will have higher arm strength and deep ball; a "Field General" QB will have higher accuracy and awareness.</div>' +
+      archetypeButtons + '</div>' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Star rating</label>' +
       starButtons + '</div>' +
       '</div>' +
       '<div style="margin-top:20px;display:flex;gap:8px;justify-content:center">' +
       '<button class="btn" onclick="game.showModeChoice()">← Back</button>' +
       '</div></div>';
+  },
+  
+  // Track player creation choices across re-renders (position change triggers re-render so the
+  // archetype options can update for the new position).
+  _selectPlayerPosition(pos) {
+    this._playerCreationPosition = pos;
+    // Reset archetype since the new position has different options
+    const archetypes = ARCHETYPES[pos] || [];
+    this._playerCreationArchetype = archetypes[0] ? archetypes[0].name : null;
+    // Save the current name input value before re-render
+    const nameInput = document.getElementById('playerNameInput');
+    if (nameInput) this._playerCreationSuggestedName = nameInput.value;
+    this.showPlayerCreation();
+  },
+  
+  _selectPlayerArchetype(archetype) {
+    this._playerCreationArchetype = archetype;
+    const nameInput = document.getElementById('playerNameInput');
+    if (nameInput) this._playerCreationSuggestedName = nameInput.value;
+    this.showPlayerCreation();
   },
   
   // After the user clicks a star rating, generate scholarship offers and show them the offer list.
@@ -1808,8 +2041,11 @@ let game = {
       }
     }
     
-    // Stash the pending recruit info; the offer page will use it when the user picks a school
-    this.pendingRecruit = { name, position, stars, grade, offers: offers.map(s => s.abbr) };
+    // Stash the pending recruit info; the offer page will use it when the user picks a school.
+    // The archetype the user picked at creation determines which abilities will be boosted
+    // when they transition to the NFL.
+    const archetype = this._playerCreationArchetype;
+    this.pendingRecruit = { name, position, stars, grade, archetype, offers: offers.map(s => s.abbr) };
     this.renderOffersPage();
   },
   
@@ -1894,7 +2130,7 @@ let game = {
       alert('That school didn\'t offer you a scholarship.');
       return;
     }
-    this.playerCareerParams = { name: r.name, position: r.position, school: schoolAbbr, grade: r.grade, stars: r.stars };
+    this.playerCareerParams = { name: r.name, position: r.position, school: schoolAbbr, grade: r.grade, stars: r.stars, archetype: r.archetype };
     this.pendingMode = 'default';
     this.pendingRecruit = null;
     this.startLeague(null);
@@ -2324,7 +2560,7 @@ let game = {
   },
 
   // Install user's prospect into the college pool. They start as a Freshman at the chosen school.
-  installUserPlayer({ name, position, school, grade, stars }) {
+  installUserPlayer({ name, position, school, grade, stars, archetype }) {
     if (!this.state.collegeProspects) this.state.collegeProspects = [];
     const prospect = {
       id: 'user_prospect_' + Math.random().toString(36).slice(2, 10),
@@ -2336,7 +2572,10 @@ let game = {
       faceSeed: Math.floor(Math.random() * 1000000),
       classYear: this.state.year,
       isUserControlled: true,
-      recruitStars: stars !== undefined ? stars : null // 0-5 star recruit rating
+      recruitStars: stars !== undefined ? stars : null, // 0-5 star recruit rating
+      // User-chosen archetype — drives the ability distribution when they transition to NFL.
+      // If not picked (legacy save), the NFL conversion will fall back to a random archetype.
+      chosenArchetype: archetype || null
     };
     this.state.collegeProspects.push(prospect);
     
@@ -2767,7 +3006,7 @@ let game = {
   // Creates the user's coach as a free agent (no team) and queues up initial job offers.
   // The user picks which team to start with via the regular Stage 3 acceptCoachOffer flow.
   // This replaces the old behavior of dumping the user on a random team and booting that team's coach.
-  installUserCoach({ name, role, age, ovr }) {
+  installUserCoach({ name, role, age, ovr, chosenPlaystyle }) {
     // Build the user's coach as a free agent
     const namePool = () => name;
     const userCoach = this.generateCoach(role, this.state.year, namePool);
@@ -2778,6 +3017,12 @@ let game = {
     userCoach.salary = 0;
     userCoach.hiredYear = this.state.year;
     userCoach.isUserControlled = true;
+    // Apply the user's chosen playstyle (set at creation). Overrides the random one assigned
+    // by generateCoach. Shape varies by role: HC gets { offense, defense }, OC/DC get a string,
+    // Scout gets a specialty string.
+    if (chosenPlaystyle !== undefined && chosenPlaystyle !== null) {
+      userCoach.playstyle = chosenPlaystyle;
+    }
     
     // Wire up career state
     this.state.career.entityType = 'coach';
@@ -5607,7 +5852,9 @@ let game = {
       const variance = (Math.random() - 0.5) * 16;
       const targetOvr = Math.max(50, Math.min(95, prospect.prospectGrade + variance));
       const age = rookieAge();
-      const abilities = generateAbilities(prospect.position, Math.round(targetOvr));
+      // User prospects pass their chosenArchetype so the ability distribution honors what they
+      // picked at creation. CPU prospects have no chosen archetype — get a random one.
+      const abilities = generateAbilities(prospect.position, Math.round(targetOvr), prospect.chosenArchetype || null);
       const rating = calculateOvrFromAbilities(prospect.position, abilities);
       const archetype = detectArchetype(prospect.position, abilities);
       // Potential: rookies have a slightly higher ceiling than current OVR, but TIGHT.
@@ -9452,7 +9699,8 @@ let game = {
         const variance = (Math.random() - 0.5) * 18;
         const targetOvr = Math.max(50, Math.min(95, prospect.prospectGrade + variance));
         const age = rookieAge();
-        const abilities = generateAbilities(prospect.position, Math.round(targetOvr));
+        // User-chosen archetype honored here too
+        const abilities = generateAbilities(prospect.position, Math.round(targetOvr), prospect.chosenArchetype || null);
         const rating = calculateOvrFromAbilities(prospect.position, abilities);
         const archetype = detectArchetype(prospect.position, abilities);
         // Potential: rookies have a higher ceiling — base on prospect grade + upside
