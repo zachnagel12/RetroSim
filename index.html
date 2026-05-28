@@ -4992,6 +4992,16 @@ let game = {
     if (!this.state.collegeHistory) this.state.collegeHistory = [];
     this.state.collegeHistory.unshift(recap);
     this.state.latestCollegeRecap = recap;
+
+    // Tag the season's award winners on the prospect objects so that when the next season's
+    // week-0 wipe archives this season into seasonHistory, the honors are captured. Matches by
+    // name+school (the recap stores those for the Heisman and Maxwell winners).
+    (this.state.collegeProspects || []).forEach(p => {
+      const won = [];
+      if (recap.heismanName === p.name && recap.heismanSchool === p.school) won.push('Heisman');
+      if (recap.maxwellName === p.name && recap.maxwellSchool === p.school) won.push('Maxwell');
+      if (won.length > 0) p._seasonAwards = won;
+    });
     
     this.addHeadline({
       type: 'champ',
@@ -5334,10 +5344,39 @@ let game = {
     // running leaderboard tracks THIS year only. Also reset the user's per-game log.
     if (this.state.collegeWeek === 0) {
       (this.state.collegeProspects || []).forEach(p => {
+        // Before wiping the season's running totals, archive them into seasonHistory so the
+        // prospect card's "Career by season" table can show prior-year production. We archive
+        // for any prospect that logged games this season (user player + agent clients + anyone
+        // we tracked in detail). The user player archives via its own season-snapshot path, so
+        // skip it here to avoid a duplicate row.
+        if (p._heismanStats && p._heismanStats.games > 0 && !p.isUserControlled) {
+          const hs = p._heismanStats;
+          const log = p._currentSeasonGameLog || [];
+          const defTotals = {
+            tackles: log.reduce((a, g) => a + ((g.raw && (g.raw.tackles)) || 0), 0),
+            sacks: log.reduce((a, g) => a + ((g.raw && (g.raw.sacks)) || 0), 0),
+            ints: log.reduce((a, g) => a + ((g.raw && (g.raw.intsMade || g.raw.interceptionsMade)) || 0), 0)
+          };
+          if (!p.seasonHistory) p.seasonHistory = [];
+          // The season being archived just finished. By the time the week-0 wipe runs, the game
+          // year has already advanced, so the completed season is (year - 1).
+          p.seasonHistory.push({
+            year: Math.max(0, this.state.year - 1),
+            stats: {
+              passYds: hs.passYds || 0, passTDs: hs.passTDs || 0, ints: hs.ints || 0,
+              rushYds: hs.rushYds || 0, rushTDs: hs.rushTDs || 0,
+              recYds: hs.recYds || 0, recTDs: hs.recTDs || 0, receptions: hs.receptions || 0,
+              tackles: defTotals.tackles, sacks: defTotals.sacks, interceptions: defTotals.ints,
+              games: hs.games || 0
+            },
+            awards: Array.isArray(p._seasonAwards) ? [...p._seasonAwards] : []
+          });
+        }
         if (p._heismanStats) delete p._heismanStats;
         if (p._currentSeasonGameLog) delete p._currentSeasonGameLog;
         if (p._lastClientStatWeek !== undefined) delete p._lastClientStatWeek;
         if (p._lastCollegeGameLine) delete p._lastCollegeGameLine;
+        if (p._seasonAwards) delete p._seasonAwards;
       });
     }
     this.state.collegeWeek++;
@@ -18767,6 +18806,102 @@ let game = {
   },
 
   // Show a college prospect's card with school, grade, year, projected draft range, and growth.
+  // Build a college stats section for a prospect card: current-season totals, a game-by-game log
+  // for this season, and a prior-season history table. Mirrors the player-career college view so
+  // agents (and anyone tapping a prospect) can scout real production, not just a grade.
+  _buildProspectStatsSection(p) {
+    if (!p) return '';
+    const pos = p.position;
+    const hs = p._heismanStats || null;
+    const log = p._currentSeasonGameLog || [];
+    const history = (p.seasonHistory || []).filter(h => h && (h.stats || h.passYards !== undefined || h.awards));
+    // Nothing to show (e.g. a CPU prospect we never simmed in detail) → skip gracefully.
+    if (!hs && log.length === 0 && history.length === 0) return '';
+
+    let html = '';
+    const perGame = (v, g) => g > 0 ? (v / g).toFixed(1) : '0.0';
+
+    // ---- CURRENT-SEASON TOTALS ----
+    if (hs && hs.games > 0) {
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">' + this.state.year + ' season · ' + hs.games + ' game' + (hs.games === 1 ? '' : 's') + '</div>' +
+        '<div style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:12px">';
+      const cell = (label, value, sub) =>
+        '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">' + label + '</div>' +
+        '<div style="font-size:18px;font-weight:700;margin-top:2px">' + value + '</div>' +
+        (sub ? '<div class="muted" style="font-size:10px;margin-top:1px">' + sub + '</div>' : '') + '</div>';
+      if (pos === 'QB') {
+        html += cell('PASS YDS', (hs.passYds || 0).toLocaleString(), perGame(hs.passYds || 0, hs.games) + '/g');
+        html += cell('PASS TD', hs.passTDs || 0, '');
+        html += cell('INT', hs.ints || 0, '');
+        if ((hs.rushYds || 0) > 0) html += cell('RUSH YDS', (hs.rushYds || 0).toLocaleString(), '');
+      } else if (pos === 'RB') {
+        html += cell('RUSH YDS', (hs.rushYds || 0).toLocaleString(), perGame(hs.rushYds || 0, hs.games) + '/g');
+        html += cell('RUSH TD', hs.rushTDs || 0, '');
+        if ((hs.recYds || 0) > 0) { html += cell('REC', hs.receptions || 0, ''); html += cell('REC YDS', (hs.recYds || 0).toLocaleString(), ''); }
+      } else if (pos === 'WR' || pos === 'TE') {
+        html += cell('REC', hs.receptions || 0, perGame(hs.receptions || 0, hs.games) + '/g');
+        html += cell('REC YDS', (hs.recYds || 0).toLocaleString(), perGame(hs.recYds || 0, hs.games) + '/g');
+        html += cell('REC TD', hs.recTDs || 0, '');
+      } else {
+        // Defensive — totals come from the game log (not tracked in _heismanStats).
+        const tk = log.reduce((a, g) => a + ((g.raw && (g.raw.tackles)) || 0), 0);
+        const sk = log.reduce((a, g) => a + ((g.raw && (g.raw.sacks)) || 0), 0);
+        const ints = log.reduce((a, g) => a + ((g.raw && (g.raw.intsMade || g.raw.interceptionsMade)) || 0), 0);
+        html += cell('TACKLES', tk, hs.games ? perGame(tk, hs.games) + '/g' : '');
+        if (sk > 0) html += cell('SACKS', sk, '');
+        if (ints > 0) html += cell('INT', ints, '');
+      }
+      html += '</div></div>';
+    }
+
+    // ---- GAME-BY-GAME (current season) ----
+    if (log.length > 0) {
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">Game-by-game · ' + this.state.year + '</div>' +
+        '<div style="margin-top:8px;overflow-x:auto"><table style="width:100%;font-size:12px"><thead><tr>' +
+        '<th style="text-align:left">WK</th><th style="text-align:left">OPP</th><th style="text-align:center">RES</th><th style="text-align:right">STAT LINE</th>' +
+        '</tr></thead><tbody>';
+      log.forEach(g => {
+        const oppMeta = COLLEGE_SCHOOLS.find(s => s.abbr === g.opponentAbbr);
+        const oppName = oppMeta ? oppMeta.abbr : g.opponentAbbr;
+        const scoreStr = g.userIsHome ? g.teamScore + '–' + g.oppScore : g.teamScore + '–' + g.oppScore;
+        const resColor = g.result === 'W' ? 'var(--success)' : 'var(--danger)';
+        const line = g.display || (g.stat) || '—';
+        html += '<tr>' +
+          '<td class="mono-num">' + g.week + '</td>' +
+          '<td>' + (g.userIsHome ? 'vs ' : '@ ') + oppName + '</td>' +
+          '<td style="text-align:center"><span style="color:' + resColor + ';font-weight:700">' + g.result + '</span> <span class="muted" style="font-size:10px">' + scoreStr + '</span></td>' +
+          '<td style="text-align:right">' + line + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div></div>';
+    }
+
+    // ---- PRIOR SEASONS ----
+    if (history.length > 0) {
+      html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+        '<div class="section-label">Career by season</div>' +
+        '<div style="margin-top:8px;overflow-x:auto"><table style="width:100%;font-size:12px"><thead><tr>' +
+        '<th style="text-align:left">YEAR</th><th style="text-align:right">KEY STATS</th><th style="text-align:left">HONORS</th>' +
+        '</tr></thead><tbody>';
+      history.forEach(h => {
+        const st = h.stats || h;
+        let line = '—';
+        if (pos === 'QB') line = ((st.passYds || st.passYards || 0)).toLocaleString() + ' yds · ' + (st.passTDs || 0) + ' TD';
+        else if (pos === 'RB') line = ((st.rushYds || st.rushYards || 0)).toLocaleString() + ' rush · ' + (st.rushTDs || 0) + ' TD';
+        else if (pos === 'WR' || pos === 'TE') line = ((st.recYds || st.recYards || 0)).toLocaleString() + ' rec · ' + (st.recTDs || 0) + ' TD';
+        else line = (st.tackles || 0) + ' tkl' + ((st.sacks || 0) > 0 ? ' · ' + st.sacks + ' sk' : '') + ((st.interceptions || st.ints || 0) > 0 ? ' · ' + (st.interceptions || st.ints) + ' INT' : '');
+        const honors = (h.awards || []).join(', ');
+        html += '<tr><td class="mono-num">' + (h.year || '—') + '</td><td style="text-align:right">' + line + '</td>' +
+          '<td style="color:var(--accent);font-size:11px">' + (honors || '') + '</td></tr>';
+      });
+      html += '</tbody></table></div></div>';
+    }
+
+    return html;
+  },
+
   showProspectCard(prospectId, replace) {
     const p = (this.state.collegeProspects || []).find(x => x.id === prospectId);
     if (!p) {
@@ -18855,6 +18990,10 @@ let game = {
         '</div>';
     }
     
+    // COLLEGE STATS — season totals, game log, and prior-season history (when available). This is
+    // the same production view other modes show; agents tapping a prospect get the full picture.
+    html += this._buildProspectStatsSection(p);
+
     // What year will they enter the draft?
     const yearsUntilDraft = { 'Freshman': 3, 'Sophomore': 2, 'Junior': 1, 'Senior': 0 };
     const earliestDraft = this.state.year + (yearsUntilDraft[p.year] || 0);
