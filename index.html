@@ -48,8 +48,8 @@ main { display: grid; grid-template-columns: 200px 1fr 320px; overflow: hidden; 
 .nav-item.active .nav-icon { opacity: 1; }
 /* NFL / College top-level tab strip — pill-style buttons, sticky-looking near top of sidebar */
 .nav-tab-strip { display: flex; gap: 0; padding: 6px 14px 12px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
-.nav-tab { flex: 1; background: transparent; border: 1px solid var(--border-strong); padding: 7px 0; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--text-muted); cursor: pointer; letter-spacing: 0.5px; transition: background 0.1s, color 0.1s; }
-.nav-tab:first-child { border-right: 0; }
+.nav-tab { flex: 1; background: transparent; border: 1px solid var(--border-strong); padding: 7px 0; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--text-muted); cursor: pointer; letter-spacing: 0.3px; transition: background 0.1s, color 0.1s; }
+.nav-tab:not(:last-child) { border-right: 0; }
 .nav-tab.active { background: var(--text); color: var(--bg); border-color: var(--text); }
 .nav-tab:hover:not(.active) { color: var(--text); background: var(--surface-2); }
 .nav-pane .nav-item { padding-left: 26px; font-size: 12.5px; }
@@ -392,10 +392,11 @@ select { font-family: inherit; }
         <div class="nav-item playoffs-nav" data-view="playoffs"><span class="nav-icon">◆</span><span>Playoffs</span></div>
       </div>
       
-      <!-- NFL / College top-level tabs -->
-      <div class="nav-tab-strip">
-        <button class="nav-tab active" data-tab="nfl" onclick="game.setNavTab('nfl')">NFL</button>
+      <!-- College / NFL / Agency top-level tabs -->
+      <div class="nav-tab-strip" id="navTabStrip">
         <button class="nav-tab" data-tab="college" onclick="game.setNavTab('college')">College</button>
+        <button class="nav-tab active" data-tab="nfl" onclick="game.setNavTab('nfl')">NFL</button>
+        <button class="nav-tab" data-tab="agency" id="navTabAgency" onclick="game.setNavTab('agency')" style="display:none">Agency</button>
       </div>
       
       <!-- NFL pane -->
@@ -433,6 +434,21 @@ select { font-family: inherit; }
         <div class="nav-subtitle">History</div>
         <div class="nav-item" data-view="collegehistory"><span>College History</span></div>
         <div class="nav-item" data-view="collegehof"><span>College HOF</span></div>
+        <div class="nav-item" data-view="pinnedplayers"><span>Pinned Players</span></div>
+      </div>
+      
+      <!-- Agency pane (agent career only) -->
+      <div class="nav-section nav-pane" id="navPaneAgency" style="display:none">
+        <div class="nav-subtitle">My Agency</div>
+        <div class="nav-item" data-view="myagency"><span>Dashboard</span></div>
+        <div class="nav-item" data-view="agencyclients"><span>Clients</span></div>
+        <div class="nav-item" data-view="agencyscout"><span>Scout Prospects</span></div>
+        <div class="nav-item" data-view="agencystaff"><span>Office &amp; Staff</span></div>
+        <div class="nav-item" data-view="agencyfinances"><span>Finances</span></div>
+        
+        <div class="nav-subtitle">Market</div>
+        <div class="nav-item" data-view="agencies"><span>Rival Agencies</span></div>
+        <div class="nav-item" data-view="prospects"><span>Top 100 Prospects</span></div>
         <div class="nav-item" data-view="pinnedplayers"><span>Pinned Players</span></div>
       </div>
       
@@ -1492,27 +1508,59 @@ let game = {
     });
     const nflPane = document.getElementById('navPaneNFL');
     const collegePane = document.getElementById('navPaneCollege');
+    const agencyPane = document.getElementById('navPaneAgency');
     if (nflPane) nflPane.style.display = tab === 'nfl' ? '' : 'none';
     if (collegePane) collegePane.style.display = tab === 'college' ? '' : 'none';
+    if (agencyPane) agencyPane.style.display = tab === 'agency' ? '' : 'none';
   },
   
   // Which top-level tab does a given view live under? Used for auto-switching.
   _viewBelongsToTab(view) {
+    const isAgent = this.state && this.state.career && this.state.career.mode === 'agent';
+    // The dedicated agent sub-views always belong to the Agency tab (only ever reachable in agent
+    // mode anyway). 'agencies' (the league directory) lives under NFL Insights for non-agents.
+    const agentOnlyViews = new Set([
+      'myagency', 'agencyclients', 'agencyscout', 'agencystaff', 'agencyfinances'
+    ]);
+    if (agentOnlyViews.has(view)) return 'agency';
+    if (view === 'agencies' && isAgent) return 'agency';
     const collegeViews = new Set([
       'collegetop25', 'prospects', 'heismanrace', 'collegeplayoffs',
       'collegehistory', 'collegehof', 'college',
       'myschool', 'myschoolschedule', 'myschoolstandings', 'collegeboxscore'
     ]);
+    // In agent mode, the prospect board also belongs to the Agency tab so the sidebar stays in
+    // the agent's workflow rather than bouncing to College.
+    if (isAgent) {
+      if (view === 'prospects' || view === 'pinnedplayers') return 'agency';
+    }
     return collegeViews.has(view) ? 'college' : 'nfl';
   },
   
   // Make sure the visible sidebar reflects the current view. Auto-switches NFL/College tab
   // when the current view lives under the other tab.
   syncNavGroupForActive() {
-    // 1) Auto-switch NFL/College tab if the current view requires the other one
+    // 1) Auto-switch NFL/College/Agency tab if the current view requires another one
     if (this.currentView) {
       const targetTab = this._viewBelongsToTab(this.currentView);
       if (this.navTab !== targetTab) this.setNavTab(targetTab);
+    }
+    // 1b) Highlight the sidebar item matching the current view (handles programmatic navigation
+    // from tiles, sub-tab strips, and in-content buttons — not just direct sidebar clicks).
+    if (this.currentView) {
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      // Prefer an item inside the currently-visible pane to avoid highlighting a duplicate
+      // data-view that lives in a hidden pane (e.g. "prospects" exists in both College and Agency).
+      const panes = document.querySelectorAll('.nav-pane');
+      let navEl = null;
+      panes.forEach(p => {
+        if (navEl) return;
+        if (p.style.display === 'none') return;
+        const el = p.querySelector('[data-view="' + this.currentView + '"]');
+        if (el) navEl = el;
+      });
+      if (!navEl) navEl = document.querySelector('[data-view="' + this.currentView + '"]');
+      if (navEl) navEl.classList.add('active');
     }
     // 2) Legacy nav-group accordion behavior — kept in case any other code still uses it
     const activeItem = document.querySelector('.nav-item.active');
@@ -1585,9 +1633,17 @@ let game = {
         tag.textContent = 'Agent Career';
       }
       tag.style.display = '';
-      if (agentCareerNav) agentCareerNav.style.display = '';
+      if (agentCareerNav) agentCareerNav.style.display = 'none';
+      // Reveal the Agency top-level tab and make it the default landing tab for agents.
+      const agencyTabBtn = document.getElementById('navTabAgency');
+      if (agencyTabBtn) agencyTabBtn.style.display = '';
+      this.setNavTab('agency');
       return;
     }
+    // Non-agent modes: hide the Agency top-level tab.
+    const agencyTabBtnHide = document.getElementById('navTabAgency');
+    if (agencyTabBtnHide) agencyTabBtnHide.style.display = 'none';
+    if (this.navTab === 'agency') this.setNavTab('nfl');
     
     if (mode === 'coach') {
       // Coach career: show coach-career nav. User's team is derived from where the coach works.
@@ -10413,6 +10469,10 @@ let game = {
       case 'trades': this.renderTrades(); break;
       case 'mycareer': this.renderMyCareer(); break;
       case 'myagency': this.renderMyAgency(); break;
+      case 'agencyclients': this.renderAgencyClients(); break;
+      case 'agencyscout': this.renderAgencyScout(); break;
+      case 'agencystaff': this.renderAgencyStaff(); break;
+      case 'agencyfinances': this.renderAgencyFinances(); break;
       case 'agencies': this.renderAgencies(); break;
       case 'hof': this.renderHOF(); break;
       case 'records': this.renderRecords(); break;
@@ -13142,38 +13202,86 @@ let game = {
   },
 
   // Render the main agency dashboard. Default view when career.mode === 'agent'.
+  // The agency UI is now split into sub-tabs (Dashboard / Clients / Scout / Staff / Finances)
+  // surfaced under the Agency top-level nav tab. This method renders the DASHBOARD overview.
   renderMyAgency() {
     const agency = this.state.agency;
     if (!agency) {
       document.getElementById('content').innerHTML = '<div class="page-header"><div class="page-title">No agency</div><div class="page-subtitle">Agency state missing.</div></div>';
       return;
     }
+    if (agency.bankrupted) {
+      document.getElementById('content').innerHTML = this._agencyPageHeader('myagency') +
+        '<div class="card" style="border-left:4px solid var(--danger)"><div style="padding:18px"><div style="font-size:18px;font-weight:700;color:var(--danger);margin-bottom:6px">Agency bankrupt</div><div style="font-size:13px;color:var(--text-muted)">Your agency has shut down. Start a new game to try again.</div></div></div>';
+      return;
+    }
+
+    let html = this._agencyPageHeader('myagency');
+
+    // FORCED CONTRACT DECISION — sticky popup that blocks normal flow until resolved.
+    if (agency.currentContractDecision) {
+      html += this._renderContractDecisionPopup();
+    }
+
+    // Hero block: agency stats
+    html += this._renderAgencyHero();
+
+    // Active negotiation card — takes top spot if one is open
+    if (agency.currentNegotiation) {
+      html += this._renderAgentNegotiation();
+    }
+
+    // Quick glance: clients summary + a prompt to use the sub-tabs for detail
+    const clientCap = this._agentClientSlotCap();
+    html += '<div class="card"><div class="card-header"><div class="card-title">At a glance</div><div class="card-meta">' + this.state.year + ' · week ' + this.state.week + '</div></div>' +
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border)">' +
+      this._agencyGlanceTile('Clients', agency.clients.length + ' / ' + clientCap, 'agencyclients') +
+      this._agencyGlanceTile('Pitches available', String(agency.pendingPitches.length), 'agencyscout') +
+      this._agencyGlanceTile('Staff', (agency.staff || []).length + ' / ' + this._agentCurrentOfficeTier().staffSlots, 'agencystaff') +
+      this._agencyGlanceTile('Lifetime earnings', formatMoney(agency.lifetimeEarnings || 0), 'agencyfinances') +
+      '</div></div>';
+
+    // Office & staff summary (read-only-ish overview; full management on the Staff sub-tab)
+    html += this._renderOfficeAndStaffCard();
+
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // Shared sub-tab strip + page header for all agency sub-views.
+  _agencyPageHeader(active) {
+    const agency = this.state.agency;
+    const origin = this.AGENT_ORIGINS[agency.origin] || this.AGENT_ORIGINS.self_made;
+    const tabs = [
+      ['myagency', 'Dashboard'],
+      ['agencyclients', 'Clients'],
+      ['agencyscout', 'Scout'],
+      ['agencystaff', 'Office & Staff'],
+      ['agencyfinances', 'Finances']
+    ];
+    let strip = '<div style="display:flex;gap:0;margin:-4px 0 18px;flex-wrap:wrap">';
+    tabs.forEach(([view, label], i) => {
+      const on = view === active;
+      strip += '<button onclick="game.currentView=\'' + view + '\';game.render()" style="padding:7px 14px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border-strong);' +
+        (i > 0 ? 'border-left:0;' : '') +
+        (on ? 'background:var(--text);color:var(--bg);border-color:var(--text)' : 'background:transparent;color:var(--text-muted)') + '">' + label + '</button>';
+    });
+    strip += '</div>';
+    return '<div class="page-header">' +
+      '<div class="page-title">' + agency.agencyName + '</div>' +
+      '<div class="page-subtitle">' + agency.name + ' · ' + origin.label + ' · Founded ' + agency.founded + '</div>' +
+      '</div>' + strip;
+  },
+
+  // Hero stat block (capital / burn / reputation) — reused on the dashboard.
+  _renderAgencyHero() {
+    const agency = this.state.agency;
     const origin = this.AGENT_ORIGINS[agency.origin] || this.AGENT_ORIGINS.self_made;
     const ovrRC = this.ratingClass(agency.agentOvr);
     const repColor = agency.reputation >= 70 ? 'var(--success)' : agency.reputation >= 40 ? 'var(--warning)' : 'var(--danger)';
     const capitalColor = agency.capital >= 100000 ? 'var(--text)' : agency.capital >= 0 ? 'var(--warning)' : 'var(--danger)';
     const clientCap = this._agentClientSlotCap();
     const officeTier = this._agentCurrentOfficeTier();
-    
-    let html = '<div class="page-header">' +
-      '<div class="page-title">' + agency.agencyName + '</div>' +
-      '<div class="page-subtitle">' + agency.name + ' · ' + origin.label + ' · Founded ' + agency.founded + '</div>' +
-      '</div>';
-    
-    if (agency.bankrupted) {
-      html += '<div class="card" style="border-left:4px solid var(--danger)"><div style="padding:18px"><div style="font-size:18px;font-weight:700;color:var(--danger);margin-bottom:6px">Agency bankrupt</div><div style="font-size:13px;color:var(--text-muted)">Your agency has shut down. Start a new game to try again.</div></div></div>';
-      document.getElementById('content').innerHTML = html;
-      return;
-    }
-    
-    // FORCED CONTRACT DECISION — sticky popup that blocks normal flow until resolved.
-    // Rendered FIRST and prominently so the user can't miss it.
-    if (agency.currentContractDecision) {
-      html += this._renderContractDecisionPopup();
-    }
-    
-    // Hero block: agency stats
-    html += '<div class="my-team-hero">' +
+    return '<div class="my-team-hero">' +
       '<div class="my-team-hero-left">' +
       '<div class="player-face-large" style="width:88px;height:88px">' + pixelFaceSVG(agency.faceSeed) + '</div>' +
       '<div><div class="my-team-name">' + agency.name + '</div>' +
@@ -13184,26 +13292,38 @@ let game = {
       '<div class="my-team-stat"><div class="my-team-stat-label">Weekly burn</div><div class="my-team-stat-value">' + formatMoney(agency.weeklyOverhead) + '</div></div>' +
       '<div class="my-team-stat"><div class="my-team-stat-label">Reputation</div><div class="my-team-stat-value" style="color:' + repColor + '">' + Math.round(agency.reputation) + '/100</div></div>' +
       '</div></div>';
-    
-    // Active negotiation card — takes top spot if one is open
-    if (agency.currentNegotiation) {
-      html += this._renderAgentNegotiation();
-    }
-    
-    // OFFICE & STAFF combined card — shows current tier, upgrade option, staff roster
-    html += this._renderOfficeAndStaffCard();
-    
-    // Clients card — now shows contract years remaining
-    html += '<div class="card"><div class="card-header"><div class="card-title">Your clients</div><div class="card-meta">' + agency.clients.length + ' / ' + clientCap + ' slot' + (clientCap === 1 ? '' : 's') + ' used</div></div>';
+  },
+
+  // Small clickable tile used in the dashboard "at a glance" grid.
+  _agencyGlanceTile(label, value, view) {
+    return '<div onclick="game.currentView=\'' + view + '\';game.render()" style="background:var(--surface);padding:14px 16px;cursor:pointer">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted)">' + label + '</div>' +
+      '<div style="font-size:18px;font-weight:700;margin-top:4px">' + value + '</div></div>';
+  },
+
+  // ===== AGENCY SUB-VIEW: CLIENTS =====
+  renderAgencyClients() {
+    const agency = this.state.agency;
+    if (!agency) { this.renderMyAgency(); return; }
+    let html = this._agencyPageHeader('agencyclients');
+    if (agency.currentContractDecision) html += this._renderContractDecisionPopup();
+    html += this._renderAgencyClientsCard();
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // Clients table (extracted from the old monolithic dashboard).
+  _renderAgencyClientsCard() {
+    const agency = this.state.agency;
+    const clientCap = this._agentClientSlotCap();
+    let html = '<div class="card"><div class="card-header"><div class="card-title">Your clients</div><div class="card-meta">' + agency.clients.length + ' / ' + clientCap + ' slot' + (clientCap === 1 ? '' : 's') + ' used</div></div>';
     if (agency.clients.length === 0) {
-      html += '<div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No clients yet. Pitch a prospect below to sign your first deal.</div>';
+      html += '<div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No clients yet. Use the Scout tab to pitch a prospect and sign your first deal.</div>';
     } else {
       html += '<table><thead><tr><th>Client</th><th>School / Team</th><th class="text-right">GRADE / OVR</th><th class="text-right">COMM</th><th class="text-right">YRS LEFT</th><th class="text-right">DEALS</th><th class="text-right">EARNED</th><th></th></tr></thead><tbody>';
       agency.clients.forEach(client => {
         const prospect = this._agentResolveClient(client.prospectId);
         if (!prospect) return;
         const earned = client.nilDeals.reduce((s, d) => s + d.commission, 0);
-        // Detect whether this client is a college prospect or an NFL player
         const isNflPlayer = prospect.rating !== undefined && prospect.prospectGrade === undefined;
         const schoolInfo = !isNflPlayer ? COLLEGE_SCHOOLS.find(s => s.abbr === prospect.school) : null;
         const teamInfo = isNflPlayer && prospect.team !== null && prospect.team !== undefined ? this.state.teams[prospect.team] : null;
@@ -13231,16 +13351,31 @@ let game = {
       html += '</tbody></table>';
     }
     html += '</div>';
-    
-    // Available pitches — capacity banner if full
+    return html;
+  },
+
+  // ===== AGENCY SUB-VIEW: SCOUT (available prospects / pitches) =====
+  renderAgencyScout() {
+    const agency = this.state.agency;
+    if (!agency) { this.renderMyAgency(); return; }
+    let html = this._agencyPageHeader('agencyscout');
+    if (agency.currentContractDecision) html += this._renderContractDecisionPopup();
+    if (agency.currentNegotiation) html += this._renderAgentNegotiation();
+    html += this._renderAgencyPitchesCard();
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // Available pitches table (extracted from the old monolithic dashboard).
+  _renderAgencyPitchesCard() {
+    const agency = this.state.agency;
+    const clientCap = this._agentClientSlotCap();
     const atCap = agency.clients.length >= clientCap;
-    html += '<div class="card"><div class="card-header"><div class="card-title">Available prospects</div><div class="card-meta">' + (atCap ? '<span style="color:var(--warning);font-weight:600">Office at capacity</span> — drop or upgrade to sign more' : 'Players willing to take a meeting · refreshes weekly') + '</div></div>';
+    let html = '<div class="card"><div class="card-header"><div class="card-title">Available prospects</div><div class="card-meta">' + (atCap ? '<span style="color:var(--warning);font-weight:600">Office at capacity</span> — drop or upgrade to sign more' : 'Players willing to take a meeting · refreshes weekly') + '</div></div>';
     if (agency.pendingPitches.length === 0) {
       html += '<div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No prospects available this week. Sim ahead to see new pitches.</div>';
     } else {
       html += '<table><thead><tr><th>Player</th><th>School / Team</th><th class="text-right">POS</th><th class="text-right">CLASS / OVR</th><th class="text-right">GRADE</th><th class="text-right">MARKET</th><th>CURRENT REP</th><th class="text-right">EXPECTS</th><th></th></tr></thead><tbody>';
       agency.pendingPitches.forEach(pid => {
-        // Resolve from both pools — NFL players have integer ids, prospects have string ids
         let prospect = (this.state.collegeProspects || []).find(p => p.id === pid);
         let isNflPlayer = false;
         if (!prospect) {
@@ -13267,7 +13402,6 @@ let game = {
           currentRep = '<span class="muted" style="font-size:11px;font-style:italic">Unrepresented</span>';
         }
         const buttonDisabled = atCap || isNegotiating || (agency.currentNegotiation && agency.currentNegotiation.status === 'open') || agency.currentContractDecision;
-        // CLICKABLE NAME — opens the standard player card so the user can scout before pitching
         const nameClick = isNflPlayer
           ? 'onclick="event.stopPropagation();game.showPlayer(' + prospect.id + ')"'
           : 'onclick="event.stopPropagation();game.showProspectCard(\'' + prospect.id + '\')"';
@@ -13290,18 +13424,40 @@ let game = {
       html += '</tbody></table>';
     }
     html += '</div>';
-    
-    // STAFF CANDIDATES — show only when there's a staff slot open
+    return html;
+  },
+
+  // ===== AGENCY SUB-VIEW: OFFICE & STAFF =====
+  renderAgencyStaff() {
+    const agency = this.state.agency;
+    if (!agency) { this.renderMyAgency(); return; }
+    let html = this._agencyPageHeader('agencystaff');
+    if (agency.currentContractDecision) html += this._renderContractDecisionPopup();
+    html += this._renderOfficeAndStaffCard();
     html += this._renderStaffCandidatesCard();
-    
-    // Ledger — last 12 entries
-    html += '<div class="card"><div class="card-header"><div class="card-title">Recent transactions</div><div class="card-meta">Last 12 entries</div></div>';
-    const recent = agency.ledger.slice(-12).reverse();
-    if (recent.length === 0) {
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // ===== AGENCY SUB-VIEW: FINANCES (full ledger) =====
+  renderAgencyFinances() {
+    const agency = this.state.agency;
+    if (!agency) { this.renderMyAgency(); return; }
+    let html = this._agencyPageHeader('agencyfinances');
+    // Summary tiles
+    html += '<div class="card"><div class="card-header"><div class="card-title">Financial summary</div></div>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border)">' +
+      this._agencyGlanceTile('Capital on hand', formatMoney(agency.capital), 'agencyfinances') +
+      this._agencyGlanceTile('Weekly burn', formatMoney(agency.weeklyOverhead), 'agencystaff') +
+      this._agencyGlanceTile('Lifetime earnings', formatMoney(agency.lifetimeEarnings || 0), 'agencyfinances') +
+      '</div></div>';
+    // Full ledger
+    html += '<div class="card"><div class="card-header"><div class="card-title">Transaction ledger</div><div class="card-meta">' + (agency.ledger ? agency.ledger.length : 0) + ' entries</div></div>';
+    const entries = (agency.ledger || []).slice().reverse();
+    if (entries.length === 0) {
       html += '<div class="empty-state" style="padding:18px;text-align:center;color:var(--text-muted)">No transactions yet.</div>';
     } else {
       html += '<table><thead><tr><th>When</th><th>Description</th><th class="text-right">Amount</th></tr></thead><tbody>';
-      recent.forEach(entry => {
+      entries.forEach(entry => {
         const amtColor = entry.amount > 0 ? 'var(--success)' : entry.amount < 0 ? 'var(--danger)' : 'var(--text-muted)';
         const sign = entry.amount > 0 ? '+' : '';
         html += '<tr>' +
@@ -13313,7 +13469,6 @@ let game = {
       html += '</tbody></table>';
     }
     html += '</div>';
-    
     document.getElementById('content').innerHTML = html;
   },
 
