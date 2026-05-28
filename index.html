@@ -1231,6 +1231,7 @@ const AGENCIES_CATALOG = [
   { id: 'newstreet',  name: 'New Street Agency',          tier: 3, employees: 6,   ovr: 55, reputation: 38, founded: 2022, style: 'young',       marketShare: 0.012 },
   { id: 'fieldhouse', name: 'Fieldhouse Sports Co.',      tier: 3, employees: 5,   ovr: 52, reputation: 35, founded: 2021, style: 'grinder',     marketShare: 0.010 },
   { id: 'pulse',      name: 'Pulse Athlete Reps',         tier: 3, employees: 4,   ovr: 50, reputation: 32, founded: 2023, style: 'experimental',marketShare: 0.009 },
+  { id: 'summit',     name: 'Summit Sports Reps',         tier: 3, employees: 3,   ovr: 48, reputation: 31, founded: 2024, style: 'boutique',    marketShare: 0.007 },
   { id: 'user',       name: 'User Agency',                tier: 3, employees: 1,   ovr: 45, reputation: 30, founded: 2026, style: 'startup',     marketShare: 0.005 }
 ];
 // Sum of marketShares is ~0.96; the remainder represents prospects/players intentionally left
@@ -13626,6 +13627,11 @@ let game = {
         clientCount: 0,
         lore: ''
       };
+    } else {
+      // In every NON-agent mode (player, coach, dynasty), the user does not run an agency, so the
+      // placeholder 'user' slot from the catalog must not appear in the league. Only the 17 real
+      // firms exist.
+      delete agencies.user;
     }
     this.state.agencies = agencies;
     
@@ -13906,11 +13912,17 @@ let game = {
       document.getElementById('content').innerHTML = '<div class="page-header"><div class="page-title">Agencies</div><div class="page-subtitle">Agency league not initialized.</div></div>';
       return;
     }
+    // Defensive: in any non-agent mode the user does not run an agency, so a stale 'user' slot
+    // (e.g. carried over from the catalog in an older save) must not appear on the board.
+    const isAgentMode = this.state.career && this.state.career.mode === 'agent';
+    if (!isAgentMode && this.state.agencies.user) {
+      delete this.state.agencies.user;
+    }
     const all = Object.values(this.state.agencies);
     const tiers = {
       1: { label: 'Mega-agencies', color: '#a67c00', desc: 'Top 5 firms · roughly 75% of league representation', agencies: all.filter(a => a.tier === 1) },
       2: { label: 'Boutique firms', color: '#5a7a8a', desc: '7 mid-tier shops · ~20% of league', agencies: all.filter(a => a.tier === 2) },
-      3: { label: 'Startups', color: '#777',          desc: '5 small shops including yours · ~5% of league', agencies: all.filter(a => a.tier === 3) }
+      3: { label: 'Startups', color: '#777',          desc: (isAgentMode ? '5 small shops plus yours' : '5 small shops') + ' · ~5% of league', agencies: all.filter(a => a.tier === 3) }
     };
     
     let html = '<div class="page-header">' +
