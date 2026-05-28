@@ -3143,6 +3143,244 @@ let game = {
     this.saveGame();
   },
 
+  // ============================================================
+  // PLAYER RETIREMENT (voluntary) + POST-CAREER BRANCHING
+  // ============================================================
+  // The user player is never force-retired. They hang it up by choice from the career page. On
+  // retirement they keep their legacy (reputation, connections, banked earnings) and can branch
+  // into a second career as an Agent or a Coach.
+
+  // Voluntary retirement triggered by the user from the career page.
+  playerRetireNow() {
+    const p = this.getUserPlayer();
+    if (!p || this.state.career.mode !== 'player') return;
+    if (this.state.career.careerStage === 'retired') return;
+    const yrs = p.yearsInLeague || 0;
+    if (!confirm('Retire ' + p.name + ' after ' + yrs + ' NFL season' + (yrs === 1 ? '' : 's') + '? You\'ll be able to start a second career as an agent or a coach.')) return;
+    // Capture a legacy snapshot used by the branching screen and by whichever path they pick.
+    this.state.career.playerLegacy = this._buildPlayerLegacy(p);
+    // Mark retired.
+    p.retired = true;
+    p.retiredYear = this.state.year;
+    p.retiredAge = p.age;
+    if (p.team !== null && p.team !== undefined) {
+      this.state.teams[p.team].roster = this.state.teams[p.team].roster.filter(id => id !== p.id);
+      p.team = null;
+    }
+    p.contract = null;
+    // Hall of Fame evaluation — same criteria the CPU retirement path uses.
+    let awardScore = 0;
+    (p.awards || []).forEach(a => {
+      if (a.type === 'MVP' || a.type === 'OPOY' || a.type === 'DPOY') awardScore += 5;
+      else if (a.type === 'All-Pro 1st') awardScore += 3;
+      else if (a.type === 'All-Pro 2nd') awardScore += 2;
+      else if (a.type === 'OROY' || a.type === 'DROY') awardScore += 2;
+      else if (a.type === 'Pro Bowl') awardScore += 0.5;
+    });
+    const cs = p.careerStats || {};
+    const isHOF = (p.yearsInLeague || 0) >= 8 && (
+      (cs.passingYards || 0) > 25000 ||
+      (cs.rushingYards || 0) > 8000 ||
+      (cs.receivingYards || 0) > 8000 ||
+      (cs.touchdowns || 0) > 100 ||
+      awardScore >= 10
+    );
+    if (isHOF) {
+      p.hofInducted = true;
+      if (this.state.hallOfFame) {
+        this.state.hallOfFame.push({
+          playerId: p.id, name: p.name, position: p.position,
+          inductedYear: this.state.year + 5,
+          careerStats: { ...cs },
+          yearsInLeague: p.yearsInLeague, awards: [...(p.awards || [])]
+        });
+      }
+    }
+    this.state.career.careerStage = 'retired';
+    this.state.career.pendingOffers = null;
+    this.state.offseasonPhase = null;
+    this.addHeadline({
+      title: p.name + ' announces retirement',
+      body: 'After ' + yrs + ' season' + (yrs === 1 ? '' : 's') + '. ' + (p.hofInducted ? 'A first-ballot Hall of Famer.' : 'A respected veteran hangs it up.') + ' What comes next?'
+    });
+    this.currentView = 'mycareer';
+    this.render();
+    this.saveGame();
+  },
+
+  // Build the legacy profile that bankrolls a second career. Reputation from on-field success,
+  // connections from teams/teammates/coaches/GMs encountered, and banked (post-tax) earnings.
+  _buildPlayerLegacy(p) {
+    // ---- Reputation (0-100) from career accomplishments ----
+    let awardScore = 0;
+    (p.awards || []).forEach(a => {
+      const t = a.type || '';
+      if (/MVP|OPOY|DPOY/i.test(t)) awardScore += 5;
+      else if (/All-Pro.*1|First.*All-Pro/i.test(t)) awardScore += 3;
+      else if (/All-Pro/i.test(t)) awardScore += 2;
+      else if (/ROY/i.test(t)) awardScore += 2;
+      else if (/Pro Bowl/i.test(t)) awardScore += 0.5;
+      else awardScore += 0.5;
+    });
+    const peak = p.peakOvr || p.rating || 70;
+    const yrs = p.yearsInLeague || 0;
+    // Reputation blends peak stature, longevity, awards, and HOF status.
+    let reputation = 25 + (peak - 70) * 1.1 + Math.min(15, yrs * 1.2) + Math.min(35, awardScore * 2.2);
+    if (p.hofInducted) reputation += 12;
+    reputation = Math.max(20, Math.min(98, Math.round(reputation)));
+
+    // ---- Connections: distinct teams played for + a network score ----
+    const teamsPlayedFor = new Set();
+    (p.seasonHistory || []).forEach(h => { if (h.teamId !== null && h.teamId !== undefined) teamsPlayedFor.add(h.teamId); });
+    const teamCount = teamsPlayedFor.size || (p.team !== null ? 1 : 0);
+    // Network: each team adds front-office/coach/teammate contacts; longevity deepens them.
+    const connections = Math.round(Math.min(100, teamCount * 14 + Math.min(40, yrs * 3) + awardScore * 1.5));
+
+    // ---- Banked earnings (post-tax) ----
+    const rep = this.state.career && this.state.career.rep;
+    const nil = rep && rep.nilEarnings ? rep.nilEarnings : 0;
+    const banked = Math.round((this.state.career.careerEarnings || 0) + nil);
+
+    return {
+      name: p.name,
+      position: p.position,
+      faceSeed: p.faceSeed,
+      age: p.age,
+      yearsInLeague: yrs,
+      peakOvr: peak,
+      hof: !!p.hofInducted,
+      reputation,
+      connections,
+      teamsPlayedFor: teamCount,
+      bankedEarnings: banked
+    };
+  },
+
+  // Begin a second career as an AGENT, seeded by the player's legacy. Their banked earnings become
+  // starting capital, reputation/connections set the agency's starting rep and the agent's OVR.
+  playerBranchToAgent() {
+    const legacy = this.state.career && this.state.career.playerLegacy;
+    if (!legacy) return;
+    // Make sure the league agency system exists (it does mid-game), then install the user agency.
+    if (!this.state.agencies) this.installAgencies();
+    // Derived starting parameters — a famous ex-player starts well ahead of a no-name self-made agent.
+    const startingCapital = Math.max(50000, Math.round(legacy.bankedEarnings * 0.6)); // 60% reinvested
+    const startingRep = Math.max(30, Math.min(85, Math.round(legacy.reputation * 0.75 + legacy.connections * 0.15)));
+    const startingOvr = Math.max(45, Math.min(82, Math.round(45 + legacy.connections * 0.20 + (legacy.peakOvr - 70) * 0.4)));
+    // Overhead scales modestly with how big they want to start; use a small-office baseline since
+    // an established name can attract a real office immediately.
+    const overhead = 4000;
+    const agencyName = legacy.name.split(' ').slice(-1)[0] + ' Sports Group';
+
+    this.state.career.mode = 'agent';
+    this.state.career.entityType = 'agent';
+    this.state.career.entityId = 'agency';
+    this.state.career.fromPlayer = true; // marks this as a second career
+
+    this.state.agency = {
+      name: legacy.name,
+      agencyName,
+      founded: this.state.year,
+      origin: 'former_player',
+      capital: startingCapital,
+      weeklyOverhead: overhead,
+      agentOvr: startingOvr,
+      reputation: startingRep,
+      clients: [],
+      ledger: [
+        { week: 0, year: this.state.year, type: 'founding', amount: startingCapital, description: 'Agency founded on a playing-career nest egg · starting capital' }
+      ],
+      pendingPitches: [],
+      currentNegotiation: null,
+      consecutiveNegativeWeeks: 0,
+      bankrupted: false,
+      faceSeed: legacy.faceSeed,
+      office: { level: startingCapital >= 250000 ? 2 : 1, name: this.AGENT_OFFICE_TIERS[startingCapital >= 250000 ? 1 : 0].name },
+      staff: [],
+      availableStaff: [],
+      pendingContractDecisions: [],
+      currentContractDecision: null,
+      pendingNilOffers: [],
+      currentNilOffer: null,
+      autoNilDeals: false,
+      lifetimeEarnings: 0
+    };
+    // Register the user agency in the league map so it shows up among the firms.
+    if (this.state.agencies) {
+      this.state.agencies.user = {
+        id: 'user', name: agencyName, tier: 3, employees: 1,
+        ovr: startingOvr, reputation: startingRep, founded: this.state.year,
+        style: 'former-player', marketShare: 0.006, clientCount: 0, lore: ''
+      };
+    }
+    this.addHeadline({
+      title: legacy.name + ' opens a sports agency',
+      body: 'The ' + (legacy.hof ? 'Hall of Fame ' : 'former ') + legacy.position + ' parlays a ' + legacy.yearsInLeague + '-year career and ' + formatMoney(startingCapital) + ' into a new agency. League connections give instant credibility.'
+    });
+    this._agentRefreshPitches();
+    this._agentRefreshStaffCandidates();
+    this.currentView = 'myagency';
+    this.render();
+    this.saveGame();
+  },
+
+  // Begin a second career as a COACH, seeded by the player's legacy. Reputation/connections raise
+  // the starting coach OVR and widen the initial job-offer slate. They start as a coordinator.
+  playerBranchToCoach() {
+    const legacy = this.state.career && this.state.career.playerLegacy;
+    if (!legacy) return;
+    // Coordinator role based on position: offensive skill → OC, defensive → DC, else OC.
+    const defPositions = ['EDGE','DT','LB','CB','S','DE'];
+    const role = defPositions.includes(legacy.position) ? 'DC' : 'OC';
+    // Starting OVR from playing reputation + connections — a respected vet gets a real head start.
+    const startingOvr = Math.max(48, Math.min(78, Math.round(48 + legacy.connections * 0.16 + (legacy.peakOvr - 70) * 0.5 + (legacy.hof ? 4 : 0))));
+    this.state.career.mode = 'coach';
+    this.state.career.fromPlayer = true;
+    // installUserCoach wires entityType/entityId, makes room, and queues offers.
+    this.installUserCoach({
+      name: legacy.name,
+      role,
+      age: legacy.age,
+      ovr: startingOvr,
+      chosenPlaystyle: null
+    });
+    this.addHeadline({
+      title: legacy.name + ' moves into coaching',
+      body: 'The ' + (legacy.hof ? 'Hall of Fame ' : '') + legacy.position + ' takes a ' + COACH_ROLE_NAMES[role] + ' role to start a coaching career, drawing on ' + legacy.yearsInLeague + ' years of locker-room respect.'
+    });
+    this.currentView = 'mycareer';
+    this.render();
+    this.saveGame();
+  },
+
+  // Voluntary retirement for the user's coach. They choose when to step down; they are never
+  // force-retired by age.
+  coachRetireNow() {
+    const c = this.getUserCoach();
+    if (!c) return;
+    const seasons = (c.seasonHistory || []).length;
+    if (!confirm('Retire ' + c.name + ' from coaching after ' + seasons + ' season' + (seasons === 1 ? '' : 's') + '? This ends the coaching career.')) return;
+    if (c.teamId !== null && c.teamId !== undefined) {
+      const team = this.state.teams[c.teamId];
+      if (team && team.staff && team.staff[c.role] === c.id) team.staff[c.role] = null;
+      c.teamId = null;
+    }
+    c.retired = true;
+    c.retiredYear = this.state.year;
+    c.retiredAge = c.age;
+    const totalWins = (c.seasonHistory || []).reduce((s, h) => s + (h.wins || 0), 0);
+    const totalLosses = (c.seasonHistory || []).reduce((s, h) => s + (h.losses || 0), 0);
+    this.addHeadline({
+      type: 'hof',
+      title: c.name + ' retires from coaching',
+      body: COACH_ROLE_NAMES[c.role] + ' steps down after ' + seasons + ' seasons. Career: ' + totalWins + '-' + totalLosses + (c.coachOfYears > 0 ? ', ' + c.coachOfYears + 'x COY' : '') + '.'
+    });
+    this.state.career.careerStage = 'retired';
+    this.currentView = 'mycareer';
+    this.render();
+    this.saveGame();
+  },
+
   // The previous occupant of that slot is released to the FA pool.
   // Creates the user's coach as a free agent (no team) and queues up initial job offers.
   // The user picks which team to start with via the regular Stage 3 acceptCoachOffer flow.
@@ -3402,6 +3640,45 @@ let game = {
       if (r <= 0) return w.school.abbr;
     }
     return weighted[weighted.length - 1].school.abbr;
+  },
+
+  // Draw a prospect grade from a realistic draft-class pyramid. Maps to the projection bands used
+  // on the career/prospect cards:
+  //   95+ Top-5 · 90-94 Top-15 · 85-89 Round 1 · 78-84 Rounds 1-2 · 72-77 Rounds 2-3 ·
+  //   65-71 Rounds 3-5 · 58-64 Rounds 5-7 · <58 UDFA
+  // Real classes are a steep pyramid: a few dozen day-1/2 picks, a wide day-3 base, and a huge
+  // UDFA-tier pool. We sample a band by weight, then a grade within it. School prestige and class
+  // year apply a small nudge (better programs and upperclassmen skew a touch higher) without
+  // flattening the pyramid.
+  _draftClassGrade(prestige, year) {
+    // Band weights — tuned so the board is mostly mid/late-round and UDFA, with elite tiers rare.
+    const bands = [
+      { lo: 95, hi: 99, w: 0.6 },   // Top-5 — generational, ~1-2 per class
+      { lo: 90, hi: 94, w: 2.0 },   // Top-15
+      { lo: 85, hi: 89, w: 4.5 },   // Round 1
+      { lo: 78, hi: 84, w: 9.0 },   // Rounds 1-2
+      { lo: 72, hi: 77, w: 13.0 },  // Rounds 2-3
+      { lo: 65, hi: 71, w: 19.0 },  // Rounds 3-5
+      { lo: 58, hi: 64, w: 22.0 },  // Rounds 5-7
+      { lo: 48, hi: 57, w: 29.0 }   // UDFA / camp body — the wide base
+    ];
+    // Prestige nudge: top programs shift weight slightly up the pyramid; small schools slightly
+    // down. Expressed as a multiplicative tilt applied to the high bands.
+    const tilt = (prestige - 75) / 100; // -0.27 .. +0.24 roughly
+    const yearBonus = year === 'Senior' ? 0.10 : year === 'Junior' ? 0.04
+                    : year === 'Sophomore' ? -0.06 : -0.14; // underclassmen grade lower (less developed)
+    const adj = bands.map((b, i) => {
+      // Higher bands (lower index) get boosted by positive tilt/yearBonus; lower bands reduced.
+      const rank = (bands.length - 1 - i) / (bands.length - 1); // 1 at top band, 0 at bottom
+      const factor = 1 + (tilt + yearBonus) * (rank - 0.5) * 2;
+      return { ...b, w: Math.max(0.05, b.w * factor) };
+    });
+    const total = adj.reduce((s, b) => s + b.w, 0);
+    let r = Math.random() * total;
+    let band = adj[adj.length - 1];
+    for (const b of adj) { r -= b.w; if (r <= 0) { band = b; break; } }
+    const grade = band.lo + Math.random() * (band.hi - band.lo);
+    return Math.max(45, Math.min(99, grade));
   },
 
   generateProspect(yearInCollege, position, targetGrade, legacy) {
@@ -3889,29 +4166,20 @@ let game = {
           acc += positionWeights[p];
           if (posRoll < acc) { pos = p; break; }
         }
-        
-        // Junior or senior (draft-eligible). 65% senior, 35% junior.
-        const year = Math.random() < 0.65 ? 'Senior' : 'Junior';
-        
-        // Grade tied to school prestige with noise. Top schools have more elite prospects.
-        const noise = (Math.random() - 0.5) * 16;
-        let grade = school.prestige + noise + (year === 'Senior' ? 2 : 0);
-        grade = Math.max(50, Math.min(99, grade));
-        // RARITY CAP: real CFB has very few "elite" prospects per draft class. About 5-8 in the 90+
-        // range and only 1-2 in the 95+ generational tier. Apply a tier-roll to enforce this even
-        // for top-prestige schools — most of their players are good, not elite.
-        // - Grade ≥ 95: 92% roll-down to 85-92 range. Only 8% stay at 95+.
-        // - Grade 90-94: 70% roll-down to 82-89. Only 30% keep elite ceiling.
-        // - Grade 85-89: 40% roll-down to 78-84. (Inflates the 85-89 a bit but realistic.)
-        if (grade >= 95 && Math.random() < 0.92) {
-          grade = 85 + Math.random() * 7;
-        } else if (grade >= 90 && Math.random() < 0.70) {
-          grade = 82 + Math.random() * 7;
-        } else if (grade >= 85 && Math.random() < 0.40) {
-          grade = 78 + Math.random() * 6;
-        }
+
+        // Class year: include all four years so the agent has underclassmen to scout (signed at a
+        // lower rate via _agentUnderclassmanAvailable). Skewed toward upperclassmen since they're
+        // the draft-eligible bulk, but freshmen/sophomores are present as futures.
+        const yr = Math.random();
+        const year = yr < 0.38 ? 'Senior' : yr < 0.68 ? 'Junior' : yr < 0.86 ? 'Sophomore' : 'Freshman';
+
+        // Grade drawn from a REALISTIC draft-class pyramid (see _draftClassGrade): most prospects
+        // are mid-to-late round or UDFA-tier; only a handful are first-round / elite. School
+        // prestige and class year nudge the draw, but the pyramid shape dominates so the board
+        // isn't all top-15 picks.
+        let grade = this._draftClassGrade(school.prestige, year);
         grade = Math.round(grade * 10) / 10;
-        
+
         const prospect = this.generateProspect(year, pos, grade);
         prospect.school = school.abbr;
         this.state.collegeProspects.push(prospect);
@@ -4179,18 +4447,9 @@ let game = {
           if (posRoll < acc) { pos = p; break; }
         }
         const year = Math.random() < 0.65 ? 'Senior' : 'Junior';
-        const noise = (Math.random() - 0.5) * 16;
-        let grade = school.prestige + noise + (year === 'Senior' ? 2 : 0);
-        grade = Math.max(50, Math.min(99, grade));
-        // Same rarity cap as initial pool gen — see comment in generateCollegeProspectPool
-        if (grade >= 95 && Math.random() < 0.92) {
-          grade = 85 + Math.random() * 7;
-        } else if (grade >= 90 && Math.random() < 0.70) {
-          grade = 82 + Math.random() * 7;
-        } else if (grade >= 85 && Math.random() < 0.40) {
-          grade = 78 + Math.random() * 6;
-        }
-        grade = Math.round(grade * 10) / 10;
+        // Realistic draft-class grade pyramid (see _draftClassGrade) — most prospects are
+        // mid/late-round or UDFA-tier, only a handful elite.
+        let grade = Math.round(this._draftClassGrade(school.prestige, year) * 10) / 10;
         const prospect = this.generateProspect(year, pos, grade);
         prospect.school = school.abbr;
         this.state.collegeProspects.push(prospect);
@@ -4624,11 +4883,14 @@ let game = {
   // Generate a 12-game schedule for every school. 8 conference + 4 non-conf is typical CFB.
   // For mid-tier conferences with <8 teams, we fill with non-conf matchups.
   generateCollegeSchedule() {
-    // Only generate a weekly college schedule in player career mode.
-    // Dynasty/coach modes use the legacy single-shot season sim (simCollegeSeason) and don't need
-    // per-week games. Skip schedule gen entirely to save state size + sim time.
-    const isPlayerMode = this.state.career && this.state.career.mode === 'player';
-    if (!isPlayerMode) {
+    // Generate a weekly college schedule in PLAYER and AGENT career modes. Both need per-week
+    // college games: player mode so the user plays out their college career; agent mode so the
+    // agent's college clients accrue real weekly games and stats (instead of a single-shot
+    // season sim that leaves them perpetually "on bye"). Dynasty/coach modes use the legacy
+    // single-shot sim (simCollegeSeason) and don't need per-week games.
+    const mode = this.state.career && this.state.career.mode;
+    const needsWeekly = mode === 'player' || mode === 'agent';
+    if (!needsWeekly) {
       this.state.collegeSchedule = null;
       this.state.collegeWeek = 0;
       this.state.collegeStandings = null;
@@ -4916,6 +5178,8 @@ let game = {
       (this.state.collegeProspects || []).forEach(p => {
         if (p._heismanStats) delete p._heismanStats;
         if (p._currentSeasonGameLog) delete p._currentSeasonGameLog;
+        if (p._lastClientStatWeek !== undefined) delete p._lastClientStatWeek;
+        if (p._lastCollegeGameLine) delete p._lastCollegeGameLine;
       });
     }
     this.state.collegeWeek++;
@@ -4972,7 +5236,12 @@ let game = {
     g.awayScore = awayScore;
     g.played = true;
     g.topPerformers = this.pickGameTopPerformers(g.home, g.away, homeScore, awayScore);
-    
+
+    // AGENT CLIENTS — if any user agency client plays in this game, generate and persist their
+    // own per-game stat line (independent of the random standout pick) so the agent always sees a
+    // real weekly performance for every client, and so season totals build through the year.
+    this._captureAgentClientCollegeGame(g, homeScore, awayScore);
+
     // If the user's player is in this game, capture their personal performance for the post-game popup.
     // This runs regardless of whether they were a top performer — the user always sees their own line.
     const userPlayer = this.getUserPlayer();
@@ -5077,6 +5346,67 @@ let game = {
     }
   },
 
+  // For each user agency client enrolled at a school in this game, generate and persist a real
+  // per-game stat line. Mirrors how the user player's own line is captured: accumulates season
+  // totals on _heismanStats and appends to _currentSeasonGameLog. Stores the latest line on
+  // _lastCollegeGameLine so the weekly recap can display it. Only runs in agent mode.
+  _captureAgentClientCollegeGame(g, homeScore, awayScore) {
+    if (!(this.state.career && this.state.career.mode === 'agent' && this.state.agency)) return;
+    const agency = this.state.agency;
+    if (!agency.clients || agency.clients.length === 0) return;
+    const clientIds = new Set(agency.clients.map(c => c.prospectId));
+    const inGame = (this.state.collegeProspects || []).filter(p =>
+      clientIds.has(p.id) && (p.school === g.home || p.school === g.away));
+    inGame.forEach(p => {
+      const isHome = p.school === g.home;
+      const teamScore = isHome ? homeScore : awayScore;
+      const oppScore = isHome ? awayScore : homeScore;
+      const oppAbbr = isHome ? g.away : g.home;
+      const won = teamScore > oppScore;
+      // Generate a position-appropriate line.
+      let raw, display;
+      if (['QB','RB','WR','TE'].includes(p.position)) {
+        const out = this.generateCollegeStatLine(p, teamScore);
+        display = out.display; raw = out.raw || {};
+      } else {
+        const tackles = 4 + Math.floor(Math.random() * 8);
+        const sacks = (p.position === 'EDGE' || p.position === 'DT') ? Math.floor(Math.random() * 3) : 0;
+        const ints = (p.position === 'CB' || p.position === 'S') ? (Math.random() < 0.18 ? 1 : 0) : 0;
+        const parts = [tackles + ' tackles'];
+        if (sacks > 0) parts.push(sacks + ' sack' + (sacks > 1 ? 's' : ''));
+        if (ints > 0) parts.push(ints + ' INT');
+        display = parts.join(', ');
+        raw = { tackles, sacks, intsMade: ints };
+      }
+      // Accumulate season totals (skip if the standout picker already counted this player this
+      // game — guard via a per-week marker so we never double-count).
+      if (p._lastClientStatWeek !== g.week) {
+        if (!p._heismanStats) {
+          p._heismanStats = { passYds: 0, passTDs: 0, ints: 0, rushYds: 0, rushTDs: 0, recYds: 0, recTDs: 0, receptions: 0, games: 0, lastTeamScore: 0 };
+        }
+        p._heismanStats.games++;
+        p._heismanStats.passYds += raw.passYds || 0;
+        p._heismanStats.passTDs += raw.passTDs || 0;
+        p._heismanStats.ints += raw.ints || 0;
+        p._heismanStats.rushYds += raw.rushYds || 0;
+        p._heismanStats.rushTDs += raw.rushTDs || 0;
+        p._heismanStats.recYds += raw.recYds || 0;
+        p._heismanStats.recTDs += raw.recTDs || 0;
+        p._heismanStats.receptions += raw.receptions || 0;
+        p._lastClientStatWeek = g.week;
+      }
+      if (!p._currentSeasonGameLog) p._currentSeasonGameLog = [];
+      p._currentSeasonGameLog.push({
+        week: g.week, opponentAbbr: oppAbbr, userIsHome: isHome,
+        teamScore, oppScore, result: won ? 'W' : 'L', raw, display
+      });
+      // Latest-week line for the recap to read directly.
+      p._lastCollegeGameLine = {
+        week: g.week, teamAbbr: p.school, oppAbbr, teamScore, oppScore, won, isHome, stat: display
+      };
+    });
+  },
+
   // Round to a realistic CFB final score (avoid 1, 2, 4, 5 since those are mechanically impossible).
   // Valid: 0, 3, 6, 7, 8, 9, 10, 11+ (all combinations of TDs, FGs, safeties).
   roundToCollegeScore(s) {
@@ -5111,6 +5441,9 @@ let game = {
       player._heismanStats.recYds += statLine.recYds || 0;
       player._heismanStats.recTDs += statLine.recTDs || 0;
       player._heismanStats.receptions += statLine.receptions || 0;
+      // Mark the week so the agent-client capture (which may run for this same player if they're
+      // a user client) doesn't double-count this game's appearance.
+      player._lastClientStatWeek = this.state.collegeWeek;
     };
     const pickFor = (schoolAbbr, side) => {
       const roster = (this.state.collegeProspects || []).filter(p => p.school === schoolAbbr);
@@ -6842,12 +7175,12 @@ let game = {
       this.render();
       return;
     }
-    // Forced NIL offer also blocks sim — the user must accept or decline it first.
-    if (this.state.career && this.state.career.mode === 'agent' && this.state.agency &&
-        (this.state.agency.currentNilOffer || (this.state.agency.pendingNilOffers && this.state.agency.pendingNilOffers.length > 0))) {
-      this._agentSurfaceNextNilOffer();
-      this._agentMaybeShowForcedPopup();
-      return;
+    // NIL offers no longer block the sim. They accumulate in a reviewable inbox (pendingNilOffers)
+    // that the user works through at their own pace from the weekly recap link or the agency page —
+    // fielding many offers and signing only the best (max 4 deals per client). Stale offers older
+    // than a few weeks are pruned so the inbox doesn't grow without bound.
+    if (this.state.career && this.state.career.mode === 'agent' && this.state.agency) {
+      this._agentPruneStaleNilOffers();
     }
     if (this.state.offseasonPhase === 'fa') {
       this.state.offseasonPhase = 'draft';
@@ -6861,6 +7194,11 @@ let game = {
     weekGames.forEach(g => this.simGame(g));
     // Sim parallel college week if college schedule exists. College now runs 16 weeks total
     // (12 regular season + 4 CFP rounds), wrapping up around NFL week 16.
+    // Legacy agent saves predate weekly college sim — generate the schedule on the fly so their
+    // college clients start playing real games instead of being stuck on perpetual byes.
+    if (!this.state.collegeSchedule && this.state.career && this.state.career.mode === 'agent') {
+      this.generateCollegeSchedule();
+    }
     if (this.state.collegeSchedule && this.state.collegeWeek < 16) {
       this.simCollegeWeek();
     }
@@ -7164,15 +7502,12 @@ let game = {
     return html;
   },
 
-  // After the recap modal is dismissed, surface any forced agent popups (NIL offers, contract
-  // decisions). Called from closeModal via the _pendingForcedAfterRecap flag.
+  // After the recap modal is dismissed, surface any forced agent popups. NIL offers are no longer
+  // forced — they live in the reviewable inbox (see agentReviewNilOffers). Only contract decisions
+  // are still sticky/forced here.
   _agentMaybeShowForcedPopup() {
     if (!(this.state && this.state.career && this.state.career.mode === 'agent' && this.state.agency)) return false;
     const agency = this.state.agency;
-    if (agency.currentNilOffer) {
-      this.showModal('NIL offer · ' + agency.currentNilOffer.prospectName, this._buildNilOfferPopup());
-      return true;
-    }
     if (agency.currentContractDecision) {
       // Route the user to the agency page where the sticky contract popup already renders.
       this.currentView = 'myagency';
@@ -9576,6 +9911,16 @@ let game = {
       };
       if (!p.seasonHistory) p.seasonHistory = [];
       p.seasonHistory.push(seasonSnap);
+
+      // CAREER EARNINGS (user player only) — accrue post-tax take-home from this season's salary so
+      // that, after retirement, the player can bankroll a second career (agent/coach). We tax at a
+      // flat 45% (income + agent fees + lost-to-life) and bank the rest. NIL/endorsement income is
+      // folded in separately when those deals pay.
+      if (p.isUserControlled && this.state.career && this.state.career.mode === 'player') {
+        const grossThisYear = (p.contract && p.contract.aav) ? p.contract.aav : 0;
+        const POST_TAX = 0.55;
+        this.state.career.careerEarnings = (this.state.career.careerEarnings || 0) + Math.round(grossThisYear * POST_TAX);
+      }
       
       // Accumulate career stats
       p.careerStats.passingYards += p.seasonStats.passingYards;
@@ -9704,9 +10049,19 @@ let game = {
           }
         }
       }
-      // Retirement — position/archetype/generational-aware
+      // Retirement — position/archetype/generational-aware.
+      // The USER'S player is NEVER force-retired. They retire only by their own choice (via the
+      // "Retire" action on the career page). Even if their rating collapses or no team signs them,
+      // they remain a free agent and may keep trying or voluntarily hang it up.
       const aging = getEffectiveAging(p.position, p.archetype, p.peakOvr);
       let willRetire = false;
+      if (p.isUserControlled) {
+        // Keep yearsAsFA bookkeeping current so the FA flow can reflect how long they've sat, but
+        // do not retire them.
+        if (p.team === null) p.yearsAsFA = (p.yearsAsFA || 0) + 1;
+        else p.yearsAsFA = 0;
+        return; // skip all forced-retirement + HOF processing for the user player
+      }
       if (p.age >= aging.forcedRetireAge) {
         willRetire = true;
       } else if (p.age >= aging.declineStart + 2 && Math.random() < 0.35) {
@@ -9929,7 +10284,10 @@ let game = {
         coach.wins = 0;
         coach.losses = 0;
         
-        // RETIREMENT — at 70 base, but successful coaches can stay
+        // RETIREMENT — at 70 base, but successful coaches can stay.
+        // The USER'S coach is NEVER force-retired — they step down only by choice (see
+        // coachRetireNow). Skip the forced-retirement evaluation for them.
+        if (coach.isUserControlled) return;
         if (coach.age >= 70) {
           // Career win % across all seasons
           const totalWins = (coach.seasonHistory || []).reduce((s, h) => s + (h.wins || 0), 0);
@@ -10997,6 +11355,21 @@ let game = {
     if (this.state.offseasonPhase === 'coachJobChoice' && this.state.career.pendingCoachOffers && this.state.career.pendingCoachOffers.length > 0) {
       html += this.renderCoachOffersCard(userCoach, this.state.career.pendingCoachOffers);
     }
+
+    // RETIRED state — coaching career has ended by the user's choice.
+    if (this.state.career.careerStage === 'retired' || userCoach.retired) {
+      html += '<div class="card" style="border-left:4px solid var(--text-muted)"><div style="padding:16px">' +
+        '<div style="font-weight:700;font-size:16px;margin-bottom:4px">Retired from coaching</div>' +
+        '<div style="font-size:13px;color:var(--text-muted)">' + userCoach.name + ' stepped down after ' + ((userCoach.seasonHistory || []).length) + ' seasons. Thanks for the memories.</div>' +
+        '</div></div>';
+    } else {
+      // VOLUNTARY RETIREMENT — a coach is never forced out by age; they choose when to step down.
+      html += '<div class="card"><div class="card-header"><div class="card-title">Stepping away?</div></div>' +
+        '<div style="padding:14px 16px">' +
+        '<div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">You decide when your coaching career ends — age never forces you out. Retire whenever you\'re ready.</div>' +
+        '<button class="btn" style="border-color:var(--danger);color:var(--danger)" onclick="game.coachRetireNow()">Retire from coaching</button>' +
+        '</div></div>';
+    }
     
     // Current job card
     if (team) {
@@ -11673,6 +12046,46 @@ let game = {
     return html;
   },
 
+  // Renders the "what's next" panel on the retired player's career page: a summary of the legacy
+  // they built and two buttons to launch a second career as an agent or a coach.
+  _renderPlayerBranchPanel() {
+    const career = this.state.career;
+    // If they've already branched, show a small note instead of the launcher.
+    if (career.mode !== 'player') return '';
+    const legacy = career.playerLegacy || this._buildPlayerLegacy(this.getUserPlayer());
+    if (!legacy) return '';
+    const agentCapital = Math.max(50000, Math.round(legacy.bankedEarnings * 0.6));
+    let html = '<div class="card" style="border-left:4px solid var(--accent)">' +
+      '<div class="card-header"><div class="card-title">Your next chapter</div><div class="card-meta">Career complete</div></div>' +
+      '<div style="padding:16px">';
+    html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Your playing days are behind you, but your name, relationships, and bankroll open new doors. Choose a second career.</div>';
+    // Legacy stat strip
+    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:10px;text-align:center"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Reputation</div><div style="font-weight:700;font-size:18px">' + legacy.reputation + '/100</div></div>' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:10px;text-align:center"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Connections</div><div style="font-weight:700;font-size:18px">' + legacy.connections + '/100</div></div>' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:10px;text-align:center"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Banked (post-tax)</div><div style="font-weight:700;font-size:18px">' + formatMoney(legacy.bankedEarnings) + '</div></div>' +
+      '</div>';
+    // Two branch options
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+    // Agent card
+    html += '<div style="border:1px solid var(--border);padding:14px;display:flex;flex-direction:column">' +
+      '<div style="font-weight:700;font-size:15px;margin-bottom:4px">💼 Become an Agent</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);flex:1;margin-bottom:10px">Open your own agency. Your ' + formatMoney(agentCapital) + ' nest egg becomes starting capital; your reputation and league connections give you instant credibility with players and front offices.</div>' +
+      '<button class="btn btn-primary" onclick="game.playerBranchToAgent()">Start an agency →</button>' +
+      '</div>';
+    // Coach card
+    const defPositions = ['EDGE','DT','LB','CB','S','DE'];
+    const startRole = defPositions.includes(legacy.position) ? 'Defensive Coordinator' : 'Offensive Coordinator';
+    html += '<div style="border:1px solid var(--border);padding:14px;display:flex;flex-direction:column">' +
+      '<div style="font-weight:700;font-size:15px;margin-bottom:4px">🎯 Become a Coach</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);flex:1;margin-bottom:10px">Step into the ' + startRole + ' role. The respect you earned as a player and your locker-room relationships open the door to coaching jobs across the league.</div>' +
+      '<button class="btn btn-primary" onclick="game.playerBranchToCoach()">Start coaching →</button>' +
+      '</div>';
+    html += '</div>';
+    html += '</div></div>';
+    return html;
+  },
+
   renderPlayerCareerNFL(p, stage) {
     const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
     const rc = this.ratingClass(p.rating);
@@ -11713,6 +12126,23 @@ let game = {
     // STAGE 3: FA offers — shown when user is a FA and pending offers exist.
     if (this.state.offseasonPhase === 'playerFAChoice' && this.state.career.pendingOffers && this.state.career.pendingOffers.length > 0) {
       html += this.renderPlayerFAOffersCard(p, this.state.career.pendingOffers);
+    }
+
+    // ===== POST-CAREER BRANCHING (retired) =====
+    // Once retired, the player can start a second career as an agent or a coach, bankrolled by
+    // their reputation, league connections, and banked post-tax earnings.
+    if (stage === 'retired') {
+      html += this._renderPlayerBranchPanel();
+    }
+
+    // ===== VOLUNTARY RETIREMENT (active) =====
+    // The player is never force-retired — they choose when to hang it up.
+    if (stage === 'nfl' && !p.retired) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Considering retirement?</div></div>' +
+        '<div style="padding:14px 16px">' +
+        '<div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">You decide when your career ends — no one forces you out. Retire whenever you\'re ready, then choose your next chapter as an agent or a coach.</div>' +
+        '<button class="btn" style="border-color:var(--danger);color:var(--danger)" onclick="game.playerRetireNow()">Retire from the NFL</button>' +
+        '</div></div>';
     }
     
     // Player training regimen — weekly pick that gradually boosts a specific skill.
@@ -12521,9 +12951,10 @@ let game = {
   // unrepresented entirely. Returns an agency id, or null for unrepresented players.
   _pickAgencyForPlayer(player, opts) {
     opts = opts || {};
+    const isProspect = player.prospectGrade !== undefined;
     // Compute marketability. For NFL players use rating + position; for prospects use grade.
     let marketability;
-    if (player.prospectGrade !== undefined) {
+    if (isProspect) {
       // It's a prospect
       marketability = this._agentMarketability(player);
     } else {
@@ -12532,37 +12963,46 @@ let game = {
                        CB: 0.95, S: 0.85, OT: 0.7, OG: 0.5, C: 0.5, K: 0.3, P: 0.25 }[player.position] || 0.7;
       marketability = Math.max(0, Math.min(100, Math.round((player.rating - 50) * 1.6 * posMult)));
     }
-    
-    // Unrepresented rate scales inversely with marketability. Low-grade prospects are MOSTLY
-    // unrepresented in real life — fewer agencies bid for them, and walk-ons / late bloomers
-    // often don't have agents until they prove something. Tuned so the user agent has a robust
-    // pool of "fishing-tier" prospects to choose from each week.
-    const unrepProb = marketability >= 70 ? 0.005
-                    : marketability >= 50 ? 0.10
-                    : marketability >= 30 ? 0.35
-                    : marketability >= 15 ? 0.60
-                    : 0.80;
+
+    // Unrepresented rate. NFL players almost universally have agents in real life, so nearly all
+    // are represented — this is what fills the mega-agency books to essentially the whole league.
+    // College prospects are mixed: established names are represented, but a healthy share of
+    // low-grade / underclassmen stay unrepresented so the user agent has a fishing pool to work.
+    let unrepProb;
+    if (isProspect) {
+      unrepProb = marketability >= 70 ? 0.01
+                : marketability >= 50 ? 0.12
+                : marketability >= 30 ? 0.38
+                : marketability >= 15 ? 0.62
+                : 0.82;
+    } else {
+      // NFL: virtually everyone is represented. Only the deepest fringe occasionally lacks one.
+      unrepProb = marketability >= 30 ? 0.005
+                : marketability >= 15 ? 0.03
+                : 0.10;
+    }
     if (Math.random() < unrepProb) return null;
     
     // Tier weighting: high marketability → strongly prefers tier 1 agencies.
-    // Low marketability → tier 3 startups have a real chance.
-    // tierProbs[tier] = chance to pick from that tier given the marketability bucket.
+    // Heavily skewed toward tier 1 so the top 5 mega-agencies absorb the bulk of the league —
+    // their client books should dwarf everyone else's. tierProbs[tier] = chance to pick from
+    // that tier given the marketability bucket.
     let tierProbs;
     if (marketability >= 75) {
-      // Stars: 85% tier 1, 13% tier 2, 2% tier 3 (the rare "stayed with their startup agent" story)
-      tierProbs = { 1: 0.85, 2: 0.13, 3: 0.02 };
+      // Stars: nearly all tier 1.
+      tierProbs = { 1: 0.93, 2: 0.06, 3: 0.01 };
     } else if (marketability >= 55) {
-      // Solid pros: 65% tier 1, 28% tier 2, 7% tier 3
-      tierProbs = { 1: 0.65, 2: 0.28, 3: 0.07 };
+      // Solid pros: overwhelmingly tier 1.
+      tierProbs = { 1: 0.86, 2: 0.12, 3: 0.02 };
     } else if (marketability >= 35) {
-      // Role players: 45% tier 1, 38% tier 2, 17% tier 3
-      tierProbs = { 1: 0.45, 2: 0.38, 3: 0.17 };
+      // Role players: tier 1 still clear majority.
+      tierProbs = { 1: 0.74, 2: 0.22, 3: 0.04 };
     } else if (marketability >= 18) {
-      // Backups / specialists: 25% tier 1, 40% tier 2, 35% tier 3
-      tierProbs = { 1: 0.25, 2: 0.40, 3: 0.35 };
+      // Backups / specialists.
+      tierProbs = { 1: 0.58, 2: 0.32, 3: 0.10 };
     } else {
-      // Walk-ons / fringe: 8% tier 1, 32% tier 2, 60% tier 3
-      tierProbs = { 1: 0.08, 2: 0.32, 3: 0.60 };
+      // Walk-ons / fringe — what lower-rep CPU shops actually land.
+      tierProbs = { 1: 0.38, 2: 0.40, 3: 0.22 };
     }
     
     // Roll the tier
@@ -12800,12 +13240,25 @@ let game = {
         return;
       }
       // ---- College client (still enrolled) ----
+      // Prefer the real per-game line captured during simCollegeGame this week.
+      const line = p._lastCollegeGameLine;
+      if (line && line.week === cWeek) {
+        client.lastWeekPerf = {
+          level: 'College', teamAbbr: line.teamAbbr, oppAbbr: line.oppAbbr,
+          teamScore: line.teamScore, oppScore: line.oppScore, won: line.won,
+          isHome: line.isHome, stat: line.stat, week: cWeek, year: this.state.year
+        };
+        return;
+      }
+      // No game captured this week — genuinely a bye / CFP non-participant / offseason.
       const sched = this.state.collegeSchedule || [];
       const game = sched.find(g => g.week === cWeek && g.played && (g.home === p.school || g.away === p.school));
       if (!game) {
-        client.lastWeekPerf = { level: 'College', didNotPlay: true, label: 'Bye / no game', teamAbbr: p.school };
+        const label = (cWeek >= 13) ? 'Not in CFP' : (cWeek === 0 ? 'Preseason' : 'Bye week');
+        client.lastWeekPerf = { level: 'College', didNotPlay: true, label, teamAbbr: p.school };
         return;
       }
+      // Fallback: game exists but no captured line (shouldn't normally happen) — derive one.
       const isHome = game.home === p.school;
       const teamScore = isHome ? game.homeScore : game.awayScore;
       const oppScore = isHome ? game.awayScore : game.homeScore;
@@ -12814,7 +13267,6 @@ let game = {
       if (['QB','RB','WR','TE'].includes(p.position)) {
         display = this.generateCollegeStatLine(p, teamScore).display;
       } else {
-        // Defensive / special — synthesize a quick line like pickGameTopPerformers does.
         const tackles = 4 + Math.floor(Math.random() * 8);
         const sacks = (p.position === 'EDGE' || p.position === 'DT') ? Math.floor(Math.random() * 3) : 0;
         const ints = (p.position === 'CB' || p.position === 'S') ? (Math.random() < 0.18 ? 1 : 0) : 0;
@@ -12937,8 +13389,42 @@ let game = {
     if (neg && neg.prospectId === prospect.id && neg.contractYears) {
       p -= (neg.contractYears - 1) * 0.05;
     }
-    
+
+    // YOUTH WILLINGNESS — younger players are less established and more willing to bet on a
+    // hungry up-and-coming (lower-OVR / lower-rep) agent who'll prioritize them, rather than
+    // holding out for a mega-agency. This only helps when the agent is below the prospect's
+    // "required" stature; it never penalizes, and it's deliberately modest so it doesn't trivialize
+    // landing blue-chip underclassmen. Freshmen lean in more than sophomores.
+    if (prospect.year === 'Freshman' || prospect.year === 'Sophomore') {
+      const ovrShortfall = Math.max(0, requiredOvr - agency.agentOvr); // how outgunned the agent is
+      const repShortfall = Math.max(0, 60 - agency.reputation);        // unproven-agent gap
+      const youthWeight = prospect.year === 'Freshman' ? 1.0 : 0.7;
+      // Up to ~+12% when the agent is meaningfully under the prospect's bar; tapers to 0 when the
+      // agent is already strong enough (no double-dipping with the OVR/rep terms above).
+      const youthBonus = Math.min(0.12, (ovrShortfall * 0.004 + repShortfall * 0.0015) * youthWeight);
+      p += youthBonus;
+    }
+
     return Math.max(0.02, Math.min(0.95, p));
+  },
+
+  // Class-year availability gate. Underclassmen (freshmen, sophomores) are far less likely to be
+  // actively shopping for representation — most wait until they're draft-eligible. So they appear
+  // in the pitch pool at a MUCH lower rate than juniors/seniors. The exception: high-ceiling
+  // underclassmen (strong prospect grade or blue-chip recruit profile) are sought-after early and
+  // surface more often. Juniors and seniors always pass the gate.
+  _agentUnderclassmanAvailable(p) {
+    if (p.year !== 'Freshman' && p.year !== 'Sophomore') return true;
+    const grade = p.prospectGrade || 50;
+    const stars = p.recruitStars || 0;
+    // Base appearance rate: freshmen rarer than sophomores.
+    let chance = p.year === 'Freshman' ? 0.08 : 0.16;
+    // High-ceiling underclassmen are more available — a blue-chipper or top-graded prospect is
+    // worth chasing early. Grade 85+ or a 4-5 star recruit gets a big bump.
+    if (grade >= 90 || stars >= 5) chance += 0.55;
+    else if (grade >= 85 || stars >= 4) chance += 0.35;
+    else if (grade >= 78) chance += 0.15;
+    return Math.random() < Math.min(0.85, chance);
   },
 
   // Refresh the list of prospects you can pitch to this week. Pulled from collegeProspects
@@ -12965,6 +13451,7 @@ let game = {
     
     const allEligible = (this.state.collegeProspects || [])
       .filter(p => !p.isUserControlled && !signedIds.has(p.id) && p.agentId !== 'user')
+      .filter(p => this._agentUnderclassmanAvailable(p))
       .map(p => {
         const m = this._agentMarketability(p);
         // Poach gate: a prospect under another agency needs the new agent to be within 12 OVR
@@ -13239,9 +13726,17 @@ let game = {
       description: 'Operating costs (' + (agency.office ? agency.office.name : 'Apartment') + ', ' + (agency.staff ? agency.staff.length : 0) + ' staff)'
     });
     
+    // 1b. Pay out weekly NIL check commissions for active deals (and expire finished ones).
+    this._agentPayWeeklyNilChecks();
+
     // 2. NIL deals for each client. Marketer staff boosts both frequency and value.
-    // Each generated deal becomes an OFFER. By default the user must approve every offer via a
-    // forced popup. Only with a junior agent on staff AND auto-NIL toggled on do offers auto-accept.
+    // Deals are structured like real endorsement contracts: an upfront SIGNING BONUS plus a
+    // recurring WEEKLY CHECK paid out over the deal's length. The agent earns commission on the
+    // bonus immediately and on each weekly check as it pays.
+    // Each client can hold at most MAX_NIL_DEALS_PER_CLIENT (4) active deals — so the agent must
+    // FIELD MANY OFFERS and choose only the best ones. Offers pile into a reviewable inbox the
+    // user works through at their own pace (not a forced one-at-a-time popup chain).
+    const MAX_NIL_DEALS_PER_CLIENT = 4;
     const autoResolve = agency.autoNilDeals && this._agentHasJuniorAgent();
     const dealProbMult = 1 + bonuses.marketerOvr / 200;   // OVR 80 marketer = +40% frequency
     const dealValueMult = 1 + bonuses.marketerOvr / 250;  // OVR 80 marketer = +32% value
@@ -13252,25 +13747,28 @@ let game = {
       // Only college clients generate NIL deals — NFL clients earn via contracts (future).
       const isCollege = (this.state.collegeProspects || []).some(p => p.id === prospect.id);
       if (!isCollege) return;
+      // Respect the 4-deal cap: count active deals + offers already queued for this client so we
+      // don't flood the inbox for someone who's already maxed out.
+      const activeDeals = (client.nilDeals || []).filter(d => !d.expired).length;
+      if (activeDeals >= MAX_NIL_DEALS_PER_CLIENT) return;
       const m = this._agentMarketability(prospect);
-      const dealProb = (0.08 + (m / 100) * 0.42) * dealProbMult;
-      if (Math.random() < dealProb) {
-        const annualValue = Math.round(this._agentNILDealValue(m) * dealValueMult);
-        const lengthYears = Math.random() < 0.6 ? 1 : (Math.random() < 0.5 ? 2 : 3);
-        const brandTypes = ['apparel', 'beverage', 'auto dealer', 'restaurant', 'gaming', 'crypto', 'energy drink', 'local business'];
-        const brand = brandTypes[Math.floor(Math.random() * brandTypes.length)];
-        const totalValue = annualValue * lengthYears;
-        const commission = Math.round(totalValue * (client.commissionRate / 100));
-        const offer = {
-          prospectId: client.prospectId,
-          prospectName: prospect.name,
-          position: prospect.position,
-          school: prospect.school,
-          brand, annualValue, lengthYears, totalValue, commission,
-          week: this.state.week, year: this.state.year
-        };
+      // Generate a SLATE of competing offers some weeks so the agent has real choices. More
+      // marketable clients attract more brands at once.
+      const slateRoll = Math.random();
+      const baseProb = (0.10 + (m / 100) * 0.45) * dealProbMult;
+      if (slateRoll >= baseProb) return; // no brand interest this week
+      // How many competing offers arrive together (1-3), scaled by marketability.
+      let slate = 1;
+      const r2 = Math.random();
+      if (m >= 60) slate = r2 < 0.45 ? 3 : r2 < 0.8 ? 2 : 1;
+      else if (m >= 35) slate = r2 < 0.25 ? 3 : r2 < 0.6 ? 2 : 1;
+      else slate = r2 < 0.15 ? 2 : 1;
+      for (let i = 0; i < slate; i++) {
+        const offer = this._agentBuildNilOffer(client, prospect, m, dealValueMult);
         if (autoResolve) {
-          this._agentFinalizeNilDeal(offer);
+          // Auto path: only accept while under the cap, best-effort.
+          const liveDeals = (client.nilDeals || []).filter(d => !d.expired).length;
+          if (liveDeals < MAX_NIL_DEALS_PER_CLIENT) this._agentFinalizeNilDeal(offer);
         } else {
           agency.pendingNilOffers.push(offer);
         }
@@ -13306,9 +13804,69 @@ let game = {
       agency.currentContractDecision = agency.pendingContractDecisions.shift();
     }
 
-    // 6. Forced NIL offer: surface the first queued offer (unless auto-handled). These are shown
-    // as sticky popups the user must accept or decline before sim can advance.
-    this._agentSurfaceNextNilOffer();
+    // 6. NIL offers stay in the reviewable inbox (pendingNilOffers). They are NOT force-surfaced —
+    // the user reviews them from the weekly recap link or the agency page and signs the best ones.
+  },
+
+  // Prune NIL offers that have sat unaddressed too long — brands move on. Keeps the inbox from
+  // growing without bound and creates mild urgency to review offers promptly.
+  _agentPruneStaleNilOffers() {
+    const agency = this.state.agency;
+    if (!agency || !agency.pendingNilOffers) return;
+    const STALE_WEEKS = 3; // an offer expires if not acted on within 3 weeks
+    const nowAbs = this.state.year * 100 + this.state.week;
+    agency.pendingNilOffers = agency.pendingNilOffers.filter(o => {
+      const offerAbs = (o.year || this.state.year) * 100 + (o.week || this.state.week);
+      return (nowAbs - offerAbs) <= STALE_WEEKS;
+    });
+  },
+
+  // Build a single structured NIL offer: an upfront signing bonus plus a recurring weekly check
+  // paid across the deal's length (in weeks). Returns the offer object. Brands and structures vary
+  // so the agent can compare competing offers and pick the best fit.
+  _agentBuildNilOffer(client, prospect, marketability, dealValueMult) {
+    const m = marketability;
+    const annualValue = Math.round(this._agentNILDealValue(m) * (dealValueMult || 1));
+    // Deal length in college SEASONS (1-3), converted to weeks for the check schedule.
+    const lengthYears = Math.random() < 0.6 ? 1 : (Math.random() < 0.5 ? 2 : 3);
+    const WEEKS_PER_SEASON = 16;
+    const totalWeeks = lengthYears * WEEKS_PER_SEASON;
+    const totalValue = annualValue * lengthYears;
+    // Signing bonus share varies by brand appetite — bigger brands front-load more. 25%-55%.
+    const bonusPct = 0.25 + Math.random() * 0.30;
+    let signingBonus = Math.round((totalValue * bonusPct) / 500) * 500; // round to $500
+    signingBonus = Math.max(500, Math.min(totalValue, signingBonus));
+    const remaining = totalValue - signingBonus;
+    const weeklyCheck = Math.max(50, Math.round((remaining / totalWeeks) / 50) * 50); // round to $50
+    // Recompute true total from the rounded components so the math is exact.
+    const trueTotal = signingBonus + weeklyCheck * totalWeeks;
+    const rate = client.commissionRate / 100;
+    const bonusCommission = Math.round(signingBonus * rate);
+    const weeklyCommission = Math.round(weeklyCheck * rate);
+    const totalCommission = bonusCommission + weeklyCommission * totalWeeks;
+    const brandTypes = ['apparel', 'beverage', 'auto dealer', 'restaurant', 'gaming', 'crypto',
+                        'energy drink', 'local business', 'sports drink', 'tech startup', 'trading card',
+                        'fast food', 'streaming app', 'fitness brand'];
+    const brand = brandTypes[Math.floor(Math.random() * brandTypes.length)];
+    return {
+      prospectId: client.prospectId,
+      prospectName: prospect.name,
+      position: prospect.position,
+      school: prospect.school,
+      brand,
+      lengthYears,
+      totalWeeks,
+      signingBonus,
+      weeklyCheck,
+      totalValue: trueTotal,
+      // commission breakdown
+      bonusCommission,
+      weeklyCommission,
+      commission: totalCommission, // total agent commission across the life of the deal
+      // legacy field some UI reads
+      annualValue,
+      week: this.state.week, year: this.state.year
+    };
   },
 
   // Apply an accepted NIL deal: credit commission, log it, build the client's deal record,
@@ -13318,27 +13876,46 @@ let game = {
     if (!agency) return;
     const client = agency.clients.find(c => c.prospectId === offer.prospectId);
     const prospect = this._agentResolveClient(offer.prospectId);
+    // Backward-compat: older offers had no bonus/weekly structure. Synthesize one if missing.
+    const totalWeeks = offer.totalWeeks || ((offer.lengthYears || 1) * 16);
+    const signingBonus = offer.signingBonus !== undefined ? offer.signingBonus : Math.round((offer.totalValue || 0) * 0.35);
+    const weeklyCheck = offer.weeklyCheck !== undefined ? offer.weeklyCheck
+                        : Math.max(0, Math.round(((offer.totalValue || 0) - signingBonus) / totalWeeks));
+    const rate = client ? client.commissionRate / 100 : 0;
+    const bonusCommission = offer.bonusCommission !== undefined ? offer.bonusCommission : Math.round(signingBonus * rate);
+    const weeklyCommission = offer.weeklyCommission !== undefined ? offer.weeklyCommission : Math.round(weeklyCheck * rate);
     if (client) {
       client.nilDeals = client.nilDeals || [];
       client.nilDeals.push({
-        brand: offer.brand, annualValue: offer.annualValue, lengthYears: offer.lengthYears,
-        totalValue: offer.totalValue, commission: offer.commission,
+        brand: offer.brand,
+        lengthYears: offer.lengthYears,
+        totalWeeks,
+        signingBonus,
+        weeklyCheck,
+        totalValue: offer.totalValue,
+        // commission accounting
+        bonusCommission,
+        weeklyCommission,
+        commission: offer.commission, // total over life
+        commissionPaid: bonusCommission, // bonus paid immediately
+        weeksRemaining: totalWeeks,     // ticks down as weekly checks pay
+        expired: false,
         signedWeek: offer.week, signedYear: offer.year
       });
     }
-    agency.capital += offer.commission;
-    agency.lifetimeEarnings = (agency.lifetimeEarnings || 0) + offer.commission;
+    // Upfront: only the SIGNING BONUS commission hits the books now. Weekly check commissions
+    // accrue over the life of the deal via _agentPayWeeklyNilChecks().
+    agency.capital += bonusCommission;
+    agency.lifetimeEarnings = (agency.lifetimeEarnings || 0) + bonusCommission;
     agency.ledger.push({
       week: this.state.week, year: this.state.year, type: 'nil',
-      amount: offer.commission,
-      description: offer.prospectName + ' · ' + offer.brand + ' NIL deal · ' + formatMoney(offer.totalValue) + ' (commission ' + formatMoney(offer.commission) + ')'
+      amount: bonusCommission,
+      description: offer.prospectName + ' · ' + offer.brand + ' NIL deal signed · ' + formatMoney(signingBonus) + ' bonus + ' + formatMoney(weeklyCheck) + '/wk × ' + totalWeeks + ' (bonus commission ' + formatMoney(bonusCommission) + ')'
     });
     // REPUTATION FROM SUCCESSFUL CLIENTS — closing deals for your clients builds your name.
-    // Bigger deals (more marketable clients) move the needle more. This is the primary path
-    // toward the rep threshold needed to break into the NFL.
     if (prospect) {
       const m = this._agentMarketability(prospect);
-      const repGain = Math.min(2.5, 0.15 + (offer.totalValue / 1000000) * 0.8 + (m / 100) * 0.6);
+      const repGain = Math.min(2.5, 0.15 + ((offer.totalValue || 0) / 1000000) * 0.8 + (m / 100) * 0.6);
       agency.reputation = Math.min(100, agency.reputation + repGain);
       if (this.state.agencies && this.state.agencies.user) {
         this.state.agencies.user.reputation = agency.reputation;
@@ -13346,18 +13923,53 @@ let game = {
     }
   },
 
-  // User accepts the active NIL offer. Finalizes the deal, then surfaces the next queued offer.
+  // Pay out weekly NIL checks for all active client deals. Called once per week from the agent
+  // tick. Each active deal pays the agent's weekly commission and ticks down weeksRemaining;
+  // when it hits zero the deal is marked expired (freeing a slot under the 4-deal cap).
+  _agentPayWeeklyNilChecks() {
+    const agency = this.state.agency;
+    if (!agency || !agency.clients) return;
+    let totalThisWeek = 0;
+    let dealsExpiredThisWeek = 0;
+    agency.clients.forEach(client => {
+      (client.nilDeals || []).forEach(d => {
+        if (d.expired) return;
+        // Legacy deals (pre-restructure) have no weeksRemaining — treat as already fully paid.
+        if (d.weeksRemaining === undefined) { d.expired = true; return; }
+        if (d.weeksRemaining <= 0) { d.expired = true; return; }
+        const wc = d.weeklyCommission || 0;
+        if (wc > 0) {
+          agency.capital += wc;
+          agency.lifetimeEarnings = (agency.lifetimeEarnings || 0) + wc;
+          d.commissionPaid = (d.commissionPaid || 0) + wc;
+          totalThisWeek += wc;
+        }
+        d.weeksRemaining--;
+        if (d.weeksRemaining <= 0) { d.expired = true; dealsExpiredThisWeek++; }
+      });
+    });
+    if (totalThisWeek > 0) {
+      agency.ledger.push({
+        week: this.state.week, year: this.state.year, type: 'nil-weekly',
+        amount: totalThisWeek,
+        description: 'Weekly NIL check commissions across active client deals'
+      });
+    }
+  },
+
+
+  // User accepts the active NIL offer. Finalizes the deal, then advances to the next queued
+  // offer (or closes the modal if the queue is empty).
   agentAcceptNilOffer() {
     const agency = this.state.agency;
     if (!agency || !agency.currentNilOffer) return;
     this._agentFinalizeNilDeal(agency.currentNilOffer);
     agency.currentNilOffer = null;
-    this._agentSurfaceNextNilOffer();
-    this.render();
+    this._agentAdvanceAfterNilDecision();
   },
 
   // User declines the active NIL offer. No money, small reputation ding (a missed opportunity
-  // for the client reflects poorly on the agent). Then surfaces the next queued offer.
+  // for the client reflects poorly on the agent). Then advances to the next queued offer.
   agentDeclineNilOffer() {
     const agency = this.state.agency;
     if (!agency || !agency.currentNilOffer) return;
@@ -13368,25 +13980,132 @@ let game = {
       description: 'Declined ' + offer.brand + ' NIL offer for ' + offer.prospectName + ' (' + formatMoney(offer.totalValue) + ')'
     });
     agency.currentNilOffer = null;
+    this._agentAdvanceAfterNilDecision();
+  },
+
+  // Shared post-decision step: pull the next queued offer (if any) and re-render the popup with
+  // it; otherwise close the modal entirely and chain into any other forced popups. This is what
+  // makes Accept/Decline actually dismiss the dialog — previously they only re-rendered the page
+  // behind a still-open modal, so the dialog appeared stuck.
+  _agentAdvanceAfterNilDecision() {
+    const agency = this.state.agency;
     this._agentSurfaceNextNilOffer();
+    if (agency && agency.currentNilOffer) {
+      // Re-render the popup in place with the next offer.
+      this.showModal('NIL offer · ' + agency.currentNilOffer.prospectName, this._buildNilOfferPopup());
+      this.render();
+      if (typeof _syncModalCloseVisibility === 'function') _syncModalCloseVisibility();
+      return;
+    }
+    // No more offers — tear down the modal. currentNilOffer is null so closeModal's sticky guard
+    // won't bounce it. Then surface any other forced popup (e.g. contract decision).
+    this._modalHistory = [];
+    document.getElementById('modal').classList.remove('show');
     this.render();
+    if (typeof _syncModalCloseVisibility === 'function') _syncModalCloseVisibility();
+    this._agentMaybeShowForcedPopup();
   },
 
   // Pull the next queued NIL offer into the active slot (if any).
   // Jump straight from the recap's "N NIL offers awaiting" link into the forced NIL decision
-  // flow. Surfaces the next pending offer and shows its accept/decline popup. The recap's
-  // _pendingForcedAfterRecap chain is cleared since we're entering the flow directly.
+  // Open the reviewable NIL offers inbox. Lists every pending offer grouped by client, with the
+  // signing-bonus + weekly-check structure and total agent commission. The user signs the best
+  // ones (max 4 active deals per client) and can decline the rest. Non-blocking — close anytime.
   agentReviewNilOffers() {
     const agency = this.state.agency;
     if (!agency) return;
     this._pendingForcedAfterRecap = false;
     this._modalHistory = [];
-    this._agentSurfaceNextNilOffer();
-    if (!this._agentMaybeShowForcedPopup()) {
-      // No forced offer to show (e.g. all auto-handled) — just dismiss back to the game.
-      closeModal();
-      this.render();
+    this.showModal('NIL offers · review', this._buildNilInboxBody());
+  },
+
+  // Build the NIL inbox body. Groups offers by client, shows each offer's structure, and flags
+  // clients who've hit the 4-deal cap.
+  _buildNilInboxBody() {
+    const agency = this.state.agency;
+    const MAX = 4;
+    const offers = (agency && agency.pendingNilOffers) || [];
+    let html = '<div style="padding:16px 18px">';
+    if (offers.length === 0) {
+      html += '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0">No pending NIL offers right now. Brands will reach out as your clients build their profiles — sim ahead to field more.</div>';
+      html += '<button class="btn btn-primary btn-lg" style="width:100%;margin-top:8px" onclick="closeModal()">Close</button></div>';
+      return html;
     }
+    // Group by client.
+    const byClient = {};
+    offers.forEach((o, idx) => {
+      (byClient[o.prospectId] = byClient[o.prospectId] || []).push({ o, idx });
+    });
+    html += '<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">' + offers.length + ' offer' + (offers.length === 1 ? '' : 's') + ' on the table. Each client can hold up to ' + MAX + ' active deals — sign the best, decline the rest. Offers expire if left too long.</div>';
+    Object.keys(byClient).forEach(pid => {
+      const group = byClient[pid];
+      const client = agency.clients.find(c => c.prospectId === pid);
+      const activeDeals = client ? (client.nilDeals || []).filter(d => !d.expired).length : 0;
+      const slotsLeft = Math.max(0, MAX - activeDeals);
+      const name = group[0].o.prospectName;
+      const meta = group[0].o.position + ' · ' + group[0].o.school;
+      html += '<div style="margin-bottom:16px;border:1px solid var(--border);background:var(--surface-2)">';
+      html += '<div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
+        '<div><div style="font-weight:700">' + name + ' <span class="muted" style="font-weight:400;font-size:12px">' + meta + '</span></div></div>' +
+        '<div style="font-size:11px;color:' + (slotsLeft === 0 ? 'var(--danger)' : 'var(--text-muted)') + '">' + activeDeals + '/' + MAX + ' deals' + (slotsLeft === 0 ? ' · FULL' : ' · ' + slotsLeft + ' slot' + (slotsLeft === 1 ? '' : 's') + ' open') + '</div>' +
+        '</div>';
+      // Sort this client's offers best-first by total commission so the best stands out.
+      group.sort((a, b) => (b.o.commission || 0) - (a.o.commission || 0));
+      group.forEach(({ o, idx }) => {
+        const full = slotsLeft === 0;
+        html += '<div style="padding:10px 12px;border-bottom:1px solid var(--border)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">' +
+          '<div style="font-weight:600;text-transform:capitalize">' + o.brand + ' <span class="muted" style="font-weight:400;font-size:11px">· ' + o.lengthYears + '-yr (' + o.totalWeeks + ' wks)</span></div>' +
+          '<div style="font-size:11px;color:var(--success);font-weight:700">+' + formatMoney(o.commission) + ' total cut</div>' +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center;margin-bottom:8px">' +
+          '<div style="background:var(--surface);border:1px solid var(--border);padding:6px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Signing bonus</div><div style="font-weight:700;font-size:13px">' + formatMoney(o.signingBonus) + '</div></div>' +
+          '<div style="background:var(--surface);border:1px solid var(--border);padding:6px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Weekly check</div><div style="font-weight:700;font-size:13px">' + formatMoney(o.weeklyCheck) + '/wk</div></div>' +
+          '<div style="background:var(--surface);border:1px solid var(--border);padding:6px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Deal value</div><div style="font-weight:700;font-size:13px">' + formatMoney(o.totalValue) + '</div></div>' +
+          '</div>' +
+          '<div style="font-size:10px;color:var(--text-muted);margin-bottom:8px">Your cut: ' + formatMoney(o.bonusCommission) + ' now + ' + formatMoney(o.weeklyCommission) + '/wk</div>' +
+          '<div style="display:flex;gap:8px">' +
+          (full
+            ? '<button class="btn btn-sm" style="flex:1;opacity:0.5;cursor:not-allowed" disabled>Client at deal cap</button>'
+            : '<button class="btn btn-sm btn-primary" style="flex:1" onclick="game.agentAcceptNilOfferFromInbox(' + idx + ')">Sign deal</button>') +
+          '<button class="btn btn-sm" style="flex:1" onclick="game.agentDeclineNilOfferFromInbox(' + idx + ')">Decline</button>' +
+          '</div></div>';
+      });
+      html += '</div>';
+    });
+    html += '<button class="btn btn-lg" style="width:100%" onclick="closeModal()">Done</button>';
+    html += '</div>';
+    return html;
+  },
+
+  // Accept a specific offer from the inbox (by index into pendingNilOffers), honoring the 4-cap.
+  agentAcceptNilOfferFromInbox(idx) {
+    const agency = this.state.agency;
+    if (!agency || !agency.pendingNilOffers) return;
+    const offer = agency.pendingNilOffers[idx];
+    if (!offer) return;
+    const client = agency.clients.find(c => c.prospectId === offer.prospectId);
+    const activeDeals = client ? (client.nilDeals || []).filter(d => !d.expired).length : 0;
+    if (activeDeals >= 4) { this.showModal('NIL offers · review', this._buildNilInboxBody()); return; }
+    this._agentFinalizeNilDeal(offer);
+    agency.pendingNilOffers.splice(idx, 1);
+    this.render();
+    this.showModal('NIL offers · review', this._buildNilInboxBody());
+  },
+
+  // Decline a specific offer from the inbox.
+  agentDeclineNilOfferFromInbox(idx) {
+    const agency = this.state.agency;
+    if (!agency || !agency.pendingNilOffers) return;
+    const offer = agency.pendingNilOffers[idx];
+    if (!offer) return;
+    agency.ledger.push({
+      week: this.state.week, year: this.state.year, type: 'nil-declined', amount: 0,
+      description: 'Declined ' + offer.brand + ' NIL offer for ' + offer.prospectName
+    });
+    agency.pendingNilOffers.splice(idx, 1);
+    this.render();
+    this.showModal('NIL offers · review', this._buildNilInboxBody());
   },
 
   _agentSurfaceNextNilOffer() {
@@ -13869,6 +14588,17 @@ let game = {
 
     // Hero block: agency stats
     html += this._renderAgencyHero();
+
+    // NIL offers inbox banner — non-blocking prompt to review pending endorsement offers.
+    const pendingNil = (agency.pendingNilOffers || []).length;
+    if (pendingNil > 0) {
+      html += '<div class="card" style="border-left:4px solid var(--warning);cursor:pointer" onclick="game.agentReviewNilOffers()">' +
+        '<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center">' +
+        '<div><div style="font-weight:700">📨 ' + pendingNil + ' NIL offer' + (pendingNil === 1 ? '' : 's') + ' to review</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Sign the best deals for your clients (max 4 each). Offers expire if left too long.</div></div>' +
+        '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();game.agentReviewNilOffers()">Review →</button>' +
+        '</div></div>';
+    }
 
     // Active negotiation card — takes top spot if one is open
     if (agency.currentNegotiation) {
