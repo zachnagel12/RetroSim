@@ -4477,6 +4477,8 @@ let game = {
     if (this.state.career && this.state.career.mode === 'agent' && this.state.agency) {
       this._agentProcessContractExpirations();
       this._agentRefreshStaffCandidates();
+      // Annual solvency check — two consecutive losing years folds the agency for good.
+      this._agentAnnualSolvencyCheck();
     }
     
     return graduates;
@@ -6130,26 +6132,19 @@ let game = {
     if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'declared') {
       return;
     }
-    // AGENT GUARD: agents don't have a team, so a userTeamId of null would make the loop run
-    // every pick without stopping. The user wants to *watch* the draft to see if their clients
-    // get picked — running through 224 picks synchronously would freeze the UI. Cap iterations
-    // per call so the user can resume by clicking through screens. Future: a dedicated agent
-    // draft-night view that shows client selections.
+    // AGENT DRAFT NIGHT: agents don't have a team, but the draft is a MARQUEE event — they watch
+    // their college clients hear their names called, sign rookie deals, and bank big commissions.
+    // Rather than silently simming, we hand off to the dedicated agent draft-night view, which
+    // reveals picks one at a time (or sims to the next client) and celebrates each client selection.
     if (this.state.career && this.state.career.mode === 'agent') {
-      // Run the whole annual draft in a single pass — for agents this is fine because we don't
-      // need to pause for input. The pool is only 224 deep so this completes in <100ms even
-      // including the calculateTeamNeeds calls.
-      const userId = -1; // sentinel; no team can match
-      let safety = 0;
-      while (this.state.draftCurrentIdx < this.state.draftOrder.length) {
-        if (++safety > 2000) { this.finishDraft(); return; }
-        const current = this.state.draftOrder[this.state.draftCurrentIdx];
-        if (!current) { this.state.draftCurrentIdx++; continue; }
-        const before = this.state.draftCurrentIdx;
-        this.cpuPick(current.teamId);
-        if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
+      // Initialize draft-night tracking the first time we enter for this draft.
+      if (!this.state._agentDraftNight) {
+        this.state._agentDraftNight = {
+          clientPickIdsArr: this._agentClientProspectIds(), // prospectIds of draft-eligible clients
+          drafted: []          // [{ playerId, prospectId, name, position, overall, round, teamId, commission }]
+        };
       }
-      this.finishDraft();
+      // Don't auto-run — the agent draft-night view drives picks via reveal/sim buttons.
       return;
     }
     const userId = this.state.userTeamId;
@@ -6680,6 +6675,271 @@ let game = {
     this.finishDraft();
   },
 
+  // ============================================================
+  // AGENT DRAFT NIGHT — the marquee offseason event for an agency.
+  // The agent watches the NFL Draft unfold pick by pick, celebrating each time one of their
+  // college clients hears their name called. Drafted clients sign rookie contracts and the agent
+  // banks a commission on them. Ends with a draft-night summary for the agency.
+  // ============================================================
+
+  // The set of prospect IDs that are the user agency's clients AND eligible to be drafted this
+  // year — i.e. they graduated into this draft class and have a corresponding player in the pool
+  // (linked via fromProspectId). Underclassmen clients who haven't declared are excluded.
+  _agentClientProspectIds() {
+    const agency = this.state.agency;
+    if (!agency || !agency.clients) return [];
+    const clientIds = new Set(agency.clients.map(c => c.prospectId));
+    // Build the set of prospectIds present in this year's draft pool.
+    const poolProspectIds = new Set();
+    (this.state.draftPool || []).forEach(p => { if (p.fromProspectId) poolProspectIds.add(p.fromProspectId); });
+    (this.state.draftPicks || []).forEach(pk => {
+      const pl = this.state.players[pk.playerId];
+      if (pl && pl.fromProspectId) poolProspectIds.add(pl.fromProspectId);
+    });
+    // Intersection: clients who are in the draft.
+    return Array.from(clientIds).filter(id => poolProspectIds.has(id));
+  },
+
+  // Record that a client was just drafted: sign their rookie deal, pay the agent's commission,
+  // bump reputation, and stash the celebration for the summary.
+  _agentRecordClientDraft(player, orderInfo, overall) {
+    const agency = this.state.agency;
+    if (!agency) return;
+    const client = agency.clients.find(c => c.prospectId === player.fromProspectId);
+    if (!client) return;
+    // Rookie contract value scales with draft slot — early picks get far richer deals.
+    const contract = player.contract || generateContract(player.position, player.rating, player.age, this.state.year, true);
+    const totalValue = contract.totalValue || (contract.aav || 0) * (contract.years || 4);
+    const rate = (client.commissionRate || 4) / 100;
+    const commission = Math.round(totalValue * rate);
+    // Record on the client.
+    client.nflContract = { totalValue, aav: contract.aav, years: contract.years, draftedOverall: overall, draftYear: this.state.year };
+    client.nflSigningBonusPaid = true;
+    // Pay the agent.
+    agency.capital += commission;
+    agency.lifetimeEarnings = (agency.lifetimeEarnings || 0) + commission;
+    agency.ledger.push({
+      week: this.state.week, year: this.state.year, type: 'rookie-contract',
+      amount: commission,
+      description: player.name + ' drafted #' + overall + ' · rookie deal ' + formatMoney(totalValue) + ' (commission ' + formatMoney(commission) + ')'
+    });
+    // Reputation: getting a client drafted is a big deal, more so in the early rounds.
+    const repGain = orderInfo.round === 1 ? 6 : orderInfo.round === 2 ? 4 : orderInfo.round === 3 ? 3 : 2;
+    agency.reputation = Math.min(100, agency.reputation + repGain);
+    if (this.state.agencies && this.state.agencies.user) this.state.agencies.user.reputation = agency.reputation;
+    // Stash for the draft-night board + summary.
+    if (!this.state._agentDraftNight) this.state._agentDraftNight = { drafted: [] };
+    this.state._agentDraftNight.drafted.push({
+      playerId: player.id, prospectId: player.fromProspectId, name: player.name,
+      position: player.position, overall, round: orderInfo.round, teamId: orderInfo.teamId,
+      commission, totalValue
+    });
+    this.addHeadline({
+      type: 'champ',
+      title: agency.agencyName + ' client drafted: ' + player.name,
+      body: player.name + ' (' + player.position + ') goes #' + overall + ' overall in Round ' + orderInfo.round + '. Rookie deal worth ' + formatMoney(totalValue) + ' — ' + formatMoney(commission) + ' commission.'
+    });
+  },
+
+  // Execute one draft pick (CPU) and, if the picked player is a client, record the celebration.
+  _agentExecuteOnePick() {
+    if (!this.state.draftActive) return false;
+    const idx = this.state.draftCurrentIdx;
+    if (idx >= this.state.draftOrder.length) return false;
+    const orderInfo = this.state.draftOrder[idx];
+    if (!orderInfo) { this.state.draftCurrentIdx++; return true; }
+    const clientIds = new Set(this.state._agentDraftNight ? (this.state._agentDraftNight.clientPickIdsArr || []) : []);
+    const before = this.state.draftCurrentIdx;
+    const poolBefore = this.state.draftPool.length;
+    this.cpuPick(orderInfo.teamId);
+    // The pick just made is the last entry in draftPicks.
+    const lastPick = this.state.draftPicks[this.state.draftPicks.length - 1];
+    if (lastPick && this.state.draftCurrentIdx === before) {
+      const player = this.state.players[lastPick.playerId];
+      if (player && player.fromProspectId && clientIds.has(player.fromProspectId)) {
+        this._agentRecordClientDraft(player, orderInfo, lastPick.overall);
+      }
+    }
+    if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
+    return true;
+  },
+
+  // Reveal a single pick.
+  _agentRevealNextPick() {
+    if (!this.state.draftActive) return;
+    if (this.state.draftCurrentIdx >= this.state.draftOrder.length) { this._agentFinishDraftNight(); return; }
+    this._agentExecuteOnePick();
+    if (this.state.draftCurrentIdx >= this.state.draftOrder.length) { this._agentFinishDraftNight(); return; }
+    this.render();
+  },
+
+  // Sim forward until the next client is drafted (or the draft ends).
+  _agentSimToNextClient() {
+    if (!this.state.draftActive) return;
+    const startCount = this.state._agentDraftNight ? this.state._agentDraftNight.drafted.length : 0;
+    let safety = 0;
+    while (this.state.draftActive && this.state.draftCurrentIdx < this.state.draftOrder.length && safety < 300) {
+      safety++;
+      this._agentExecuteOnePick();
+      if (this.state._agentDraftNight && this.state._agentDraftNight.drafted.length > startCount) break;
+    }
+    if (this.state.draftCurrentIdx >= this.state.draftOrder.length) { this._agentFinishDraftNight(); return; }
+    this.render();
+  },
+
+  // Sim the remainder of the draft instantly, then show the summary.
+  _agentSimRestOfDraft() {
+    if (!this.state.draftActive) return;
+    let safety = 0;
+    while (this.state.draftActive && this.state.draftCurrentIdx < this.state.draftOrder.length && safety < 2000) {
+      safety++;
+      this._agentExecuteOnePick();
+    }
+    this._agentFinishDraftNight();
+  },
+
+  // Wrap up draft night: clear tracking, show the summary modal, then finalize the draft.
+  _agentFinishDraftNight() {
+    const dn = this.state._agentDraftNight;
+    // Finalize the league draft machinery (roster fills, schedule gen, etc.).
+    this.finishDraft();
+    // Land the agent on their agency dashboard rather than the generic standings view.
+    this.currentView = 'myagency';
+    this.render();
+    // Surface the agent draft-night summary on top.
+    if (dn) {
+      this.showModal(this.state.year + ' Draft Night · ' + (this.state.agency ? this.state.agency.agencyName : 'Your agency'), this._buildAgentDraftSummary(dn));
+    }
+    this.state._agentDraftNight = null;
+  },
+
+  // Build the draft-night summary modal body.
+  _buildAgentDraftSummary(dn) {
+    const drafted = (dn && dn.drafted) || [];
+    const totalClients = (dn && dn.clientPickIdsArr) ? dn.clientPickIdsArr.length : 0;
+    const undrafted = Math.max(0, totalClients - drafted.length);
+    const totalCommission = drafted.reduce((s, d) => s + (d.commission || 0), 0);
+    let html = '<div style="padding:18px">';
+    if (drafted.length === 0) {
+      html += '<div style="text-align:center;padding:14px 0">' +
+        '<div style="font-size:15px;font-weight:700;margin-bottom:6px">No clients drafted this year</div>' +
+        '<div style="font-size:13px;color:var(--text-muted)">' + (totalClients > 0
+          ? 'Your ' + totalClients + ' draft-eligible client' + (totalClients === 1 ? '' : 's') + ' went undrafted — they\'ll look to catch on as undrafted free agents. Sign more touted prospects to make a splash next year.'
+          : 'You had no draft-eligible clients this year. Sign college talent and ride them to the draft.') + '</div></div>';
+      html += '<button class="btn btn-primary btn-lg" style="width:100%;margin-top:14px" onclick="closeModal()">Continue</button></div>';
+      return html;
+    }
+    html += '<div style="text-align:center;margin-bottom:16px">' +
+      '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted)">Draft night haul</div>' +
+      '<div style="font-size:26px;font-weight:800;margin-top:4px">' + drafted.length + ' client' + (drafted.length === 1 ? '' : 's') + ' drafted</div>' +
+      '<div style="font-size:14px;color:var(--success);font-weight:700;margin-top:2px">+' + formatMoney(totalCommission) + ' in rookie-deal commission</div>' +
+      (undrafted > 0 ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">' + undrafted + ' client' + (undrafted === 1 ? '' : 's') + ' went undrafted</div>' : '') +
+      '</div>';
+    // Sort by overall pick.
+    const sorted = [...drafted].sort((a, b) => a.overall - b.overall);
+    html += '<div style="display:flex;flex-direction:column;gap:6px">';
+    sorted.forEach(d => {
+      const team = this.state.teams[d.teamId];
+      const r1 = d.round === 1;
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-left:3px solid ' + (r1 ? 'var(--accent)' : 'var(--border)') + ';padding:10px 12px">' +
+        '<div><div style="font-weight:700">' + d.name + ' <span class="muted" style="font-weight:400;font-size:11px">' + d.position + (team ? ' · ' + team.abbr : '') + '</span></div>' +
+        '<div style="font-size:11px;color:var(--text-muted)">Round ' + d.round + ' · Pick #' + d.overall + ' overall</div></div>' +
+        '<div style="text-align:right"><div style="font-size:12px;font-weight:700">' + formatMoney(d.totalValue) + '</div>' +
+        '<div style="font-size:11px;color:var(--success)">+' + formatMoney(d.commission) + '</div></div>' +
+        '</div>';
+    });
+    html += '</div>';
+    html += '<button class="btn btn-primary btn-lg" style="width:100%;margin-top:16px" onclick="closeModal()">Continue</button>';
+    html += '</div>';
+    return html;
+  },
+
+  // The agent draft-night view: header, your-clients status panel, and the running board.
+  renderAgentDraftNight() {
+    const dn = this.state._agentDraftNight || { drafted: [], clientPickIdsArr: this._agentClientProspectIds() };
+    const totalPicks = this.state.draftOrder.length;
+    const currentIdx = this.state.draftCurrentIdx;
+    document.getElementById('newsFeed').style.display = 'none';
+    document.getElementById('mainGrid').style.gridTemplateColumns = '200px 1fr';
+    if (currentIdx >= totalPicks) { this._agentFinishDraftNight(); return; }
+    const current = this.state.draftOrder[currentIdx];
+    const currentTeam = current ? this.state.teams[current.teamId] : null;
+    const clientIds = dn.clientPickIdsArr || [];
+    const draftedIds = new Set((dn.drafted || []).map(d => d.prospectId));
+    const remainingClients = clientIds.filter(id => !draftedIds.has(id));
+
+    let html = '<div class="draft-header-bar">' +
+      '<div class="draft-round-info"><strong>R' + (current ? current.round : '?') + '</strong> Pick <strong>' + (currentIdx + 1) + '</strong> of ' + totalPicks + '</div>' +
+      '<div class="draft-on-clock">' + (currentTeam ? 'ON THE CLOCK: ' + currentTeam.city + ' ' + currentTeam.name : 'Draft in progress') + '</div>' +
+      '<div style="display:flex;gap:6px">' +
+      '<button class="btn btn-sm btn-success" onclick="game._agentRevealNextPick()">Reveal next pick →</button>' +
+      (remainingClients.length > 0 ? '<button class="btn btn-sm" onclick="game._agentSimToNextClient()">Sim to next client</button>' : '') +
+      '<button class="btn btn-sm" onclick="game._agentSimRestOfDraft()">Sim rest of draft →</button>' +
+      '</div></div>';
+
+    // Draft-night banner
+    html += '<div style="background:var(--surface);padding:16px 18px;margin-bottom:14px;border-left:4px solid var(--accent)">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600">' + this.state.year + ' NFL DRAFT · AGENCY WAR ROOM</div>' +
+      '<div style="font-size:18px;font-weight:800;margin-top:2px">' + (this.state.agency ? this.state.agency.agencyName : 'Your agency') + '</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">' + (dn.drafted || []).length + ' of ' + clientIds.length + ' draft-eligible client' + (clientIds.length === 1 ? '' : 's') + ' selected so far</div>' +
+      '</div>';
+
+    // Your clients panel
+    html += '<div class="card"><div class="card-header"><div class="card-title">Your clients</div>' +
+      '<div class="card-meta">' + clientIds.length + ' draft-eligible</div></div>' +
+      '<div style="padding:8px 0">';
+    if (clientIds.length === 0) {
+      html += '<div style="padding:12px 16px;color:var(--text-muted);font-size:13px">No draft-eligible clients this year.</div>';
+    } else {
+      clientIds.forEach(pid => {
+        const d = (dn.drafted || []).find(x => x.prospectId === pid);
+        // Resolve a display name from drafted record or the live prospect/player.
+        let name, pos, school;
+        if (d) { name = d.name; pos = d.position; }
+        else {
+          const live = this._agentResolveClient(pid);
+          if (live) { name = live.name; pos = live.position; school = live.school; }
+          else { name = 'Client'; pos = ''; }
+        }
+        const team = d ? this.state.teams[d.teamId] : null;
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-bottom:1px solid var(--border)">' +
+          '<div><div style="font-weight:600">' + name + ' <span class="muted" style="font-weight:400;font-size:11px">' + pos + (school ? ' · ' + school : '') + '</span></div></div>' +
+          (d
+            ? '<div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--success)">R' + d.round + ' · #' + d.overall + (team ? ' · ' + team.abbr : '') + '</div><div style="font-size:11px;color:var(--text-muted)">+' + formatMoney(d.commission) + '</div></div>'
+            : '<div style="font-size:11px;color:var(--text-muted)">On the board…</div>') +
+          '</div>';
+      });
+    }
+    html += '</div></div>';
+
+    // The board — recent picks
+    html += '<div class="card"><div class="card-header"><div class="card-title">The board</div>' +
+      '<div class="card-meta">Recent picks · your clients highlighted</div></div>' +
+      '<div style="padding:6px 0;max-height:48vh;overflow-y:auto">';
+    const clientSet = new Set(clientIds);
+    const recentPicks = this.state.draftPicks.slice(-20).reverse();
+    if (recentPicks.length === 0) {
+      html += '<div style="padding:12px 16px;color:var(--text-muted);font-size:13px">The draft is about to begin. Reveal picks to watch it unfold.</div>';
+    }
+    recentPicks.forEach(pk => {
+      const player = this.state.players[pk.playerId];
+      const team = this.state.teams[pk.teamId];
+      if (!player || !team) return;
+      const isClient = player.fromProspectId && clientSet.has(player.fromProspectId);
+      const bg = isClient ? 'background:linear-gradient(90deg,' + team.primary + '22 0%,transparent 100%);border-left:4px solid ' + team.primary : '';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 16px;' + bg + '">' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+        '<span class="mono-num" style="font-size:11px;color:var(--text-muted);width:30px">#' + pk.overall + '</span>' +
+        '<span style="font-weight:' + (isClient ? '700' : '500') + '">' + player.name + (isClient ? ' <span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:2px;margin-left:4px">CLIENT</span>' : '') + '</span>' +
+        '<span class="muted" style="font-size:11px">' + player.position + '</span></div>' +
+        '<span style="font-size:11px;color:var(--text-muted)">R' + pk.round + ' · ' + team.abbr + '</span>' +
+        '</div>';
+    });
+    html += '</div></div>';
+
+    document.getElementById('content').innerHTML = html;
+  },
+
   renderDraft() {
     // PLAYER CAREER: show an immersive watch-the-draft view where the user sees picks come
     // in one at a time, with their pick highlighted when it happens. Different from coach/dynasty
@@ -6687,6 +6947,10 @@ let game = {
     const isPlayerMode = this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'declared';
     if (isPlayerMode) {
       return this.renderPlayerCareerDraft();
+    }
+    const isAgentMode = this.state.career && this.state.career.mode === 'agent';
+    if (isAgentMode) {
+      return this.renderAgentDraftNight();
     }
     
     const totalPicks = this.state.draftOrder.length;
@@ -7447,6 +7711,21 @@ let game = {
     const pendingOffers = (agency.pendingNilOffers ? agency.pendingNilOffers.length : 0) + (agency.currentNilOffer ? 1 : 0);
     const repColor = agency.reputation >= 70 ? 'var(--success)' : agency.reputation >= 40 ? 'var(--warning)' : 'var(--danger)';
     const capColor = agency.capital >= 0 ? 'var(--text)' : 'var(--danger)';
+    // ---- Weekly finance tally from this week's ledger ----
+    // Income: signing-bonus commissions (nil) + weekly NIL check commissions (nil-weekly).
+    // Expenses: operating overhead + any one-off costs (office upgrades, etc.).
+    let nilBonusIncome = 0, nilWeeklyIncome = 0, otherIncome = 0, expenses = 0;
+    (agency.ledger || []).forEach(e => {
+      if (e.week !== wk || e.year !== yr) return;
+      const amt = e.amount || 0;
+      if (e.type === 'nil') nilBonusIncome += Math.max(0, amt);
+      else if (e.type === 'nil-weekly') nilWeeklyIncome += Math.max(0, amt);
+      else if (amt > 0 && e.type !== 'founding') otherIncome += amt;
+      else if (amt < 0) expenses += -amt;
+    });
+    const totalIncome = nilBonusIncome + nilWeeklyIncome + otherIncome;
+    const net = totalIncome - expenses;
+    const netColor = net >= 0 ? 'var(--success)' : 'var(--danger)';
     let html = '<div style="background:var(--surface-2);border:1px solid var(--border);padding:12px 14px;margin-bottom:14px">' +
       '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:6px">' + agency.agencyName + ' · week ' + wk + '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">' +
@@ -7454,6 +7733,20 @@ let game = {
       '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Weekly burn</div><div style="font-weight:700">' + formatMoney(overheadThisWeek || agency.weeklyOverhead) + '</div></div>' +
       '<div><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Reputation</div><div style="font-weight:700;color:' + repColor + '">' + Math.round(agency.reputation) + '/100</div></div>' +
       '</div>';
+    // ---- Weekly finance report ----
+    html += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">' +
+      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px">This week\'s finances</div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px;font-size:12px">';
+    const finRow = (label, val, color) =>
+      '<div style="display:flex;justify-content:space-between"><span style="color:var(--text-muted)">' + label + '</span>' +
+      '<span style="font-weight:600' + (color ? ';color:' + color : '') + '">' + val + '</span></div>';
+    html += finRow('NIL commissions', '+' + formatMoney(nilBonusIncome + nilWeeklyIncome), nilBonusIncome + nilWeeklyIncome > 0 ? 'var(--success)' : null);
+    if (otherIncome > 0) html += finRow('Other income', '+' + formatMoney(otherIncome), 'var(--success)');
+    html += finRow('Operating costs', '−' + formatMoney(expenses), expenses > 0 ? 'var(--danger)' : null);
+    html += '<div style="display:flex;justify-content:space-between;margin-top:3px;padding-top:5px;border-top:1px dashed var(--border)">' +
+      '<span style="font-weight:600">Net this week</span>' +
+      '<span style="font-weight:700;color:' + netColor + '">' + (net >= 0 ? '+' : '−') + formatMoney(Math.abs(net)) + '</span></div>';
+    html += '</div></div>';
     if (dealsThisWeek > 0) {
       html += '<div style="margin-top:8px;font-size:12px;color:var(--success)">✓ ' + dealsThisWeek + ' NIL deal' + (dealsThisWeek === 1 ? '' : 's') + ' closed · ' + formatMoney(commissionThisWeek) + ' commission</div>';
     }
@@ -12234,22 +12527,22 @@ let game = {
     former_player: {
       label: 'Former Player',
       tagline: 'You played in the league. Coaches and GMs trust you.',
-      description: 'Mid-range starting capital, but your NFL connections give you instant credibility with players and front offices.',
-      capital: 250000, ovr: 60, reputation: 55, overhead: 5000,
+      description: 'Solid starting capital, and your NFL connections give you instant credibility with players and front offices.',
+      capital: 600000, ovr: 60, reputation: 55, overhead: 3000,
       color: '#2d7a2d'
     },
     trust_fund: {
       label: 'Trust Fund Kid',
       tagline: 'Daddy\'s money built a downtown office. Now prove you belong.',
-      description: 'Huge starting bankroll lets you outspend competitors, but a fancy office means $9K/wk overhead, and players don\'t know your name. The NFL won\'t take your calls until you build a real reputation.',
-      capital: 1500000, ovr: 40, reputation: 20, overhead: 9000,
+      description: 'A huge bankroll lets you outspend competitors, but players don\'t know your name. The NFL won\'t take your calls until you build a real reputation.',
+      capital: 3000000, ovr: 40, reputation: 20, overhead: 5000,
       color: '#a67c00'
     },
     self_made: {
       label: 'Self-Made',
       tagline: 'A laptop and a dream. Working out of your apartment.',
-      description: 'Tiny operating budget but tiny overhead. You\'ll need to grind walk-ons and JUCO guys before anyone good signs — and the NFL is off-limits until you earn a name for yourself.',
-      capital: 50000, ovr: 45, reputation: 30, overhead: 2500,
+      description: 'A modest budget and rock-bottom overhead. You\'ll grind walk-ons and JUCO guys before anyone good signs — and the NFL is off-limits until you earn a name for yourself.',
+      capital: 200000, ovr: 45, reputation: 30, overhead: 1500,
       color: '#5a6770'
     }
   },
@@ -13710,6 +14003,78 @@ let game = {
     this.render();
   },
 
+  // Annual solvency check — runs once per offseason (in advanceCollegeSeason). Computes the
+  // agency's NET (income − expenses) for the year that just ended from the ledger. A losing year
+  // increments a counter; TWO consecutive losing years folds the agency for good. A profitable
+  // year resets the counter. Capital being negative at year end also counts as a losing year.
+  _agentAnnualSolvencyCheck() {
+    const agency = this.state.agency;
+    if (!agency || agency.bankrupted) return;
+    // The year just completed is (current year - 1), since year++ already ran before this hook.
+    const closedYear = this.state.year - 1;
+    let net = 0;
+    (agency.ledger || []).forEach(e => {
+      if (e.year !== closedYear) return;
+      if (e.type === 'founding') return; // founding capital isn't operating income
+      net += (e.amount || 0);
+    });
+    const losingYear = net < 0 || agency.capital < 0;
+    if (losingYear) {
+      agency.negativeYears = (agency.negativeYears || 0) + 1;
+      if (agency.negativeYears >= 2) {
+        this._agentDeclareBankruptcy(net);
+        return;
+      }
+      this.addHeadline({
+        title: agency.agencyName + ' posts a losing year',
+        body: closedYear + ' closed ' + (net < 0 ? formatMoney(net) : 'in the red') + '. One more losing year and the agency folds. Close deals and cut costs.'
+      });
+    } else {
+      if (agency.negativeYears) {
+        this.addHeadline({
+          title: agency.agencyName + ' back in the black',
+          body: closedYear + ' finished profitable (' + formatMoney(net) + ' net). The agency is on solid footing again.'
+        });
+      }
+      agency.negativeYears = 0;
+    }
+  },
+
+  // Fold the agency: release every client back to the market, zero out the roster, and mark the
+  // agency permanently bankrupted. The career is over.
+  _agentDeclareBankruptcy(netLoss) {
+    const agency = this.state.agency;
+    if (!agency) return;
+    const clientNames = [];
+    (agency.clients || []).forEach(client => {
+      const prospect = this._agentResolveClient(client.prospectId);
+      if (prospect) {
+        clientNames.push(prospect.name);
+        // Release them back to the CPU market.
+        prospect.agentId = undefined;
+        prospect.agentId = this._pickAgencyForPlayer(prospect);
+        if (prospect.agentId === 'user') prospect.agentId = null;
+        if (this.state.agencies && prospect.agentId && this.state.agencies[prospect.agentId]) {
+          this.state.agencies[prospect.agentId].clientCount++;
+        }
+      }
+    });
+    agency.clients = [];
+    agency.pendingNilOffers = [];
+    agency.currentNilOffer = null;
+    agency.pendingContractDecisions = [];
+    agency.currentContractDecision = null;
+    agency.bankrupted = true;
+    if (this.state.agencies && this.state.agencies.user) {
+      this.state.agencies.user.clientCount = 0;
+    }
+    this.addHeadline({
+      type: 'hof',
+      title: agency.agencyName + ' files for bankruptcy',
+      body: 'Two straight years in the red. The agency folds, its ' + clientNames.length + ' client' + (clientNames.length === 1 ? '' : 's') + ' scatter to other firms, and the career ends here.'
+    });
+  },
+
   // Weekly tick — called from simWeek for agent careers. Deducts overhead, runs NIL deal RNG
   // for each client, refreshes pitches, checks bankruptcy.
   _agentWeeklyTick() {
@@ -13779,23 +14144,17 @@ let game = {
     // 3. Refresh available pitches
     this._agentRefreshPitches();
     
-    // 4. Bankruptcy watch
-    if (agency.capital < 0) {
-      agency.consecutiveNegativeWeeks = (agency.consecutiveNegativeWeeks || 0) + 1;
-      if (agency.consecutiveNegativeWeeks >= 3) {
-        agency.bankrupted = true;
-        this.addHeadline({
-          title: agency.agencyName + ' shuts its doors',
-          body: 'Unable to cover operating costs, the agency files for bankruptcy after weeks in the red.'
-        });
-      } else {
-        this.addHeadline({
-          title: agency.agencyName + ' running low on capital',
-          body: 'The agency is in the red. ' + (3 - agency.consecutiveNegativeWeeks) + ' more negative weeks until bankruptcy.'
-        });
-      }
-    } else {
-      agency.consecutiveNegativeWeeks = 0;
+    // 4. Cash-flow watch (NON-fatal). Bankruptcy is now evaluated ANNUALLY — an agency only folds
+    // after two consecutive YEARS finishing in the red (see _agentAnnualSolvencyCheck). Running
+    // negative mid-week just earns a warning so the user can course-correct before year's end.
+    if (agency.capital < 0 && !agency._lowCashWarnedWeek) {
+      agency._lowCashWarnedWeek = this.state.week + '-' + this.state.year;
+      this.addHeadline({
+        title: agency.agencyName + ' is operating in the red',
+        body: 'Capital has gone negative. Close deals and trim overhead — two straight losing years and the agency folds.'
+      });
+    } else if (agency.capital >= 0) {
+      agency._lowCashWarnedWeek = null;
     }
     
     // 5. Forced contract decision: if there are pending decisions and none active, surface one.
@@ -17442,7 +17801,7 @@ let game = {
   },
 
   // Show a college prospect's card with school, grade, year, projected draft range, and growth.
-  showProspectCard(prospectId) {
+  showProspectCard(prospectId, replace) {
     const p = (this.state.collegeProspects || []).find(x => x.id === prospectId);
     if (!p) {
       // Maybe they already declared / graduated — try to look up the resulting NFL player.
@@ -17540,7 +17899,7 @@ let game = {
     }
     html += '</div></div>';
     
-    this.showModal(p.name + ' · ' + schoolName, html);
+    this.showModal(p.name + ' · ' + schoolName, html, replace);
   },
 
   showTeam(teamId) {
@@ -17682,10 +18041,13 @@ let game = {
     }
     this.saveGame();
     // Re-render the current card so the button updates. We handle player and prospect cards.
+    // Pass replace=true so this in-place refresh does NOT push the pre-toggle state onto the modal
+    // history stack — otherwise hitting the back arrow would restore the stale card and look like
+    // it undid the pin.
     if (isProspect) {
-      this.showProspectCard(id);
+      this.showProspectCard(id, true);
     } else {
-      this.showPlayer(id);
+      this.showPlayer(id, true);
     }
   },
   
@@ -17799,7 +18161,7 @@ let game = {
     document.getElementById('content').innerHTML = html;
   },
   
-  showPlayer(pid) {
+  showPlayer(pid, replace) {
     const p = this.state.players[pid];
     if (!p) return;
     const team = p.team !== null ? this.state.teams[p.team] : null;
@@ -17994,7 +18356,7 @@ let game = {
         '</div>';
     }
 
-    this.showModal(p.name, html + actionRow);
+    this.showModal(p.name, html + actionRow, replace);
   },
 
   renderPlayerStatsTable(stats, pos, isCareer) {
@@ -22432,13 +22794,16 @@ let game = {
   // MODAL HELPER — supports a back button via modalHistory stack.
   // Each entry: { title, body }. New showModal calls push the previous content.
   // closeModal clears the history. modalGoBack pops one level back.
-  showModal(title, body) {
+  showModal(title, body, replace) {
     if (!this._modalHistory) this._modalHistory = [];
     const titleEl = document.getElementById('modalTitle');
     const bodyEl = document.getElementById('modalBody');
     const isOpen = document.getElementById('modal').classList.contains('show');
-    // If the modal is already open, push the current content onto history before replacing.
-    if (isOpen && titleEl && bodyEl) {
+    // If the modal is already open, push the current content onto history before replacing —
+    // UNLESS this is an in-place refresh of the same card (replace=true), e.g. after toggling a
+    // pin. In that case we must NOT push to history, or the back arrow would restore the stale
+    // pre-toggle snapshot and appear to undo the action.
+    if (isOpen && titleEl && bodyEl && !replace) {
       this._modalHistory.push({ title: titleEl.textContent, body: bodyEl.innerHTML });
     }
     // Build header with back button when history is non-empty
