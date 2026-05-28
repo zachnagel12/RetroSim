@@ -2769,6 +2769,9 @@ let game = {
           title: matchingPlayer.name + ' drafted by ' + (team ? team.city + ' ' + team.name : 'unknown team'),
           body: 'Your NFL career begins. Initial OVR: ' + matchingPlayer.rating + '. Contract: ' + (matchingPlayer.contract ? formatMoney(matchingPlayer.contract.aav) + '/yr for ' + matchingPlayer.contract.years + ' years' : 'pending') + '.'
         });
+        // Spawn a career rival — same position, comparable grade, drafted close to the user.
+        // The rival sticks with the user for their whole career and gets compared each season.
+        this._assignCareerRival(matchingPlayer);
       }
     }
     
@@ -2776,6 +2779,8 @@ let game = {
       // NFL stage — handled by the existing player aging/retirement system.
       // If player retired this offseason, mark career as retired.
       const p = this.state.players[this.state.career.entityId];
+      // Record the season's rival comparison BEFORE the player potentially retires.
+      this._recordRivalSeasonComparison();
       if (p && p.retired) {
         this.state.career.careerStage = 'retired';
         this.addHeadline({
@@ -4870,6 +4875,35 @@ let game = {
       });
       // Queue the popup. simWeek will check this flag after college sim finishes.
       this._pendingUserGamePopup = { gameRef: g };
+      // Signature moment + press take for college games. The college version of stats lives
+      // in perf.raw with shorthand keys (passYds vs passingYards). We normalize before dispatch.
+      if (perf.raw && !perf.didNotPlay) {
+        const collegeStats = {
+          passingYards: perf.raw.passYds || 0, passingTDs: perf.raw.passTDs || 0, interceptionsThrown: perf.raw.ints || 0,
+          rushingYards: perf.raw.rushYds || 0, rushingTDs: perf.raw.rushTDs || 0,
+          receivingYards: perf.raw.recYds || 0, receivingTDs: perf.raw.recTDs || 0, receptions: perf.raw.receptions || 0,
+          sacks: perf.raw.sacks || 0, tackles: perf.raw.tackles || 0, interceptionsMade: perf.raw.intsMade || 0
+        };
+        const oppMeta = COLLEGE_SCHOOLS.find(s => s.abbr === (userIsHome ? g.away : g.home));
+        const oppLabel = oppMeta ? oppMeta.name : (userIsHome ? g.away : g.home);
+        this._detectSignatureMoment(userPlayer, collegeStats, {
+          week: g.week,
+          opponent: oppLabel,
+          opponentAbbr: userIsHome ? g.away : g.home,
+          userScore: userTeamScore,
+          oppScore: oppScore,
+          userIsWin,
+          isCollege: true
+        });
+        this._addWeeklyPressReaction(userPlayer, collegeStats, {
+          week: g.week,
+          opponent: oppLabel,
+          userIsWin,
+          userScore: userTeamScore,
+          oppScore: oppScore,
+          isCollege: true
+        });
+      }
     }
     
     // Update standings
@@ -6792,6 +6826,27 @@ let game = {
           _oppTeamId: oppTeam.id,
           _gameRef: g
         };
+        // SIGNATURE MOMENT DETECTION — if this game was a standout performance, log it as a
+        // career signature moment. Generates the press take + headline as a side effect.
+        if (!didNotPlay) {
+          this._detectSignatureMoment(userPlayer, gameStats, {
+            week: g.week || this.state.week,
+            opponent: oppTeam.city + ' ' + oppTeam.name,
+            opponentAbbr: oppTeam.abbr,
+            userScore: userTeamScore,
+            oppScore: oppScore,
+            userIsWin
+          });
+          // PRESS REACTION — quick take after every game, regardless of standout status.
+          // Stored as a transient feed item the user can read on the My Career page.
+          this._addWeeklyPressReaction(userPlayer, gameStats, {
+            week: g.week || this.state.week,
+            opponent: oppTeam.city + ' ' + oppTeam.name,
+            userIsWin,
+            userScore: userTeamScore,
+            oppScore: oppScore
+          });
+        }
       }
     }
   },
@@ -9093,11 +9148,23 @@ let game = {
         p.contract.yearsRemaining--;
         p.contract.baseSalaries.shift();
         if (p.contract.yearsRemaining <= 0) {
-          if (p.team !== null) {
-            this.state.teams[p.team].roster = this.state.teams[p.team].roster.filter(id => id !== p.id);
-            p.team = null;
+          // USER CONTRACT EXPIRY INTERCEPT — instead of silently releasing the user player,
+          // queue a forced contract negotiation modal. Real NFL: end of rookie deal is a defining
+          // career moment (extension, FA, holdout). The user picks what to do.
+          if (p.isUserControlled && !p.retired) {
+            // Don't auto-release. Mark the player as needing negotiation. The user's old team
+            // retains them for the negotiation flow (they technically become a UFA inside the
+            // modal, but we keep team affinity for the extension option).
+            this._queueUserContractNegotiation(p);
+            // Clear the expired contract object but keep team affiliation until negotiation resolves
+            p.contract = null;
+          } else {
+            if (p.team !== null) {
+              this.state.teams[p.team].roster = this.state.teams[p.team].roster.filter(id => id !== p.id);
+              p.team = null;
+            }
+            p.contract = null;
           }
-          p.contract = null;
         }
       }
       // Retirement — position/archetype/generational-aware
@@ -10026,6 +10093,9 @@ let game = {
       this._preDraftPopupShown = true;
       try { this.showPreDraftFlow(); } catch (e) { /* defensive */ }
     }
+    // CONTRACT NEGOTIATION — when the user's NFL contract expires, they get a forced modal
+    // to pick extension / FA / holdout. Fires every render until resolved.
+    this._checkContractNegotiation();
   },
   
   // Insert a Back button at the very top of content if the user can navigate back.
@@ -10948,6 +11018,11 @@ let game = {
       html += '</tbody></table></div>';
     }
     
+    // SIGNATURE MOMENTS + PRESS REACTIONS — also surface in college so they're visible during
+    // the player's NCAA years (signature moments from college persist forever)
+    html += this._renderSignatureMomentsSection(p);
+    html += this._renderPressReactionsSection(p);
+    
     document.getElementById('content').innerHTML = html;
   },
 
@@ -11140,6 +11215,18 @@ let game = {
         this.renderPlayerHistoryTable(p) + '</div>';
     }
     
+    // ============ CAREER RIVAL ============
+    // Show the user's career rival and the season-by-season head-to-head
+    html += this._renderRivalSection(p);
+    
+    // ============ SIGNATURE MOMENTS ============
+    // Highlight reel of standout games from the user's career
+    html += this._renderSignatureMomentsSection(p);
+    
+    // ============ PRESS REACTIONS ============
+    // Recent media + fan takes on the user's performance
+    html += this._renderPressReactionsSection(p);
+    
     document.getElementById('content').innerHTML = html;
   },
 
@@ -11226,7 +11313,145 @@ let game = {
     
     document.getElementById('content').innerHTML = html;
   },
-
+  
+  // Render the rival comparison section
+  _renderRivalSection(p) {
+    if (!this.state.career || !this.state.career.rivalPlayerId) return '';
+    const rival = this.state.players[this.state.career.rivalPlayerId];
+    if (!rival) return '';
+    const rivalTeam = rival.team !== null ? this.state.teams[rival.team] : null;
+    const userWins = (this.state.career.rivalSeasonHistory || []).filter(h => this._compareRivalSeasons(h.userSeason, h.rivalSeason, p.position) > 0).length;
+    const rivalWins = (this.state.career.rivalSeasonHistory || []).filter(h => this._compareRivalSeasons(h.userSeason, h.rivalSeason, p.position) < 0).length;
+    const ties = (this.state.career.rivalSeasonHistory || []).length - userWins - rivalWins;
+    
+    let html = '<div class="card" style="margin-top:14px"><div class="card-header">' +
+      '<div class="card-title">Career rival</div>' +
+      '<div class="card-meta">Class of ' + p.draftYear + ' · same position, same draft class</div></div>';
+    
+    // Hero row: user vs rival side-by-side
+    html += '<div style="padding:18px;display:grid;grid-template-columns:1fr auto 1fr;gap:18px;align-items:center;border-bottom:1px solid var(--border)">' +
+      // User side
+      '<div style="text-align:right">' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">YOU</div>' +
+      '<div style="font-size:16px;font-weight:700;margin-top:2px">' + p.name + '</div>' +
+      '<div style="font-size:11px;color:var(--text-muted)">' + (p.team !== null ? this.state.teams[p.team].abbr : 'FA') + ' · ' + p.rating + ' OVR</div>' +
+      '</div>' +
+      // VS pill
+      '<div style="background:var(--surface-2);padding:10px 14px;text-align:center">' +
+      '<div style="font-size:10px;letter-spacing:1px;font-weight:700;color:var(--text-muted)">HEAD-TO-HEAD</div>' +
+      '<div style="font-size:22px;font-weight:800;margin-top:6px;font-family:var(--font-mono)">' + userWins + ' – ' + rivalWins + (ties > 0 ? ' (' + ties + 't)' : '') + '</div>' +
+      '</div>' +
+      // Rival side
+      '<div style="cursor:pointer" onclick="game.showPlayer(' + rival.id + ')">' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">RIVAL</div>' +
+      '<div style="font-size:16px;font-weight:700;margin-top:2px;text-decoration:underline">' + rival.name + '</div>' +
+      '<div style="font-size:11px;color:var(--text-muted)">' + (rivalTeam ? rivalTeam.abbr : (rival.retired ? 'Retired' : 'FA')) + ' · ' + rival.rating + ' OVR' + (rival.retired ? ' (retired)' : '') + '</div>' +
+      '</div>' +
+      '</div>';
+    
+    // Year-by-year table
+    const history = this.state.career.rivalSeasonHistory || [];
+    if (history.length > 0) {
+      html += '<div style="padding:6px 0"><table><thead><tr>' +
+        '<th>Year</th><th class="text-center">You</th><th class="text-center">Rival</th><th class="text-right">Edge</th>' +
+        '</tr></thead><tbody>';
+      history.slice().reverse().forEach(h => {
+        const edge = this._compareRivalSeasons(h.userSeason, h.rivalSeason, p.position);
+        const edgeLabel = edge > 0 ? '<span style="color:var(--success);font-weight:700">YOU</span>' : edge < 0 ? '<span style="color:var(--danger);font-weight:700">RIVAL</span>' : '<span class="muted">tie</span>';
+        const userStat = this._formatRivalStatLine(h.userSeason, p.position);
+        const rivalStat = this._formatRivalStatLine(h.rivalSeason, p.position);
+        html += '<tr><td class="mono-num">' + h.year + '</td>' +
+          '<td class="text-center" style="font-size:11px">' + userStat + '</td>' +
+          '<td class="text-center" style="font-size:11px">' + rivalStat + '</td>' +
+          '<td class="text-right" style="font-size:11px">' + edgeLabel + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    } else {
+      html += '<div class="muted" style="padding:14px;text-align:center;font-style:italic;font-size:12px">First season comparison comes at the end of this year.</div>';
+    }
+    
+    html += '</div>';
+    return html;
+  },
+  
+  // Compact stat line for the rival comparison table
+  _formatRivalStatLine(s, position) {
+    if (position === 'QB') return (s.passingYards || 0).toLocaleString() + ' yds · ' + (s.passingTDs || 0) + ' TD · ' + (s.interceptionsThrown || 0) + ' INT';
+    if (position === 'RB') return (s.rushingYards || 0).toLocaleString() + ' yds · ' + ((s.rushingTDs || 0) + (s.receivingTDs || 0)) + ' TD';
+    if (position === 'WR' || position === 'TE') return (s.receptions || 0) + ' rec · ' + (s.receivingYards || 0).toLocaleString() + ' yds · ' + (s.receivingTDs || 0) + ' TD';
+    if (position === 'EDGE' || position === 'DT' || position === 'LB') return (s.sacks || 0).toFixed(1) + ' sacks · ' + (s.tackles || 0) + ' tackles';
+    if (position === 'CB' || position === 'S') return (s.interceptionsMade || 0) + ' INT · ' + (s.tackles || 0) + ' tackles';
+    return '—';
+  },
+  
+  // Render the signature moments highlight reel
+  _renderSignatureMomentsSection(p) {
+    const moments = (p.signatureMoments || []).slice().reverse();
+    if (moments.length === 0) return '';
+    
+    let html = '<div class="card" style="margin-top:14px"><div class="card-header">' +
+      '<div class="card-title">Signature moments</div>' +
+      '<div class="card-meta">' + moments.length + ' career-defining game' + (moments.length === 1 ? '' : 's') + '</div></div>';
+    
+    html += '<div style="padding:6px 0">';
+    moments.slice(0, 8).forEach(m => {
+      const resultColor = m.userIsWin ? 'var(--success)' : 'var(--danger)';
+      html += '<div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px">' +
+        '<div style="width:3px;height:42px;background:' + resultColor + ';flex-shrink:0"></div>' +
+        '<div style="flex:1">' +
+        '<div style="font-size:13px;font-weight:700;margin-bottom:2px">' + m.headline + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);line-height:1.5">' +
+        m.stat + ' · vs ' + m.opponent + ' · ' + (m.userIsWin ? 'W' : 'L') + ' ' + m.userScore + '-' + m.oppScore +
+        '</div>' +
+        '</div>' +
+        '<div style="text-align:right">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">' + (m.isCollege ? 'COLLEGE · ' : 'NFL · ') + m.year + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted)">Wk ' + m.week + ' · Age ' + m.ageAtTime + '</div>' +
+        '</div>' +
+        '</div>';
+    });
+    if (moments.length > 8) {
+      html += '<div class="muted" style="padding:10px;text-align:center;font-size:11px">Showing 8 most recent of ' + moments.length + ' total</div>';
+    }
+    html += '</div></div>';
+    return html;
+  },
+  
+  // Render the press reactions feed
+  _renderPressReactionsSection(p) {
+    const reactions = (p.pressReactions || []).slice().reverse();
+    if (reactions.length === 0) return '';
+    
+    let html = '<div class="card" style="margin-top:14px"><div class="card-header">' +
+      '<div class="card-title">Press &amp; fan reactions</div>' +
+      '<div class="card-meta">Last ' + Math.min(10, reactions.length) + ' games</div></div>';
+    
+    html += '<div style="padding:6px 0">';
+    reactions.slice(0, 10).forEach(r => {
+      const tierColor = {
+        great: 'var(--success)', silver_lining: 'var(--accent)', good: 'var(--success)',
+        neutral_loss: 'var(--text-muted)', survived: 'var(--warning)', poor: 'var(--warning)',
+        lucky: 'var(--text-muted)', disaster: 'var(--danger)'
+      }[r.tier] || 'var(--text-muted)';
+      const tierLabel = {
+        great: 'GLOWING', silver_lining: 'BRIGHT SPOT', good: 'POSITIVE',
+        neutral_loss: 'NEUTRAL', survived: 'GOT BAILED OUT', poor: 'CRITICAL',
+        lucky: 'LUCKY', disaster: 'BRUTAL'
+      }[r.tier] || 'NEUTRAL';
+      
+      html += '<div style="padding:14px 18px;border-bottom:1px solid var(--border);border-left:3px solid ' + tierColor + '">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">' +
+        '<span style="font-size:9px;letter-spacing:0.5px;font-weight:700;color:' + tierColor + '">' + tierLabel + '</span>' +
+        '<span class="muted" style="font-size:10px">' + (r.isCollege ? 'College · ' : '') + r.year + ' · Wk ' + r.week + ' vs ' + r.opponent + '</span>' +
+        '</div>' +
+        '<div style="font-size:13px;line-height:1.5;font-style:italic">"' + r.take + '"</div>' +
+        '<div class="muted" style="font-size:10px;margin-top:4px">— ' + r.source + '</div>' +
+        '</div>';
+    });
+    html += '</div></div>';
+    return html;
+  },
+  
   openHireCoachDialog(role) {
     // Pop a coach-selector modal. For HC vacancies, two sections:
     //   (1) FA Head Coaches
@@ -16356,6 +16581,13 @@ let game = {
     this.state.career.pendingDeclarationChoice = null;
     this._declChoiceShown = false;
     closeModal();
+    // BUGFIX: trigger the career progression NOW so the stage transitions to 'declared'
+    // immediately. Otherwise the user gets stuck in 'college' stage until the next offseason
+    // runPlayerCareerProgression call — which never advances the year because the user is
+    // already done with college.
+    if (declare) {
+      this.runPlayerCareerProgression();
+    }
     this.render();
     this.saveGame();
   },
@@ -16389,6 +16621,794 @@ let game = {
   
   // Helper: locate the user player wherever they are in the prospect/draft pipeline.
   // The user is in 'declared' stage, meaning they should be in pendingDraftClass.
+  // ============================================================
+  // CAREER RIVAL — a rival player at the user's position who's tracked alongside them
+  // ============================================================
+  // Inspired by real NFL parallels: Brady/Manning, Mahomes/Allen, Burrow/Herbert. The rival
+  // shares the user's draft class + position, so head-to-head comparisons feel meaningful.
+  // Pick from the user's rookie cohort: same position, OVR within 6 points, drafted within
+  // 20 picks. We prefer a slightly higher-rated rival so the user has someone to chase, but
+  // we'll settle for slightly worse if no better match exists.
+  _assignCareerRival(userPlayer) {
+    if (!userPlayer || !this.state.career) return;
+    // Don't overwrite an existing rival
+    if (this.state.career.rivalPlayerId !== undefined && this.state.career.rivalPlayerId !== null) return;
+    
+    const rookieClass = this.state.players.filter(p =>
+      p && !p.retired && p.id !== userPlayer.id &&
+      p.position === userPlayer.position &&
+      p.draftYear === userPlayer.draftYear &&
+      p.team !== null
+    );
+    if (rookieClass.length === 0) {
+      // No same-position rookie this year (uncommon for QB/RB/WR; possible for K/P).
+      // Fall back to picking any active player at the same position within 6 OVR.
+      const fallback = this.state.players.filter(p =>
+        p && !p.retired && p.id !== userPlayer.id &&
+        p.position === userPlayer.position &&
+        p.team !== null &&
+        Math.abs(p.rating - userPlayer.rating) <= 6
+      );
+      if (fallback.length === 0) return;
+      // Pick a random one weighted toward similar OVR
+      fallback.sort((a, b) => Math.abs(a.rating - userPlayer.rating) - Math.abs(b.rating - userPlayer.rating));
+      const rival = fallback[Math.min(2, fallback.length - 1)]; // 3rd-closest to add variety
+      this.state.career.rivalPlayerId = rival.id;
+      this.state.career.rivalSeasonHistory = [];
+      this._addRivalSpawnHeadline(userPlayer, rival);
+      return;
+    }
+    
+    // Score each rookie by closeness (smaller = better rival match)
+    const scored = rookieClass.map(p => {
+      const ovrDelta = Math.abs(p.rating - userPlayer.rating);
+      const score = ovrDelta;
+      return { player: p, score };
+    });
+    scored.sort((a, b) => a.score - b.score);
+    
+    // Pick the closest-OVR rookie. If multiple at same OVR, pick one drafted close to the user
+    // (within 20 picks) for the "they went a few picks apart" narrative.
+    const top = scored.slice(0, 5);
+    const rival = top[Math.floor(Math.random() * top.length)].player;
+    
+    this.state.career.rivalPlayerId = rival.id;
+    this.state.career.rivalSeasonHistory = [];
+    this._addRivalSpawnHeadline(userPlayer, rival);
+  },
+  
+  // Headline + narrative framing when the rivalry is set up
+  _addRivalSpawnHeadline(userPlayer, rival) {
+    const userTeam = userPlayer.team !== null ? this.state.teams[userPlayer.team] : null;
+    const rivalTeam = rival.team !== null ? this.state.teams[rival.team] : null;
+    if (!userTeam || !rivalTeam) return;
+    this.addHeadline({
+      title: 'Class of ' + userPlayer.draftYear + ' rivalry brewing',
+      body: userPlayer.name + ' (' + userTeam.abbr + ') and ' + rival.name + ' (' + rivalTeam.abbr + ') will define their generation at ' + userPlayer.position + '. Same draft class, same position — the comparisons start now.'
+    });
+  },
+  
+  // Take a season-end snapshot of how the user and rival's seasons compared.
+  // Called from the offseason transition for each year both are still active.
+  _recordRivalSeasonComparison() {
+    if (!this.state.career || !this.state.career.rivalPlayerId) return;
+    const userPlayer = this.getUserPlayer();
+    const rival = this.state.players[this.state.career.rivalPlayerId];
+    if (!userPlayer || !rival || userPlayer.retired) return;
+    
+    // The season we're recording just ENDED — state.year has already incremented to the new
+    // season. Label the record with the season that played, not the new year.
+    const seasonYear = this.state.year - 1;
+    
+    // Dedupe: runPlayerCareerProgression can be called multiple times per offseason
+    // (post-college-season + post-draft), so skip if we already recorded this season.
+    if (!this.state.career.rivalSeasonHistory) this.state.career.rivalSeasonHistory = [];
+    const alreadyRecorded = this.state.career.rivalSeasonHistory.find(h => h.year === seasonYear);
+    if (alreadyRecorded) return;
+    
+    // Build comparable stat lines for this season
+    const userLine = this._summarizeSeasonForRivalry(userPlayer);
+    const rivalLine = this._summarizeSeasonForRivalry(rival);
+    
+    // Only record if at least one of them played (avoids ghost entries before NFL career starts)
+    const hasUserData = userLine.passingYards > 0 || userLine.rushingYards > 0 || userLine.receivingYards > 0 || userLine.tackles > 0 || userLine.sacks > 0 || userLine.interceptionsMade > 0;
+    const hasRivalData = rivalLine.passingYards > 0 || rivalLine.rushingYards > 0 || rivalLine.receivingYards > 0 || rivalLine.tackles > 0 || rivalLine.sacks > 0 || rivalLine.interceptionsMade > 0;
+    if (!hasUserData && !hasRivalData) return;
+    
+    this.state.career.rivalSeasonHistory.push({
+      year: seasonYear,
+      userSeason: userLine,
+      rivalSeason: rivalLine,
+      rivalRetired: rival.retired || false
+    });
+    
+    // Add a headline summarizing who had the better year
+    const userWinSeason = this._compareRivalSeasons(userLine, rivalLine, userPlayer.position);
+    if (userWinSeason > 0) {
+      this.addHeadline({
+        title: userPlayer.name + ' outshines ' + rival.name + ' in ' + seasonYear,
+        body: 'Round ' + (this.state.career.rivalSeasonHistory.length) + ' of the rivalry goes to ' + userPlayer.name + '.'
+      });
+    } else if (userWinSeason < 0) {
+      this.addHeadline({
+        title: rival.name + ' has the edge over ' + userPlayer.name + ' in ' + seasonYear,
+        body: 'Round ' + (this.state.career.rivalSeasonHistory.length) + ' goes to your rival. Time to respond next season.'
+      });
+    }
+  },
+  
+  // Helpers — produce a comparable season summary
+  // CRITICAL TIMING: by the time this runs in offseason, state.year has ALREADY incremented to
+  // the new year, AND seasonStats has been zeroed out. The season that just ended (state.year - 1)
+  // is in the LAST entry of seasonHistory, with stats wrapped in a .stats sub-object.
+  _summarizeSeasonForRivalry(p) {
+    const history = p.seasonHistory || [];
+    const latest = history.length > 0 ? history[history.length - 1] : null;
+    let s;
+    // The latest entry should be from last year (state.year - 1) since we've already incremented.
+    // But just use the latest entry regardless — it's by definition the most recent season.
+    if (latest && latest.stats) {
+      s = latest.stats;
+    } else {
+      s = p.seasonStats || {};
+    }
+    return {
+      gamesPlayed: s.gamesPlayed || 0,
+      passingYards: s.passingYards || 0, passingTDs: s.passingTDs || 0, interceptionsThrown: s.interceptionsThrown || 0,
+      rushingYards: s.rushingYards || 0, rushingTDs: s.rushingTDs || 0,
+      receivingYards: s.receivingYards || 0, receivingTDs: s.receivingTDs || 0, receptions: s.receptions || 0,
+      sacks: s.sacks || 0, tackles: s.tackles || 0, interceptionsMade: s.interceptionsMade || 0,
+      ovr: p.rating,
+      teamRecord: p.team !== null ? this.state.teams[p.team].wins + '-' + this.state.teams[p.team].losses : 'FA'
+    };
+  },
+  
+  // Returns 1 if user had better season, -1 if rival, 0 if equal/incomparable
+  _compareRivalSeasons(a, b, position) {
+    const score = (s) => {
+      if (position === 'QB') return s.passingYards * 0.04 + s.passingTDs * 6 - s.interceptionsThrown * 4 + s.rushingYards * 0.05 + s.rushingTDs * 5;
+      if (position === 'RB') return s.rushingYards * 0.10 + s.rushingTDs * 7 + s.receivingYards * 0.06 + s.receivingTDs * 6;
+      if (position === 'WR' || position === 'TE') return s.receivingYards * 0.10 + s.receivingTDs * 8 + (s.receptions || 0) * 0.5;
+      return s.sacks * 5 + s.tackles * 0.4 + s.interceptionsMade * 6;
+    };
+    const aScore = score(a), bScore = score(b);
+    if (aScore > bScore * 1.05) return 1;
+    if (bScore > aScore * 1.05) return -1;
+    return 0;
+  },
+  
+  // ============================================================
+  // SIGNATURE MOMENTS — career-defining games that get remembered
+  // ============================================================
+  // Real player careers are remembered by a few iconic games: Joe Montana's "The Catch" drive,
+  // Brady's 28-3 comeback. We detect when the user's game crosses a "memorable" threshold and
+  // log it as a signature moment, with the press take + opponent context preserved forever.
+  _detectSignatureMoment(userPlayer, stats, ctx) {
+    if (!userPlayer || !stats) return;
+    if (!userPlayer.signatureMoments) userPlayer.signatureMoments = [];
+    
+    // Position-based thresholds for what counts as signature. Tuned so a typical season produces
+    // 2-4 signature games per year for an elite player — common enough to feel meaningful, rare
+    // enough to feel earned.
+    let moment = null;
+    const pos = userPlayer.position;
+    
+    if (pos === 'QB') {
+      // QB: 4+ TD passes is great. 350+ yards in a game. Perfect (0 INT) with high efficiency.
+      const tds = stats.passingTDs || 0;
+      const yds = stats.passingYards || 0;
+      const ints = stats.interceptionsThrown || 0;
+      const rushTDs = stats.rushingTDs || 0;
+      if (tds >= 4) {
+        moment = { type: 'MULTI_TD', headline: tds + '-TD masterclass', stat: tds + ' passing TDs, ' + yds + ' yards' };
+      } else if (yds >= 350 && tds >= 2) {
+        moment = { type: 'BIG_YARDAGE', headline: yds + '-yard performance', stat: yds + ' yards, ' + tds + ' TDs' };
+      } else if (tds >= 3 && ints === 0 && yds >= 280) {
+        moment = { type: 'EFFICIENT', headline: 'Clinical ' + tds + '-TD performance', stat: yds + ' yds, ' + tds + ' TDs, 0 INT' };
+      } else if (rushTDs >= 2 && tds >= 1) {
+        moment = { type: 'DUAL_THREAT', headline: 'Dual-threat showcase', stat: tds + ' pass TDs + ' + rushTDs + ' rush TDs' };
+      }
+    } else if (pos === 'RB') {
+      const yds = stats.rushingYards || 0;
+      const tds = (stats.rushingTDs || 0) + (stats.receivingTDs || 0);
+      if (yds >= 175) {
+        moment = { type: 'BIG_RUSH', headline: yds + '-yard rushing day', stat: yds + ' rush yds, ' + tds + ' total TDs' };
+      } else if (tds >= 3) {
+        moment = { type: 'MULTI_TD', headline: tds + '-TD eruption', stat: tds + ' total TDs, ' + yds + ' rush yds' };
+      } else if (yds >= 130 && tds >= 2) {
+        moment = { type: 'COMPLETE_GAME', headline: 'Workhorse performance', stat: yds + ' rush yds, ' + tds + ' TDs' };
+      }
+    } else if (pos === 'WR' || pos === 'TE') {
+      const yds = stats.receivingYards || 0;
+      const tds = stats.receivingTDs || 0;
+      const recs = stats.receptions || 0;
+      if (yds >= 175) {
+        moment = { type: 'BIG_RECEIVING', headline: yds + '-yard receiving day', stat: recs + ' rec, ' + yds + ' yds, ' + tds + ' TDs' };
+      } else if (tds >= 3) {
+        moment = { type: 'TD_BARRAGE', headline: tds + '-TD performance', stat: recs + ' rec, ' + yds + ' yds' };
+      } else if (recs >= 10 && yds >= 120) {
+        moment = { type: 'HIGH_VOLUME', headline: recs + '-catch performance', stat: recs + ' rec, ' + yds + ' yds' };
+      } else if (tds >= 2 && yds >= 110) {
+        moment = { type: 'TD_DAY', headline: 'Multi-TD afternoon', stat: tds + ' TDs, ' + yds + ' rec yds' };
+      }
+    } else if (pos === 'EDGE' || pos === 'DT' || pos === 'LB') {
+      const sacks = stats.sacks || 0;
+      const tackles = stats.tackles || 0;
+      if (sacks >= 2.5) {
+        moment = { type: 'SACK_FEST', headline: sacks + '-sack monster game', stat: sacks + ' sacks, ' + tackles + ' tackles' };
+      } else if (sacks >= 2 && tackles >= 6) {
+        moment = { type: 'DOMINANT_FRONT', headline: 'Dominant front-7 game', stat: sacks + ' sacks, ' + tackles + ' tackles' };
+      } else if (tackles >= 12) {
+        moment = { type: 'TACKLE_MACHINE', headline: tackles + '-tackle game', stat: tackles + ' tackles, ' + sacks + ' sacks' };
+      }
+    } else if (pos === 'CB' || pos === 'S') {
+      const picks = stats.interceptionsMade || 0;
+      const tackles = stats.tackles || 0;
+      if (picks >= 2) {
+        moment = { type: 'PICK_PARADE', headline: picks + '-INT lockdown', stat: picks + ' INTs, ' + tackles + ' tackles' };
+      } else if (picks >= 1 && tackles >= 8) {
+        moment = { type: 'TWO_WAY', headline: 'Two-way DB performance', stat: picks + ' INT, ' + tackles + ' tackles' };
+      }
+    }
+    
+    if (!moment) return;
+    
+    // Stash the moment with full context — opponent, scoreline, result
+    const sigMoment = {
+      year: this.state.year,
+      week: ctx.week,
+      ageAtTime: userPlayer.age,
+      ovrAtTime: userPlayer.rating,
+      isCollege: !!ctx.isCollege,
+      opponent: ctx.opponent,
+      opponentAbbr: ctx.opponentAbbr,
+      userScore: ctx.userScore,
+      oppScore: ctx.oppScore,
+      userIsWin: ctx.userIsWin,
+      type: moment.type,
+      headline: moment.headline,
+      stat: moment.stat
+    };
+    userPlayer.signatureMoments.push(sigMoment);
+    
+    // Headline for the league wire
+    this.addHeadline({
+      title: userPlayer.name + ': ' + moment.headline,
+      body: moment.stat + ' vs ' + ctx.opponent + ' · ' + (ctx.userIsWin ? 'W' : 'L') + ' ' + ctx.userScore + '-' + ctx.oppScore + '. One for the highlight reel.'
+    });
+  },
+  
+  // ============================================================
+  // PRESS REACTIONS — fan + media takes after every game
+  // ============================================================
+  // After every user game, a short press take is generated based on performance + result.
+  // Stored as a feed item on the user's player record. Shows on the My Career page so the
+  // user feels the temperature of the fanbase/media — high after great games, brutal after bad ones.
+  _addWeeklyPressReaction(userPlayer, stats, ctx) {
+    if (!userPlayer) return;
+    if (!userPlayer.pressReactions) userPlayer.pressReactions = [];
+    
+    // Score the performance 0-100. Combined with the game result, this drives the tone.
+    const perfScore = this._scoreUserGameForPress(userPlayer, stats);
+    const won = !!ctx.userIsWin;
+    
+    // Tier the reaction. Real fan reactions are MOSTLY noise — moderate signal from extremes.
+    let tier;
+    if (perfScore >= 75 && won) tier = 'great';
+    else if (perfScore >= 75 && !won) tier = 'silver_lining'; // played well but team lost
+    else if (perfScore >= 50 && won) tier = 'good';
+    else if (perfScore >= 50 && !won) tier = 'neutral_loss';
+    else if (perfScore >= 25 && won) tier = 'survived';      // didn't help much but team won
+    else if (perfScore >= 25 && !won) tier = 'poor';
+    else if (won) tier = 'lucky';                            // bad game, won anyway
+    else tier = 'disaster';                                  // bad game, lost
+    
+    // Pull a random take from the tier's pool. Pools vary by position so QBs see different
+    // takes than RBs or DBs.
+    const takes = this._pressTakesForTier(tier, userPlayer.position);
+    const take = takes[Math.floor(Math.random() * takes.length)];
+    
+    // Attribute to a plausible source (rotating). Real NFL has beat writers + national talking
+    // heads + Twitter randos — we mix them.
+    const sources = ['Beat Writer', 'ESPN take', 'Local sports radio', 'Football Twitter', 'The Athletic', 'Bleacher Report', 'Anonymous scout', 'Former player on TV'];
+    const source = sources[Math.floor(Math.random() * sources.length)];
+    
+    userPlayer.pressReactions.push({
+      year: this.state.year,
+      week: ctx.week,
+      isCollege: !!ctx.isCollege,
+      opponent: ctx.opponent,
+      tier,
+      source,
+      take,
+      userIsWin: won,
+      userScore: ctx.userScore,
+      oppScore: ctx.oppScore
+    });
+    
+    // Keep last 40 reactions to bound storage
+    if (userPlayer.pressReactions.length > 40) {
+      userPlayer.pressReactions = userPlayer.pressReactions.slice(-40);
+    }
+  },
+  
+  // Score a game 0-100 for press purposes. Higher = better individual performance.
+  // Calibrated so a typical game (260 yds, 2 TD, 1 INT) lands around 55-60 (neutral).
+  _scoreUserGameForPress(p, s) {
+    if (!s) return 0;
+    const pos = p.position;
+    if (pos === 'QB') {
+      const tds = s.passingTDs || 0, ints = s.interceptionsThrown || 0, yds = s.passingYards || 0;
+      // Base: 250 yds + 2 TD - 1 INT = 250*0.10 + 2*15 - 1*15 = 40 (lower-mid)
+      // Great: 350 yds + 3 TD + 0 INT = 35 + 45 + 0 = 80 (great tier)
+      // Disaster: 180 yds + 0 TD + 3 INT = 18 + 0 - 45 = -27 → clamped 0
+      let score = tds * 15 + yds * 0.10 - ints * 15 + (s.rushingTDs || 0) * 10;
+      return Math.max(0, Math.min(100, score));
+    }
+    if (pos === 'RB') {
+      const yds = s.rushingYards || 0, tds = (s.rushingTDs || 0) + (s.receivingTDs || 0);
+      // 100 yds + 1 TD = 50 (neutral); 150 + 2 TD = 75 (good); 75 + 0 TD = 19 (poor)
+      return Math.max(0, Math.min(100, tds * 17 + yds * 0.25 + (s.receivingYards || 0) * 0.12));
+    }
+    if (pos === 'WR' || pos === 'TE') {
+      // 90 yds + 1 TD = 45 (neutral); 120 + 2 TD = 75 (good)
+      return Math.max(0, Math.min(100, (s.receivingTDs || 0) * 20 + (s.receivingYards || 0) * 0.25 + (s.receptions || 0) * 2));
+    }
+    if (pos === 'EDGE' || pos === 'DT' || pos === 'LB') {
+      // 1 sack + 5 tackles = 32 (poor-ish); 2 sacks + 7 tackles = 64 (good)
+      return Math.max(0, Math.min(100, (s.sacks || 0) * 22 + (s.tackles || 0) * 4 + (s.interceptionsMade || 0) * 28));
+    }
+    if (pos === 'CB' || pos === 'S') {
+      return Math.max(0, Math.min(100, (s.interceptionsMade || 0) * 32 + (s.tackles || 0) * 4 + (s.sacks || 0) * 18 + (s.passDeflections || 0) * 5));
+    }
+    return 50;
+  },
+  
+  // Generate a take pool for the tier + position. These are intentionally varied — fans say
+  // wildly different things about the same game depending on the source.
+  _pressTakesForTier(tier, position) {
+    // Generic position-flavored fragments
+    const youPhrase = position === 'QB' ? 'the QB' : position === 'RB' ? 'the back' : position === 'WR' ? 'the receiver' : position === 'TE' ? 'the TE' : position === 'EDGE' || position === 'DT' || position === 'LB' ? 'the pass rusher' : 'the DB';
+    
+    const pools = {
+      great: [
+        'Absolute masterpiece. This is what the franchise drafted them to do.',
+        'Performance of the year candidate. Carry this team to the playoffs.',
+        'Best version of ' + youPhrase + ' we\'ve seen all season. Sustainable?',
+        'Star turn. The league has been put on notice.',
+        'If this is the new ceiling, the entire division should be scared.',
+        'This is what generational talent looks like in real time.',
+        'Pay them. Now. Whatever it takes.'
+      ],
+      silver_lining: [
+        'Did everything they could. The rest of the team let them down.',
+        'Brilliant individual game, but you can\'t win games alone.',
+        'Stat-stuffing in a loss. Need more from the surrounding cast.',
+        'A bright spot in an otherwise frustrating loss.',
+        'Performance was elite. Coaching staff needs to figure out the rest.',
+        'Carried the offense single-handedly. Still not enough.'
+      ],
+      good: [
+        'Solid, professional game. Did their job.',
+        'No flash, but a quietly effective day. Wins like this matter.',
+        'Steady. The kind of game championship teams string together.',
+        'Did enough to get the job done. Room to grow.',
+        'Played within themselves. Smart football.',
+        'Workmanlike outing. Nothing to write home about, but a W.'
+      ],
+      neutral_loss: [
+        'Tough one. Performance was fine, results weren\'t.',
+        'Stat line looks OK on paper. The game tape might tell a different story.',
+        'Average game in a frustrating loss. Need to find another gear.',
+        'They were neither the problem nor the solution today.',
+        'Fine in a vacuum. In context of the loss, that\'s not enough.'
+      ],
+      survived: [
+        'Underwhelming, but the team bailed them out. Get well next week.',
+        'Got rescued by the defense. Need to play better.',
+        'A win is a win — but the tape will not be kind.',
+        'Lucky to escape. Has to be sharper.',
+        'Quiet day. Team picked them up.'
+      ],
+      poor: [
+        'Tough game. Has to be better. The fan base is restless.',
+        'Below their standard. Hope this is an off week.',
+        'Disappointing performance in a winnable game.',
+        'Need to see a response next week. This isn\'t the level expected.',
+        'Off day. Get back to the film room.'
+      ],
+      lucky: [
+        'Got bailed out today. Stat line is ugly.',
+        'Performance didn\'t match the result. Don\'t let it slide.',
+        'A win, but the warning signs are there.',
+        'Team won DESPITE this performance, not because of it.'
+      ],
+      disaster: [
+        'Brutal. The worst game we\'ve seen from them.',
+        'If this continues, questions about the future will start.',
+        'Has to be benched or has to play through it — coaching staff has a decision.',
+        'Stinker. Tape will be hard to watch.',
+        'No way around it: this was a disaster. The pressure is on now.',
+        'Fan base is openly questioning the investment. Brutal afternoon.'
+      ]
+    };
+    return pools[tier] || pools.neutral_loss;
+  },
+  
+  // ============================================================
+  // CONTRACT NEGOTIATIONS — end-of-deal decision point for user
+  // ============================================================
+  // When the user's contract expires, they're given a forced choice popup with three paths:
+  //   1) Sign extension with current team — quick, slightly lower money, security
+  //   2) Test free agency — full slate of offers from interested teams, often more money
+  //                          but disrupts continuity (new team, new coaches, new playbook)
+  //   3) Hold out for more — risk anger from team, possibly higher offer or get cut
+  // Each path leads to a different contract outcome stored on the player.
+  
+  // Queue: called when user contract expires. The next render() hook will fire the modal.
+  _queueUserContractNegotiation(userPlayer) {
+    if (!userPlayer || !userPlayer.team) return;
+    // Build the negotiation context — current team offer + market value baseline
+    const currentTeam = this.state.teams[userPlayer.team];
+    const marketAAV = calculateContractAAV(userPlayer.position, userPlayer.rating, userPlayer.age, this.state.year);
+    const marketYears = determineContractYears(userPlayer.rating, userPlayer.age);
+    
+    // Build the current team's extension offer. Teams that drafted the player typically offer
+    // ~5-10% below market AAV but with higher security (longer term, more guaranteed). Bad teams
+    // and teams desperate to keep stars sometimes go above market.
+    const teamLoyaltyPct = this._calculateTeamLoyalty(userPlayer, currentTeam);
+    let extensionAAV = Math.round(marketAAV * (0.92 + teamLoyaltyPct * 0.13) / 100_000) * 100_000;
+    let extensionYears = Math.min(6, marketYears + 1); // current team can offer 1 extra year
+    
+    // FA offers: generate from up to 4-6 interested teams. Quality scales with the player's OVR.
+    const faOffers = this._generateUserFAOffers(userPlayer, marketAAV, marketYears);
+    
+    this.state.career.pendingContractNegotiation = {
+      playerId: userPlayer.id,
+      previousTeamId: currentTeam.id,
+      previousTeamName: currentTeam.city + ' ' + currentTeam.name,
+      marketAAV,
+      marketYears,
+      extensionOffer: { teamId: currentTeam.id, aav: extensionAAV, years: extensionYears, guaranteed: Math.round(extensionAAV * extensionYears * 0.55), isCurrentTeam: true },
+      faOffers,
+      resolved: false
+    };
+  },
+  
+  // How much does the player's current team want to keep them? 0-1 scale.
+  // Factors: performance vs expectations, awards, fan favorite status, captaincy.
+  _calculateTeamLoyalty(userPlayer, team) {
+    let loyalty = 0.5;
+    // Awards lean
+    const awards = userPlayer.awards || [];
+    const mvp = awards.filter(a => a.type === 'MVP').length;
+    const proBowls = awards.filter(a => a.type === 'Pro Bowl').length;
+    const allPros = awards.filter(a => a.type === 'All-Pro 1st' || a.type === 'All-Pro 2nd').length;
+    loyalty += mvp * 0.15 + allPros * 0.08 + proBowls * 0.03;
+    // OVR lean — high OVR = team wants to keep
+    if (userPlayer.rating >= 90) loyalty += 0.20;
+    else if (userPlayer.rating >= 85) loyalty += 0.10;
+    else if (userPlayer.rating >= 80) loyalty += 0.05;
+    else if (userPlayer.rating < 72) loyalty -= 0.15; // low-OVR, team may walk away
+    // Recent team record — winning teams hold on to stars
+    const winPct = team.wins / Math.max(1, team.wins + team.losses);
+    if (winPct >= 0.60) loyalty += 0.05;
+    return Math.max(0, Math.min(1, loyalty));
+  },
+  
+  // Generate FA offers from teams with cap space + position need
+  _generateUserFAOffers(userPlayer, marketAAV, marketYears) {
+    const previousTeamId = userPlayer.team;
+    const offers = [];
+    
+    // Score every other team's interest. Use needs + cap space + win-now status.
+    const candidates = this.state.teams.filter(t => t.id !== previousTeamId).map(t => {
+      const needs = this.calculateTeamNeeds(t);
+      const need = needs[userPlayer.position] || 0;
+      const cap = getSalaryCap(this.state.year);
+      const used = t.roster.reduce((sum, id) => {
+        const pl = this.state.players[id];
+        return sum + (pl && pl.contract ? currentCapHit(pl.contract) : 0);
+      }, 0);
+      const capRoom = cap - used;
+      
+      // Can they afford a market deal?
+      if (capRoom < marketAAV * 0.9) return null;
+      
+      const winPct = t.wins / Math.max(1, t.wins + t.losses);
+      const winNow = winPct >= 0.55 ? 1.0 : winPct >= 0.45 ? 0.7 : 0.4;
+      
+      // Interest score combines need + win-now urgency + ability to pay
+      const interest = need * 2 + winNow * 3 + Math.random() * 1.5;
+      return { team: t, interest, need, capRoom, winNow };
+    }).filter(x => x !== null).sort((a, b) => b.interest - a.interest);
+    
+    // Top 4-6 interested teams make actual offers
+    const offerCount = Math.min(6, Math.max(2, Math.floor(2 + userPlayer.rating / 25)));
+    candidates.slice(0, offerCount).forEach(c => {
+      // Each team's AAV — bidders compete, top need + top winNow = above-market
+      const aboveMarketPct = (c.interest / 8); // 0-1
+      const aav = Math.round(marketAAV * (0.95 + aboveMarketPct * 0.20) / 100_000) * 100_000;
+      const years = Math.max(2, Math.min(5, marketYears + (Math.random() > 0.7 ? 1 : 0) - (Math.random() > 0.8 ? 1 : 0)));
+      const guaranteed = Math.round(aav * years * (0.40 + aboveMarketPct * 0.20));
+      offers.push({
+        teamId: c.team.id,
+        aav,
+        years,
+        guaranteed,
+        teamRecord: c.team.wins + '-' + c.team.losses,
+        winNow: c.winNow >= 0.7,
+        positionNeed: c.need,
+        isCurrentTeam: false
+      });
+    });
+    
+    // Sort offers by total value descending so the best is at top
+    offers.sort((a, b) => (b.aav * b.years) - (a.aav * a.years));
+    return offers;
+  },
+  
+  // Render hook — fires the negotiation modal when one is queued
+  _checkContractNegotiation() {
+    if (!this.state.career || !this.state.career.pendingContractNegotiation) return;
+    if (this._contractNegotiationShown) return;
+    const neg = this.state.career.pendingContractNegotiation;
+    if (neg.resolved) return;
+    this._contractNegotiationShown = true;
+    try { this.showContractNegotiationLanding(); } catch (e) { /* defensive */ }
+  },
+  
+  // STEP 1: Landing — 3 paths
+  showContractNegotiationLanding() {
+    const neg = this.state.career.pendingContractNegotiation;
+    if (!neg) { closeModal(); return; }
+    const player = this.state.players[neg.playerId];
+    if (!player) { closeModal(); return; }
+    
+    const extTeam = this.state.teams[neg.extensionOffer.teamId];
+    const extColor = extTeam ? extTeam.primary : '#888';
+    const bestFA = neg.faOffers[0];
+    const bestFATeam = bestFA ? this.state.teams[bestFA.teamId] : null;
+    
+    let body = '<div style="background:linear-gradient(135deg,var(--accent),var(--accent-dim,#444));color:#fff;padding:22px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">CONTRACT TALKS OPEN · ' + this.state.year + ' OFFSEASON</div>' +
+      '<div style="font-size:22px;font-weight:800;margin-top:8px">' + player.name + '</div>' +
+      '<div style="font-size:13px;opacity:0.92;margin-top:4px">' + player.position + ' · Age ' + player.age + ' · ' + player.rating + ' OVR · ' + (player.yearsInLeague || 0) + ' years exp</div>' +
+      '</div>';
+    
+    // Market estimate
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px;text-align:center">' +
+      '<div style="font-size:10px;letter-spacing:0.6px;font-weight:600;color:var(--text-muted)">MARKET ESTIMATE</div>' +
+      '<div style="font-size:18px;font-weight:700;margin-top:4px">' + formatMoney(neg.marketAAV) + '/yr · ' + neg.marketYears + ' years</div>' +
+      '</div>';
+    
+    // OPTION 1: Sign with current team
+    body += '<div onclick="game._showContractExtensionOffer()" style="background:var(--surface);padding:14px 16px;margin-bottom:10px;border-left:4px solid ' + extColor + ';cursor:pointer">' +
+      '<div style="font-weight:700;font-size:13px;color:' + extColor + ';margin-bottom:4px">SIGN EXTENSION · ' + neg.previousTeamName + '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:13px">' +
+      '<span>' + formatMoney(neg.extensionOffer.aav) + '/yr · ' + neg.extensionOffer.years + ' years</span>' +
+      '<span class="muted" style="font-size:11px">' + formatMoney(neg.extensionOffer.guaranteed) + ' guaranteed</span></div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-top:6px">Stay where you are. Familiar system, familiar teammates. Slightly below market — your team\'s loyalty discount.</div>' +
+      '</div>';
+    
+    // OPTION 2: Test FA
+    const faCount = neg.faOffers.length;
+    body += '<div onclick="game._showFreeAgentOffers()" style="background:var(--surface);padding:14px 16px;margin-bottom:10px;border-left:4px solid var(--accent);cursor:pointer">' +
+      '<div style="font-weight:700;font-size:13px;color:var(--accent);margin-bottom:4px">TEST FREE AGENCY · ' + faCount + ' team' + (faCount === 1 ? '' : 's') + ' interested</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:13px">' +
+      '<span>Best offer: ' + (bestFA ? formatMoney(bestFA.aav) + '/yr · ' + bestFA.years + ' years' : '—') + '</span>' +
+      '<span class="muted" style="font-size:11px">' + (bestFATeam ? bestFATeam.city + ' ' + bestFATeam.name : '—') + '</span></div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-top:6px">More money likely. New city, new system, new teammates. The trade-off is continuity.</div>' +
+      '</div>';
+    
+    // OPTION 3: Holdout
+    const holdoutTier = player.rating >= 88 ? 'STAR' : player.rating >= 82 ? 'STARTER' : 'ROLE';
+    body += '<div onclick="game._tryHoldout()" style="background:var(--surface);padding:14px 16px;margin-bottom:10px;border-left:4px solid var(--warning);cursor:pointer">' +
+      '<div style="font-weight:700;font-size:13px;color:var(--warning);margin-bottom:4px">HOLD OUT · Demand more</div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5">Refuse the current offer. The team may raise. They may also walk away. Risk vs reward depends on your leverage as a ' + holdoutTier + '-tier player.</div>' +
+      '</div>';
+    
+    this.showModal('Contract negotiation · ' + player.name, body);
+  },
+  
+  // RESOLUTION: Sign extension
+  _showContractExtensionOffer() {
+    const neg = this.state.career.pendingContractNegotiation;
+    if (!neg) return;
+    const player = this.state.players[neg.playerId];
+    if (!player) return;
+    const offer = neg.extensionOffer;
+    const team = this.state.teams[offer.teamId];
+    
+    let body = '<div style="background:var(--surface);padding:18px;text-align:center;margin-bottom:14px;border-left:4px solid ' + team.primary + '">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;color:var(--text-muted)">EXTENSION OFFER</div>' +
+      '<div style="font-size:18px;font-weight:700;margin-top:6px">' + team.city + ' ' + team.name + '</div>' +
+      '</div>';
+    
+    body += '<div style="background:var(--surface);padding:16px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px;text-align:center">' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">AAV</div><div style="font-size:20px;font-weight:700">' + formatMoney(offer.aav) + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">YEARS</div><div style="font-size:20px;font-weight:700">' + offer.years + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">TOTAL VALUE</div><div style="font-size:16px;font-weight:700">' + formatMoney(offer.aav * offer.years) + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">GUARANTEED</div><div style="font-size:16px;font-weight:700">' + formatMoney(offer.guaranteed) + '</div></div>' +
+      '</div>';
+    
+    body += '<div style="display:flex;gap:8px">' +
+      '<button class="btn" style="flex:1" onclick="game.showContractNegotiationLanding()">← Back</button>' +
+      '<button class="btn btn-success" style="flex:1" onclick="game._acceptContract(\'extension\')">Sign extension</button>' +
+      '</div>';
+    
+    this.showModal('Extension · ' + team.city + ' ' + team.name, body);
+  },
+  
+  // RESOLUTION: Show FA offers, user picks one
+  _showFreeAgentOffers() {
+    const neg = this.state.career.pendingContractNegotiation;
+    if (!neg) return;
+    const player = this.state.players[neg.playerId];
+    if (!player) return;
+    
+    let body = '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:12px;line-height:1.5">You\'re a free agent. ' + neg.faOffers.length + ' team' + (neg.faOffers.length === 1 ? ' has' : 's have') + ' put an offer on the table. Pick your next chapter.</div>' +
+      '</div>';
+    
+    neg.faOffers.forEach((offer, idx) => {
+      const team = this.state.teams[offer.teamId];
+      if (!team) return;
+      const total = offer.aav * offer.years;
+      body += '<div onclick="game._acceptContract(\'fa\',' + idx + ')" style="background:var(--surface);padding:14px 16px;margin-bottom:8px;border-left:4px solid ' + team.primary + ';cursor:pointer">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline">' +
+        '<div style="font-weight:700;font-size:13px">' + team.city + ' ' + team.name + '</div>' +
+        '<div class="muted" style="font-size:11px">' + offer.teamRecord + ' last year' + (offer.winNow ? ' · WIN-NOW' : '') + '</div>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-top:6px">' +
+        '<span>' + formatMoney(offer.aav) + '/yr · ' + offer.years + ' yrs</span>' +
+        '<span>' + formatMoney(total) + ' total · ' + formatMoney(offer.guaranteed) + ' guaranteed</span>' +
+        '</div>' +
+        '</div>';
+    });
+    
+    body += '<div style="margin-top:8px"><button class="btn" style="width:100%" onclick="game.showContractNegotiationLanding()">← Back</button></div>';
+    
+    this.showModal('Free Agent offers · ' + player.name, body);
+  },
+  
+  // RESOLUTION: Attempt holdout — random outcome based on leverage
+  _tryHoldout() {
+    const neg = this.state.career.pendingContractNegotiation;
+    if (!neg) return;
+    const player = this.state.players[neg.playerId];
+    if (!player) return;
+    
+    // Leverage = OVR-driven. Stars (88+) almost always get the bump. Role players get cut.
+    let leverage;
+    if (player.rating >= 90) leverage = 0.85;
+    else if (player.rating >= 85) leverage = 0.65;
+    else if (player.rating >= 80) leverage = 0.40;
+    else if (player.rating >= 75) leverage = 0.20;
+    else leverage = 0.05;
+    
+    const roll = Math.random();
+    let outcome;
+    if (roll < leverage) {
+      // Bump succeeded — team raises by 10-18%
+      const bumpPct = 0.10 + Math.random() * 0.08;
+      const newAAV = Math.round(neg.extensionOffer.aav * (1 + bumpPct) / 100_000) * 100_000;
+      const newGuaranteed = Math.round(newAAV * neg.extensionOffer.years * 0.62);
+      outcome = {
+        success: true,
+        newAAV,
+        newGuaranteed,
+        bumpPct
+      };
+    } else {
+      // Team walked — only FA path remains, AND interested teams know you held out (lower offers)
+      outcome = { success: false };
+    }
+    
+    let body;
+    if (outcome.success) {
+      body = '<div style="background:linear-gradient(135deg,var(--success),var(--success))" >' +
+        '<div style="padding:22px;color:#fff;text-align:center">' +
+        '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">HOLDOUT WORKED</div>' +
+        '<div style="font-size:18px;font-weight:700;margin-top:8px">' + neg.previousTeamName + ' caved.</div>' +
+        '<div style="font-size:13px;opacity:0.92;margin-top:4px">They raised their offer by ' + Math.round(outcome.bumpPct * 100) + '%.</div>' +
+        '</div></div>';
+      body += '<div style="background:var(--surface);padding:16px;margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px;text-align:center">' +
+        '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">NEW AAV</div><div style="font-size:20px;font-weight:700;color:var(--success)">' + formatMoney(outcome.newAAV) + '</div></div>' +
+        '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">GUARANTEED</div><div style="font-size:16px;font-weight:700">' + formatMoney(outcome.newGuaranteed) + '</div></div>' +
+        '</div>';
+      // Update the extension offer
+      neg.extensionOffer.aav = outcome.newAAV;
+      neg.extensionOffer.guaranteed = outcome.newGuaranteed;
+      body += '<div style="margin-top:14px;display:flex;gap:8px">' +
+        '<button class="btn btn-success" style="flex:1" onclick="game._acceptContract(\'extension\')">Accept new deal</button>' +
+        '<button class="btn" style="flex:1" onclick="game._showFreeAgentOffers()">Still test FA</button>' +
+        '</div>';
+    } else {
+      // Holdout failed — penalize FA offers by 12% each
+      neg.faOffers.forEach(o => {
+        o.aav = Math.round(o.aav * 0.88 / 100_000) * 100_000;
+        o.guaranteed = Math.round(o.guaranteed * 0.85);
+      });
+      body = '<div style="background:var(--danger);color:#fff;padding:22px;text-align:center">' +
+        '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">HOLDOUT FAILED</div>' +
+        '<div style="font-size:18px;font-weight:700;margin-top:8px">' + neg.previousTeamName + ' walked away.</div>' +
+        '<div style="font-size:13px;opacity:0.92;margin-top:4px">Other teams heard about the demand. Offers across the league dropped ~12%.</div>' +
+        '</div>';
+      body += '<div style="margin-top:14px"><button class="btn btn-success" style="width:100%" onclick="game._showFreeAgentOffers()">View remaining FA offers</button></div>';
+    }
+    
+    this.showModal('Holdout result', body);
+  },
+  
+  // FINAL: Accept a contract (extension or FA pick by index)
+  _acceptContract(kind, faIdx) {
+    const neg = this.state.career.pendingContractNegotiation;
+    if (!neg) return;
+    const player = this.state.players[neg.playerId];
+    if (!player) return;
+    
+    let acceptedOffer;
+    let acceptedTeamId;
+    if (kind === 'extension') {
+      acceptedOffer = neg.extensionOffer;
+      acceptedTeamId = neg.extensionOffer.teamId;
+    } else {
+      acceptedOffer = neg.faOffers[faIdx];
+      acceptedTeamId = acceptedOffer.teamId;
+    }
+    
+    // Remove player from old team if changing teams
+    if (player.team !== null && player.team !== acceptedTeamId) {
+      const oldTeam = this.state.teams[player.team];
+      if (oldTeam) {
+        oldTeam.roster = oldTeam.roster.filter(id => id !== player.id);
+      }
+    }
+    
+    // Sign with new team
+    const newTeam = this.state.teams[acceptedTeamId];
+    if (newTeam && !newTeam.roster.includes(player.id)) {
+      newTeam.roster.push(player.id);
+    }
+    player.team = acceptedTeamId;
+    
+    // Build a proper contract object using generateContract shape
+    const years = acceptedOffer.years;
+    const aav = acceptedOffer.aav;
+    const totalValue = aav * years;
+    const bonusPct = 0.32;
+    const signingBonus = Math.round(totalValue * bonusPct / 100_000) * 100_000;
+    const remaining = totalValue - signingBonus;
+    const weights = [];
+    for (let i = 0; i < years; i++) weights.push(1 + i * 0.08);
+    const totalWeight = weights.reduce((s, w) => s + w, 0);
+    const baseSalaries = weights.map(w => Math.round(remaining * w / totalWeight / 50_000) * 50_000);
+    for (let i = 0; i < baseSalaries.length; i++) if (baseSalaries[i] < 800_000) baseSalaries[i] = 800_000;
+    
+    player.contract = {
+      years, yearsRemaining: years, aav, totalValue, signingBonus,
+      bonusProrationYears: Math.min(5, years),
+      baseSalaries, signedYear: this.state.year, signedAtRating: player.rating
+    };
+    
+    // Headline
+    const changedTeams = neg.previousTeamId !== acceptedTeamId;
+    this.addHeadline({
+      type: 'champ',
+      title: player.name + (changedTeams ? ' signs with ' + newTeam.city + ' ' + newTeam.name : ' re-signs with ' + neg.previousTeamName),
+      body: formatMoney(aav) + '/yr for ' + years + ' years · ' + formatMoney(totalValue) + ' total · ' + formatMoney(acceptedOffer.guaranteed) + ' guaranteed.'
+    });
+    
+    // Clear the negotiation state
+    this.state.career.pendingContractNegotiation = null;
+    this._contractNegotiationShown = false;
+    
+    closeModal();
+    this.saveGame();
+    this.render();
+  },
+  
   _getDeclaredUserProspect() {
     const id = this.state.career && this.state.career.declaredIdentity;
     if (!id) return null;
