@@ -2144,12 +2144,12 @@ let game = {
     // Build star-rating buttons. Each star tier maps to a recruit grade range matching real CFB recruiting.
     // 5★ = 90-99 grade (elite), 4★ = 82-89, 3★ = 72-81, 2★ = 62-71, 1★ = 52-61, 0★ = walk-on 40-51.
     const starInfo = [
-      { stars: 5, label: '★★★★★', range: '90-99 grade', desc: 'National recruit. Every program in the country wants you.' },
-      { stars: 4, label: '★★★★☆', range: '82-89 grade', desc: 'Top-tier prospect. Most major programs want you.' },
-      { stars: 3, label: '★★★☆☆', range: '72-81 grade', desc: 'Solid recruit. Many P5 + most G5 programs offer.' },
-      { stars: 2, label: '★★☆☆☆', range: '62-71 grade', desc: 'Mid-major caliber. Smaller schools recruit you.' },
-      { stars: 1, label: '★☆☆☆☆', range: '52-61 grade', desc: 'Sleeper. Only a few programs offer.' },
-      { stars: 0, label: '☆☆☆☆☆', range: '40-51 grade · walk-on', desc: 'Unranked. You may need to walk on.' }
+      { stars: 5, label: '★★★★★', range: '90-99 grade', desc: 'National recruit. Every program in the country is available.' },
+      { stars: 4, label: '★★★★☆', range: '82-89 grade', desc: 'Elite prospect. Every school except the top 10 is available.' },
+      { stars: 3, label: '★★★☆☆', range: '72-81 grade', desc: 'Solid recruit. Every school outside the top 25 is available.' },
+      { stars: 2, label: '★★☆☆☆', range: '62-71 grade', desc: 'Mid-major caliber. Every school outside the top 50 is available.' },
+      { stars: 1, label: '★☆☆☆☆', range: '52-61 grade', desc: 'Sleeper. Every school outside the top 75 is available.' },
+      { stars: 0, label: '☆☆☆☆☆', range: '40-51 grade · walk-on', desc: 'Unranked. Only the lowest-tier programs are available.' }
     ];
     let starButtons = '<div style="display:flex;flex-direction:column;gap:6px">';
     starInfo.forEach(s => {
@@ -2220,39 +2220,15 @@ let game = {
     grade = Math.round(grade * 10) / 10;
     
     // Generate offers. Number of offers + which schools depends on star tier.
-    // Real CFB recruiting: 5★ get 30+ offers, 4★ get 20-30, 3★ get 10-20, 2★ get 3-8, 1★ get 1-3, 0★ walk-on.
-    // We sort all schools by prestige descending. Top schools require higher stars to offer.
+    // AVAILABILITY BY STAR RATING (schools sorted by prestige, highest first). Higher-rated recruits
+    // can commit to more elite programs; every eligible school becomes an offer so the recruit can
+    // freely pick any of them:
+    //   5★: ALL schools.            4★: all but the top 10.
+    //   3★: all but the top 25.     2★: all but the top 50.
+    //   1★: all but the top 75.     0★ (walk-on): only the lowest tier (all but the top 90).
     const schoolsByPrestige = COLLEGE_SCHOOLS.slice().sort((a, b) => b.prestige - a.prestige);
-    const offers = [];
-    
-    schoolsByPrestige.forEach((school, rankIdx) => {
-      // The TOP-15 schools (blue bloods + elite) only offer 4★+ recruits.
-      // Top 30 schools offer 3★+. Top 60 offer 2★+. Everyone offers 1★+.
-      const schoolTier = rankIdx < 15 ? 'top15' : rankIdx < 30 ? 'top30' : rankIdx < 60 ? 'top60' : 'rest';
-      let offerChance = 0;
-      if (stars === 5) {
-        // 5★ gets offers from essentially everyone
-        offerChance = schoolTier === 'top15' ? 0.95 : schoolTier === 'top30' ? 0.92 : schoolTier === 'top60' ? 0.85 : 0.70;
-      } else if (stars === 4) {
-        // 4★ gets most major offers but not all blue bloods
-        offerChance = schoolTier === 'top15' ? 0.55 : schoolTier === 'top30' ? 0.80 : schoolTier === 'top60' ? 0.75 : 0.50;
-      } else if (stars === 3) {
-        // 3★ gets a lot of offers, but NOT from the top 10-15 blue bloods.
-        // Top-15 explicitly excluded (zero chance) per user spec.
-        offerChance = schoolTier === 'top15' ? 0.0 : schoolTier === 'top30' ? 0.40 : schoolTier === 'top60' ? 0.60 : 0.50;
-      } else if (stars === 2) {
-        // 2★ — mostly mid-major and G5 offers
-        offerChance = schoolTier === 'top15' ? 0.0 : schoolTier === 'top30' ? 0.04 : schoolTier === 'top60' ? 0.18 : 0.32;
-      } else if (stars === 1) {
-        // 1★ — only G5 + lowest tier
-        offerChance = schoolTier === 'top15' ? 0.0 : schoolTier === 'top30' ? 0.0 : schoolTier === 'top60' ? 0.03 : 0.15;
-      } else {
-        // 0★ walk-on — handful of low-tier offers
-        offerChance = schoolTier === 'top15' ? 0.0 : schoolTier === 'top30' ? 0.0 : schoolTier === 'top60' ? 0.01 : 0.06;
-      }
-      if (Math.random() < offerChance) offers.push(school);
-    });
-    
+    const excludeTopN = stars >= 5 ? 0 : stars === 4 ? 10 : stars === 3 ? 25 : stars === 2 ? 50 : stars === 1 ? 75 : 90;
+    const offers = schoolsByPrestige.filter((school, rankIdx) => rankIdx >= excludeTopN);
     // Guarantee at least 1 offer for 1★+ so the user always has a choice, and at least
     // a walk-on slot for 0★ (we offer them the LOWEST prestige school as a walk-on option).
     if (offers.length === 0) {
@@ -4077,17 +4053,19 @@ let game = {
     return Math.round(newGrade * 10) / 10;
   },
 
-  // TRANSFER PORTAL — runs each offseason after aging, before freshman refill.
-  // Real CFB transfer portal sees thousands of moves annually. We model two motivations:
-  //   (1) GOOD PLAYER ON BAD TEAM: a high-grade player on a mid/low prestige school transfers UP
-  //       to a higher-prestige program for more visibility, playoff opportunity, NFL exposure.
-  //   (2) BURIED ON DEPTH CHART: a backup at a top school stuck behind better prospects transfers
-  //       DOWN to a lower-prestige school where they can start.
-  // Some realism rules:
-  //   - User's own player NEVER transfers (we don't move them without permission)
-  //   - Seniors don't transfer (one year left, not worth)
-  //   - Walk-ons / very low grades (<55) rarely transfer (no offers anyway)
-  //   - Transfer pool is bounded: ~5-8% of eligible non-senior college players transfer
+  // TRANSFER PORTAL (COLLEGE ONLY) — runs each offseason after aging, before freshman refill. The
+  // NFL has no portal; pros move via free agency / trades instead. CPU prospects act in their OWN
+  // best interest: the most playing time at the best possible program they can earn. Motivations:
+  //   (1) GOOD PLAYER ON A WEAK TEAM → transfers UP to a better program where they'd still start.
+  //   (2) BURIED ON THE DEPTH CHART (2nd or lower) → transfers to the best program with a NEED at
+  //       their position so they can START (playing time + NFL draft exposure). This is the 85+-grade
+  //       "stuck behind a starter" case, but applies to any buried player (no unrealistic prestige plunge).
+  // Realism rules:
+  //   - The user's own player NEVER transfers without permission.
+  //   - Seniors don't transfer (graduating); very low grades (<52) have no market.
+  //   - A "destination" must be a school where the player would START (out-grades its current best at
+  //     the position) — that's what makes the move worth it and keeps it logical.
+  //   - Bounded at ~20% of ALL college players per offseason (modern-portal era), most-deserving first.
   simTransferPortal() {
     const prestigeMap = this.state.collegePrestige || {};
     const pool = this.state.collegeProspects || [];
@@ -4227,107 +4205,83 @@ let game = {
     }
     
     // ===== INDIVIDUAL TRANSFER DECISIONS =====
-    // Iterate through eligible players. Use a shuffled copy so we don't always process in pool order.
-    const candidates = pool.slice().sort(() => Math.random() - 0.5);
-    
-    candidates.forEach(p => {
-      // Skip ineligible: user player, seniors, very low grade (no market), already transferred this offseason
-      if (p.isUserControlled) return;
-      if (p.year === 'Senior') return;
-      if (p.prospectGrade < 55) return;
-      if (p._transferredThisOffseason) return;
-      
-      const currentSchool = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
-      if (!currentSchool) return;
-      const currentPrestige = prestigeMap[p.school] !== undefined ? prestigeMap[p.school] : currentSchool.prestige;
-      
-      // Determine the player's current depth-chart slot at their position
+    // CPU prospects act purely in their OWN best interest: get the most playing time at the best
+    // possible program they can. Logic:
+    //   - A school is a viable destination only if the player would START there — i.e. they out-grade
+    //     that school's current best at the position (the school has a real NEED). Among all such
+    //     schools we take the HIGHEST prestige: the best program where they'd actually play.
+    //   - A current STARTER only moves to a clearly BETTER program (move up while still starting) —
+    //     covers "good player on a weak team → good program" and good-player program-to-program moves.
+    //   - A BURIED player (2nd+ on the depth chart) moves to the best program where they'd start, for
+    //     playing time and draft exposure (this is the 85+-stuck-behind-a-starter case, but applies to
+    //     any buried player — they won't fall off a cliff prestige-wise).
+    // The total is capped at ~20% of ALL college players per offseason (modern-portal realism);
+    // coaching-follow moves above already count toward that cap. Highest-benefit movers go first.
+    const findBestDestination = (p, currentPrestige, isStarter) => {
+      let best = null, bestPrestige = -1;
+      for (let i = 0; i < schoolsByPrestige.length; i++) {
+        const cand = schoolsByPrestige[i];
+        if (cand.abbr === p.school) continue;
+        const candPrestige = prestigeMap[cand.abbr] !== undefined ? prestigeMap[cand.abbr] : cand.prestige;
+        const candDepth = (depthByPosBySchool[cand.abbr] && depthByPosBySchool[cand.abbr][p.position]) || [];
+        const candBest = candDepth.length ? candDepth[0].prospectGrade : 0;
+        // Would the player START there? Must out-grade the school's current best at the position.
+        if (p.prospectGrade <= candBest + 0.5) continue;
+        // A starter only moves UP (clearly higher prestige). A buried player takes the best program
+        // where they can start — but never an unrealistic plunge in prestige.
+        if (isStarter) { if (candPrestige <= currentPrestige + 1) continue; }
+        else { if (candPrestige < currentPrestige * 0.5) continue; }
+        if (candPrestige > bestPrestige) { best = cand; bestPrestige = candPrestige; }
+      }
+      return best;
+    };
+
+    const TOTAL_COLLEGE = pool.length;
+    const targetTransfers = Math.round(TOTAL_COLLEGE * (0.17 + Math.random() * 0.06)); // ~17-23% of all
+    let transfersSoFar = coachingChangeMoves.length; // coaching follows already count toward the cap
+
+    // Build a desire-scored list of eligible movers; the most logical candidates transfer first.
+    const movers = pool.filter(p =>
+      !p.isUserControlled && p.year !== 'Senior' && p.prospectGrade >= 52 && !p._transferredThisOffseason
+    ).map(p => {
       const posDepth = (depthByPosBySchool[p.school] && depthByPosBySchool[p.school][p.position]) || [];
       const depthIdx = posDepth.findIndex(x => x.id === p.id);
-      
-      // ===== MOTIVATION 1: Good player on bad team wants to move UP =====
-      // Trigger: player grade significantly higher than school prestige (5+ point gap), and player is a starter or near-starter.
-      // Real-world: a 90-grade WR at a 70-prestige school will get poached.
-      const isOverqualified = (p.prospectGrade - currentPrestige) >= 5 && depthIdx <= 2;
-      
-      // ===== MOTIVATION 2: Buried on depth chart wants to move DOWN =====
-      // Trigger: at a top program with 2+ players ahead at same position, and player is decent.
-      const isBuried = depthIdx >= 2 && currentPrestige >= 80 && p.prospectGrade >= 65;
-      
-      let wantsToTransfer = false;
-      let transferType = null;
-      // Roll chances:
-      // - Overqualified: 35% chance to enter portal (a meaningful pull but not certain)
-      // - Buried: 20% chance (less common — many stay and develop)
-      if (isOverqualified && Math.random() < 0.35) { wantsToTransfer = true; transferType = 'up'; }
-      else if (isBuried && Math.random() < 0.20) { wantsToTransfer = true; transferType = 'down'; }
-      
-      if (!wantsToTransfer) return;
-      
-      // Find a destination school. Different logic for up vs down.
-      let destination = null;
-      if (transferType === 'up') {
-        // Look for schools with HIGHER prestige than current, where player would crack the rotation.
-        // Search top-down through schools by prestige.
-        for (let i = 0; i < schoolsByPrestige.length; i++) {
-          const candidate = schoolsByPrestige[i];
-          if (candidate.abbr === p.school) continue;
-          const candPrestige = prestigeMap[candidate.abbr] !== undefined ? prestigeMap[candidate.abbr] : candidate.prestige;
-          if (candPrestige <= currentPrestige) break; // no higher options
-          // Would the player at this candidate school be starter or top 2 at their position?
-          const candDepth = (depthByPosBySchool[candidate.abbr] && depthByPosBySchool[candidate.abbr][p.position]) || [];
-          const projectedSlot = candDepth.findIndex(x => p.prospectGrade > x.prospectGrade);
-          if (projectedSlot === -1) continue; // wouldn't crack the depth chart
-          if (projectedSlot > 2) continue; // too buried at destination
-          // Top schools (90+ prestige) only accept overqualified transfers if they'd be 1st/2nd
-          if (candPrestige >= 90 && projectedSlot > 1) continue;
-          // Probability of pick = inverse rank (top schools more likely to be chosen)
-          // Just pick the first viable option weighted toward higher prestige.
-          if (Math.random() < 0.6) { destination = candidate; break; }
-        }
-      } else {
-        // transferType === 'down': find a school where player would START.
-        // Search bottom-up so we find the highest-prestige school where they'd still start.
-        // Don't go below half their current prestige (too big a step down).
-        const minAcceptablePrestige = currentPrestige * 0.65;
-        for (let i = schoolsByPrestige.length - 1; i >= 0; i--) {
-          const candidate = schoolsByPrestige[i];
-          if (candidate.abbr === p.school) continue;
-          const candPrestige = prestigeMap[candidate.abbr] !== undefined ? prestigeMap[candidate.abbr] : candidate.prestige;
-          if (candPrestige < minAcceptablePrestige) continue;
-          if (candPrestige >= currentPrestige) continue; // shouldn't go lateral or up here
-          const candDepth = (depthByPosBySchool[candidate.abbr] && depthByPosBySchool[candidate.abbr][p.position]) || [];
-          const projectedSlot = candDepth.findIndex(x => p.prospectGrade > x.prospectGrade);
-          // Need to start (slot 0) at the new school
-          if (projectedSlot !== 0) continue;
-          if (Math.random() < 0.7) { destination = candidate; break; }
-        }
-      }
-      
-      if (!destination) return;
-      
-      // Execute the transfer
+      // EFFECTIVE depth ignores graduating seniors ahead of them — if the only players above you are
+      // leaving, you inherit the job next year, so there's no reason to flee. This keeps the portal logical.
+      const aheadStaying = posDepth.slice(0, Math.max(0, depthIdx)).filter(x => x.year !== 'Senior').length;
+      const cs = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+      const currentPrestige = cs ? (prestigeMap[p.school] !== undefined ? prestigeMap[p.school] : cs.prestige) : 60;
+      let desire = Math.random() * 0.35;
+      if (aheadStaying >= 1) desire += 0.55 + Math.min(0.6, aheadStaying * 0.25);       // buried (behind players who STAY)
+      if (aheadStaying >= 1 && p.prospectGrade >= 85) desire += 0.9;                      // buried STAR: definitely moves
+      else if (aheadStaying >= 1 && p.prospectGrade >= 75) desire += 0.4;                 // buried good player
+      if ((p.prospectGrade - currentPrestige) >= 5 && aheadStaying <= 1) desire += 0.5;   // good player on a weak program → up
+      if (p.year === 'Freshman' || p.year === 'Sophomore') desire += 0.12;               // underclassmen more mobile
+      return { p, depthIdx: aheadStaying, currentPrestige, desire };
+    });
+    movers.sort((a, b) => b.desire - a.desire);
+
+    movers.forEach(m => {
+      if (transfersSoFar >= targetTransfers) return;
+      const p = m.p;
+      const isStarter = m.depthIdx === 0;
+      // A contented starter at a strong program (not overqualified) usually stays put.
+      const dest = findBestDestination(p, m.currentPrestige, isStarter);
+      if (!dest) return;
+      const destPrestige = prestigeMap[dest.abbr] !== undefined ? prestigeMap[dest.abbr] : dest.prestige;
+      const transferType = destPrestige > m.currentPrestige ? 'up' : 'down';
       const oldSchool = p.school;
-      p.school = destination.abbr;
+      p.school = dest.abbr;
       p._transferredThisOffseason = true;
-      
-      // Remove from old school depth lookup, add to new (keeps subsequent iterations accurate)
       if (depthByPosBySchool[oldSchool] && depthByPosBySchool[oldSchool][p.position]) {
         depthByPosBySchool[oldSchool][p.position] = depthByPosBySchool[oldSchool][p.position].filter(x => x.id !== p.id);
       }
-      if (!depthByPosBySchool[destination.abbr]) depthByPosBySchool[destination.abbr] = {};
-      if (!depthByPosBySchool[destination.abbr][p.position]) depthByPosBySchool[destination.abbr][p.position] = [];
-      depthByPosBySchool[destination.abbr][p.position].push(p);
-      depthByPosBySchool[destination.abbr][p.position].sort((a, b) => b.prospectGrade - a.prospectGrade);
-      
-      transferLog.push({
-        name: p.name,
-        position: p.position,
-        grade: p.prospectGrade,
-        fromAbbr: oldSchool,
-        toAbbr: destination.abbr,
-        type: transferType
-      });
+      if (!depthByPosBySchool[dest.abbr]) depthByPosBySchool[dest.abbr] = {};
+      if (!depthByPosBySchool[dest.abbr][p.position]) depthByPosBySchool[dest.abbr][p.position] = [];
+      depthByPosBySchool[dest.abbr][p.position].push(p);
+      depthByPosBySchool[dest.abbr][p.position].sort((a, b) => b.prospectGrade - a.prospectGrade);
+      transferLog.push({ name: p.name, position: p.position, grade: p.prospectGrade, fromAbbr: oldSchool, toAbbr: dest.abbr, type: transferType });
+      transfersSoFar++;
     });
     
     // Clear the per-offseason flag for next year
