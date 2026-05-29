@@ -725,7 +725,7 @@ const POSITIONS_FOR_DRAFT = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB',
 const ROSTER_SIZE = Object.values(POSITION_COUNTS).reduce((s,n) => s+n, 0);
 
 // Positional value — OT > OG > C (LT premium), EDGE > DT (pass rush premium)
-const POSITION_VALUE = { QB:1.55, OT:1.30, EDGE:1.25, WR:1.15, CB:1.12, DT:1.12, OG:1.10, C:1.05, TE:0.95, LB:0.92, S:0.90, RB:0.75, K:0.40, P:0.38 };
+const POSITION_VALUE = { QB:1.72, OT:1.35, EDGE:1.32, WR:1.20, CB:1.18, DT:1.14, OG:1.10, C:1.05, TE:0.96, LB:0.92, S:0.92, RB:0.74, K:0.40, P:0.38 };
 
 // Groupings for sim logic
 const OL_POSITIONS = ['OT','OG','C'];
@@ -3244,6 +3244,95 @@ let game = {
     this.saveGame();
   },
 
+  // PLAYER MODE — request a trade. Gauges the market and surfaces a short list of plausible suitors
+  // (real position need + cap room + win-now lean), each with a one-line rationale. The user picks
+  // one to force the move, or walks away. Only available to an active NFL-stage player on a team.
+  playerRequestTrade() {
+    if (!this.state.career || this.state.career.mode !== 'player') return;
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p || p.retired || p.team === null || p.team === undefined) return;
+    const cap = getSalaryCap(this.state.year);
+    const myHit = p.contract ? currentCapHit(p.contract) : 2_000_000;
+    // Score every other team's interest.
+    const suitors = [];
+    this.state.teams.forEach(team => {
+      if (team.id === p.team) return;
+      const needs = this.calculateTeamNeeds(team);
+      const posNeed = needs[p.position] || 0;
+      const samePos = team.roster.map(id => this.state.players[id]).filter(x => x && !x.retired && x.position === p.position);
+      samePos.sort((a, b) => b.rating - a.rating);
+      const theirBest = samePos[0] ? samePos[0].rating : 0;
+      const space = cap - teamCapUsed(team, this.state.players);
+      const winPct = (team.wins + team.losses) > 0 ? team.wins / (team.wins + team.losses) : 0.5;
+      // Interest: bigger if the player upgrades them, they have a need, and they can fit the contract.
+      let interest = 0;
+      interest += Math.max(0, p.rating - theirBest) * 2.2;   // how much of an upgrade
+      interest += posNeed * 3.5;                              // positional need
+      interest += (space >= myHit ? 6 : (space >= myHit * 0.5 ? 2 : -4)); // cap fit
+      interest += (winPct >= 0.55 ? 4 : 0);                  // contenders covet proven talent
+      interest += (Math.random() - 0.5) * 6;                 // market noise
+      // A genuinely good player draws interest; depth pieces draw little.
+      if (p.rating < 70) interest -= 8;
+      suitors.push({ team, interest, posNeed, space, winPct, theirBest });
+    });
+    suitors.sort((a, b) => b.interest - a.interest);
+    const shortlist = suitors.filter(s => s.interest > 4).slice(0, 4);
+
+    let html = '<div style="padding:18px">';
+    if (shortlist.length === 0) {
+      html += '<div style="font-size:14px;font-weight:600;margin-bottom:8px">No serious offers right now</div>' +
+        '<div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Your agent worked the phones, but no team is willing to make a real push at the moment. Play well and check back later — interest builds with production.</div>' +
+        '<button class="btn btn-primary" style="width:100%" onclick="closeModal()">Stay put for now</button>';
+      this.showModal('Trade market · ' + this.state.year, html);
+      return;
+    }
+    html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">A few teams have real interest. Pick a destination to force the trade, or stay where you are.</div>';
+    shortlist.forEach(s => {
+      const t = s.team;
+      const reason = s.posNeed >= 2 ? 'Big need at ' + p.position
+                   : s.theirBest < p.rating - 3 ? 'You\'d be an immediate upgrade'
+                   : s.winPct >= 0.55 ? 'Contender adding proven talent'
+                   : 'Sees a strong fit';
+      const capNote = s.space >= myHit ? 'cap space available' : 'would restructure to fit';
+      html += '<div style="border:1px solid var(--border);padding:12px 14px;margin-bottom:10px;display:flex;align-items:center;gap:12px">' +
+        '<span style="width:4px;height:38px;background:' + t.primary + ';flex-shrink:0"></span>' +
+        '<div style="flex:1"><div style="font-weight:700;font-size:14px">' + t.city + ' ' + t.name + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted)">' + reason + ' · ' + capNote + ' · ' + t.wins + '–' + t.losses + '</div></div>' +
+        '<button class="btn btn-sm btn-primary" onclick="game._playerExecuteTrade(' + t.id + ')">Go here →</button>' +
+        '</div>';
+    });
+    html += '<button class="btn" style="width:100%;margin-top:4px" onclick="closeModal()">Stay put</button>';
+    html += '</div>';
+    this.showModal('Trade market · ' + this.state.year, html);
+  },
+
+  _playerExecuteTrade(newTeamId) {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    const newTeam = this.state.teams[newTeamId];
+    if (!p || !newTeam || p.team === null || p.team === undefined) { closeModal(); return; }
+    const oldTeam = this.state.teams[p.team];
+    // Old team eats any remaining signing-bonus proration as dead cap (standard trade accounting).
+    if (oldTeam) {
+      if (p.contract) oldTeam.deadCap = (oldTeam.deadCap || 0) + deadCapIfReleased(p.contract);
+      oldTeam.roster = oldTeam.roster.filter(id => id !== p.id);
+    }
+    // Move to the new team (contract travels with the player).
+    p.team = newTeamId;
+    if (!newTeam.roster.includes(p.id)) newTeam.roster.push(p.id);
+    // Reconcile both teams under the cap so nobody ends up over after the move.
+    this.enforceRosterMax();
+    this.enforceCapCompliance();
+    this.addHeadline({
+      type: 'trade',
+      title: p.name + ' traded to ' + newTeam.city + ' ' + newTeam.name,
+      body: (oldTeam ? oldTeam.city + ' ' + oldTeam.name + ' grant the ' + p.position + '\'s trade request. ' : '') + 'A fresh start in ' + newTeam.city + '.'
+    });
+    closeModal();
+    this.saveGame();
+    this.currentView = 'mycareer';
+    this.render();
+  },
+
   // A celebratory retirement-ceremony popup summarizing the player's enshrinements and final
   // all-time standing. Fires once, right after the user retires.
   _showRetirementCeremony(p, opts) {
@@ -3353,6 +3442,7 @@ let game = {
     this.state.career.entityType = 'agent';
     this.state.career.entityId = 'agency';
     this.state.career.fromPlayer = true; // marks this as a second career
+    this.state.career.careerStage = 'agency'; // clear the player 'retired' stage for the new career
 
     this.state.agency = {
       name: legacy.name,
@@ -3420,6 +3510,9 @@ let game = {
     const startingOvr = Math.max(48, Math.min(78, Math.round(48 + legacy.connections * 0.16 + (legacy.peakOvr - 70) * 0.5 + (legacy.hof ? 4 : 0))));
     this.state.career.mode = 'coach';
     this.state.career.fromPlayer = true;
+    // The player's NFL career is over, but the COACHING career is just beginning — clear the
+    // 'retired' stage left over from playerRetireNow so the coach page doesn't render as "retired".
+    this.state.career.careerStage = 'coaching';
     // installUserCoach wires entityType/entityId, makes room, and queues offers.
     this.installUserCoach({
       name: legacy.name,
@@ -3564,19 +3657,19 @@ let game = {
 
   // Seed a starter pool of free-agent players at league start
   generatePlayerFAPool() {
-    // Generate ~50-80 FA players across positions, weighted toward lower OVR (real-world FAs are mostly mid-tier)
+    // Generate ~50-80 FA players across positions. Real-world free agents are overwhelmingly aging
+    // depth and camp bodies — NOT starters. We depress EVERY FA's OVR and age them up so the pool
+    // reads like real life (mostly 55-72 OVR). Genuinely good players stay on rosters; the blue-chip
+    // sweep snaps up any that slip through, so the FA board shouldn't be full of 80-OVR talent.
     const counts = { QB:3, RB:5, WR:8, TE:4, OT:5, OG:6, C:3, EDGE:6, DT:5, LB:8, CB:7, S:5, K:3, P:3 };
     Object.entries(counts).forEach(([pos, n]) => {
       for (let i = 0; i < n; i++) {
         const p = this.generatePlayer(pos, null);
-        // FAs trend slightly older and slightly lower OVR than rostered players
-        if (Math.random() < 0.5 && p.rating > 55) {
-          // Recompute with depressed abilities
-          const targetOvr = Math.max(50, p.rating - 5 - Math.floor(Math.random() * 8));
-          p.abilities = generateAbilities(pos, targetOvr);
-          p.rating = calculateOvrFromAbilities(pos, p.abilities);
-          p.archetype = detectArchetype(pos, p.abilities);
-        }
+        const targetOvr = Math.max(48, Math.min(74, p.rating - 6 - Math.floor(Math.random() * 10)));
+        p.abilities = generateAbilities(pos, targetOvr);
+        p.rating = calculateOvrFromAbilities(pos, p.abilities);
+        p.archetype = detectArchetype(pos, p.abilities);
+        p.age = Math.max(p.age, 28 + Math.floor(Math.random() * 6)); // FAs skew older
         p.team = null;
         p.contract = null;
         this.state.players.push(p);
@@ -6246,10 +6339,18 @@ let game = {
   // since teams are drafting kids out of college expecting growth.
   draftValue(player) {
     const ovrScore = player.rating * 2.0;
-    const posBonus = (POSITION_VALUE[player.position] || 1) * 12;
-    const potentialBonus = ((player.potential || player.rating) - player.rating) * 0.5;
+    const posBonus = (POSITION_VALUE[player.position] || 1) * 13;
+    const potentialBonus = ((player.potential || player.rating) - player.rating) * 0.6;
     const agePenalty = Math.max(0, player.age - 24) * 0.6;
-    return ovrScore + posBonus + potentialBonus - agePenalty;
+    // ROOKIES: their college evaluation (grade + accolades) heavily informs draft stock. A
+    // generational, multi-time-Heisman prospect should sit atop the board even if their raw rookie
+    // OVR is modest — mirroring how decorated Heisman talents go top-5 (often #1) in real life.
+    let collegeBonus = 0;
+    if (player.yearsInLeague === 0) {
+      if (player.collegeGrade) collegeBonus += Math.max(0, player.collegeGrade - 72) * 1.4;
+      collegeBonus += (player.collegeHeismans || 0) * 9;
+    }
+    return ovrScore + posBonus + potentialBonus + collegeBonus - agePenalty;
   },
 
   // STARTUP DRAFT VALUE — used only for the inaugural 53-round draft.
@@ -6389,7 +6490,12 @@ let game = {
     // via "Reveal next pick", a jump via "Sim to my pick", or "Auto-complete" to finish. We do NOT
     // silently sim CPU picks here. (The inaugural/startup draft — 53 rounds, not annual — keeps the
     // old auto-advance-to-the-user's-pick behavior below so it isn't a 1,696-click slog.)
-    if (this.state.draftIsAnnual) {
+    //
+    // IMPORTANT: this ONLY applies to team-management modes. In PLAYER mode the user is a player,
+    // not a GM — they make no draft picks during their college or NFL years — so the league's annual
+    // draft must auto-complete below (which also runs the post-draft roster refill, fillRostersToMinimum).
+    const _draftMode = (this.state.career && this.state.career.mode) || 'dynasty';
+    if (this.state.draftIsAnnual && _draftMode !== 'player') {
       return;
     }
     const userId = this.state.userTeamId;
@@ -6510,9 +6616,10 @@ let game = {
   userPick(playerId) {
     const player = this.state.players[playerId];
     if (!player || player.team !== null) return;
+    const draftTeamId = this.getUserTeamId();
     const current = this.state.draftOrder[this.state.draftCurrentIdx];
-    if (current.teamId !== this.state.userTeamId) return;
-    this.applyPick(this.state.userTeamId, player);
+    if (current.teamId !== draftTeamId) return;
+    this.applyPick(draftTeamId, player);
     this.state.draftCurrentIdx++;
     this.advanceDraftUntilUser();
     // NOTE: deliberately NOT calling saveGame() here. compressStateForSave() walks every player
@@ -6541,7 +6648,7 @@ let game = {
     if (this.state.draftCurrentIdx >= this.state.draftOrder.length) { this.finishDraft(); return; }
     const current = this.state.draftOrder[this.state.draftCurrentIdx];
     if (!current) { this.state.draftCurrentIdx++; this.render(); return; }
-    if (current.teamId === this.state.userTeamId) { this.render(); return; } // your pick — choose from the board
+    if (current.teamId === this.getUserTeamId()) { this.render(); return; } // your pick — choose from the board
     const before = this.state.draftCurrentIdx;
     this.cpuPick(current.teamId);
     if (this.state.draftCurrentIdx === before) this.state.draftCurrentIdx++;
@@ -6553,7 +6660,7 @@ let game = {
   // clock (or the draft ends).
   _coachSimToMyPick() {
     if (!this.state.draftActive) return;
-    const userId = this.state.userTeamId;
+    const userId = this.getUserTeamId();
     let safety = 0;
     while (this.state.draftActive && this.state.draftCurrentIdx < this.state.draftOrder.length && safety < 2000) {
       safety++;
@@ -6684,41 +6791,35 @@ let game = {
     // Each one becomes a draft-eligible Player.
     const draftPool = [];
     this.state.pendingDraftClass.forEach(prospect => {
-      // OVR derivation: prospect grade ± variance (bust risk / breakout)
-      const variance = (Math.random() - 0.5) * 16;
-      const targetOvr = Math.max(50, Math.min(95, prospect.prospectGrade + variance));
-      const age = rookieAge();
+      const grade = prospect.prospectGrade;
+      // POTENTIAL = the player's eventual NFL ceiling, derived from their college grade (tight spread
+      // for elites who are known quantities, wider for raw projects). A generational grade-~99 talent
+      // tops out in the mid/upper-90s; a grade-80 prospect tops out ~80.
+      const potVar = grade >= 92 ? 3 : grade >= 84 ? 5 : 8;
+      let potential = Math.max(48, Math.min(97, grade + (Math.random() - 0.5) * potVar));
+      // STARTING OVR = a discount off that ceiling. Even GREAT prospects are raw as rookies and need
+      // a development period — but the discount scales with how long they have BEFORE their position's
+      // peak, so a QB (long runway) debuts well below his ceiling and grows into it over ~5 years,
+      // while an early-peaking RB debuts nearly ready. This guarantees the growth is realistically
+      // closeable by the player's prime rather than stranding them below potential forever.
+      const _peakStart = (POSITION_AGING[prospect.position] || POSITION_AGING.WR).peakStart;
+      const _age0 = rookieAge();
+      const window = Math.max(1, _peakStart - _age0); // years of development runway before peak
+      const baseDisc = potential >= 90 ? 11 : potential >= 82 ? 8 : potential >= 74 ? 6 : 4;
+      const discount = Math.min(baseDisc, Math.max(2, window * 2.0)) + Math.random() * 2;
+      const targetOvr = Math.max(48, Math.round(potential - discount));
+      // Count college Heismans so the draft board can covet decorated prospects (carried to the player).
+      let collegeHeismans = 0;
+      (prospect.seasonHistory || []).forEach(line => { (line.awards || []).forEach(a => { if (a === 'Heisman') collegeHeismans++; }); });
+      if (prospect._seasonAwards && prospect._seasonAwards.indexOf('Heisman') !== -1) collegeHeismans++;
+      const age = _age0;
       // User prospects pass their chosenArchetype so the ability distribution honors what they
       // picked at creation. CPU prospects have no chosen archetype — get a random one.
       const abilities = generateAbilities(prospect.position, Math.round(targetOvr), prospect.chosenArchetype || null);
       const rating = calculateOvrFromAbilities(prospect.position, abilities);
       const archetype = detectArchetype(prospect.position, abilities);
-      // Potential: rookies have a slightly higher ceiling than current OVR, but TIGHT.
-      // The real NFL has ~10-15 players at 90+ in any given year. Our model has 32 teams × 53 roster
-      // = 1696 active players. If we let every top prospect become 95+, we end up with 100+ elite players.
-      // Rule of thumb: prospect.grade ≥ 95 → potential 92-96 (generational, rare)
-      //                prospect.grade 88-94 → potential rating + 3-7 (elite ceiling)
-      //                prospect.grade 78-87 → potential rating + 2-5 (good ceiling)
-      //                prospect.grade < 78  → potential rating + 1-3 (modest ceiling)
-      let potential;
-      const grade = prospect.prospectGrade;
-      if (grade >= 95) {
-        // Generational. ~1% of rookies hit this tier in real CFB. Their NFL potential 92-97.
-        potential = 92 + Math.floor(Math.random() * 6);
-      } else if (grade >= 88) {
-        // Elite prospect — top-15 pick territory. Potential lands in 86-93 range typically.
-        potential = Math.max(rating, Math.round(rating + 3 + Math.random() * 5));
-        potential = Math.min(potential, 93);
-      } else if (grade >= 78) {
-        // Mid-1st to 3rd round prospect. Potential rating + 2-5.
-        potential = Math.max(rating, Math.round(rating + 2 + Math.random() * 4));
-        potential = Math.min(potential, 88);
-      } else {
-        // Late-round / UDFA. Modest ceiling.
-        potential = Math.max(rating, Math.round(rating + 1 + Math.random() * 3));
-        potential = Math.min(potential, 82);
-      }
-      potential = Math.min(99, potential);
+      // Final potential: never below the (already discounted) starting rating; rounded + capped.
+      potential = Math.round(Math.min(99, Math.max(potential, rating + 1)));
       
       const newPlayer = {
         id: this.state.players.length,
@@ -6738,6 +6839,7 @@ let game = {
         draftYear: this.state.year, contract: null,
         collegeSchool: prospect.school,
         collegeGrade: prospect.prospectGrade,
+        collegeHeismans: collegeHeismans,
         declaredEarly: !!prospect.declaredEarly,
         // Legacy info: carries forward from prospect so the player card can show "son of X"
         legacyOf: prospect.legacyOf || null,
@@ -7251,8 +7353,9 @@ let game = {
       if (this.state.draftActive) this.renderDraft();
       return;
     }
-    const isUserTurn = current.teamId === this.state.userTeamId;
-    const userTeam = this.state.userTeamId !== null ? this.state.teams[this.state.userTeamId] : null;
+    const isUserTurn = current.teamId === this.getUserTeamId();
+    const userDraftTeamId = this.getUserTeamId();
+    const userTeam = (userDraftTeamId !== null && userDraftTeamId !== undefined) ? this.state.teams[userDraftTeamId] : null;
     // Pick-by-pick controls. Available in the annual draft when a CPU is on the clock: the user can
     // reveal the next pick one at a time, fast-forward to their own pick, or auto-complete the rest.
     const isAnnualDraft = this.state.draftIsAnnual;
@@ -7316,7 +7419,7 @@ let game = {
       const player = this.state.players[pick.playerId];
       const team = this.state.teams[pick.teamId];
       if (!player || !team) return;
-      const isUser = pick.teamId === this.state.userTeamId;
+      const isUser = pick.teamId === userDraftTeamId;
       sidebarHtml += '<div class="draft-recent-pick ' + (isUser ? 'user-pick' : '') + '" onclick="game.showPlayer(' + player.id + ')" style="cursor:pointer">' +
         '<div class="pick-num">' + pick.overall + '</div>' +
         '<div><div style="font-weight:500">' + player.name + ' <span style="color:var(--text-muted);font-size:10px">' + player.position + '</span></div>' +
@@ -7755,6 +7858,29 @@ let game = {
     }
     if (this.state.playoffActive) { this.simPlayoffRound(); return; }
     if (this.state.week >= 18) { this.startPlayoffs(); return; }
+    // Safety net: guarantee every team is at a full 53-man roster before the season's first snap.
+    // The offseason draft normally refills rosters, but this self-heals ANY save whose rosters fell
+    // short (e.g. from a missed offseason refill) and enforces "always 53 during the season".
+    if (this.state.week === 0) {
+      // Safety: a rostered user player should never start a season "playing for free". If a contract
+      // expired and the negotiation was left unresolved, auto-sign a fair market deal with their team.
+      if (this.state.career && this.state.career.mode === 'player' && this.getUserPlayer) {
+        const up = this.getUserPlayer();
+        if (up && !up.retired && up.team !== null && up.team !== undefined && !up.contract) {
+          up.contract = generateContract(up.position, up.rating, up.age, this.state.year, false);
+          if (this.state.career.pendingContractNegotiation && !this.state.career.pendingContractNegotiation.resolved) {
+            this.state.career.pendingContractNegotiation.resolved = true;
+          }
+        }
+      }
+      // Good free agents shouldn't linger — let teams that need them sign the best available FIRST,
+      // then fill the remaining depth spots with cheap bodies. (Keeps the FA board from piling up with
+      // starter-quality talent and guarantees a full 53-man roster.)
+      this.runBlueChipFASweep();
+      this.fillRostersToMinimum();
+      this.enforceRosterMax();
+      this.enforceCapCompliance();
+    }
     this.state.week++;
     const weekGames = this.state.schedule.filter(g => g.week === this.state.week && !g.played);
     weekGames.forEach(g => this.simGame(g));
@@ -7801,6 +7927,13 @@ let game = {
     const isPlayerCareer = this.state.career && this.state.career.mode === 'player';
     // Player career: clear stale modal history so the personal game popup opens fresh (no back arrow).
     if (isPlayerCareer) this._modalHistory = [];
+    // COLLEGE PLAYOFF (CFP) is a forced event for COLLEGE-stage player careers: auto-route the user
+    // to the bracket each CFP week (college weeks 13-16) so they don't have to hunt for it — mirroring
+    // how the NFL playoffs force the playoffs view. NFL-stage players are NOT forced (college is over).
+    if (isPlayerCareer && this.state.career.careerStage === 'college' &&
+        this.state.collegeWeek >= 13 && this.state.collegeWeek <= 16) {
+      this.currentView = 'collegeplayoffs';
+    }
     this.render();
     if (isPlayerCareer) {
       // Player career: the personal post-game popup (fired by render() when the player's team
@@ -10305,7 +10438,7 @@ let game = {
     // Each conference column has 3 sub-columns: WC / DIV / CONF, with games stacked vertically.
     html += '<div class="card"><div class="card-header"><div class="card-title">Bracket</div>' +
       '<div class="card-meta">AFC on the left, NFC on the right, Super Bowl in the middle</div></div>' +
-      '<div style="padding:18px 10px;overflow-x:auto"><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1.3fr 1fr 1fr 1fr;gap:10px;min-width:980px;align-items:start">';
+      '<div style="padding:14px 8px"><div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:5px;align-items:start">';
     
     // Helper: build a game cell for the NFL bracket from the playoff results/games arrays.
     const buildNflBracketCell = (conf, round, slot) => {
@@ -10321,7 +10454,7 @@ let game = {
           winnerAbbr: homeWon ? home.abbr : away.abbr,
           winnerScore: Math.max(result.homeScore, result.awayScore),
           loserScore: Math.min(result.homeScore, result.awayScore),
-          played: true
+          played: true, isNfl: true
         });
       }
       // Look for unplayed game (current round's games are on po.games)
@@ -10332,7 +10465,7 @@ let game = {
         return this._renderBracketGame({
           hi: { seed: upcoming.homeSeed, abbr: home.abbr },
           lo: { seed: upcoming.awaySeed, abbr: away.abbr },
-          played: false
+          played: false, isNfl: true
         });
       }
       // No game yet — show empty placeholder
@@ -10372,7 +10505,7 @@ let game = {
         winnerAbbr: sb.played ? (homeWon ? home.abbr : away.abbr) : null,
         winnerScore: sb.played ? Math.max(sb.homeScore, sb.awayScore) : 0,
         loserScore: sb.played ? Math.min(sb.homeScore, sb.awayScore) : 0,
-        played: sb.played, isTitle: true
+        played: sb.played, isTitle: true, isNfl: true
       });
     } else {
       html += this._renderBracketGame({ hi: { seed: '?', name: 'AFC champion' }, lo: { seed: '?', name: 'NFC champion' }, played: false, isTitle: true });
@@ -10685,44 +10818,36 @@ let game = {
           let delta = 0;
           const currentAbility = p.abilities[k];
           if (p.age < aging.peakStart && p.rating < (p.potential || p.rating + 5) && currentAbility < abilityCeiling) {
-            // Pre-peak: growth rate scales DOWN as a player's current OVR rises. This prevents
-            // the "everyone becomes a star" inflation problem — gains shrink near the top so the
-            // league stays bell-curved.
-            //   - At OVR < 75: full growth rate (60% no gain, 30% +1, 10% +2)
-            //   - At OVR 80-84: half rate (70% no gain, 25% +1, 5% +2)
-            //   - At OVR 85+: minimal (85% no gain, 13% +1, 2% +2)
+            // Pre-peak development is driven by the GAP to the player's potential, not their current
+            // OVR. A rookie who debuts well below his ceiling (e.g. a top prospect at 86 with 96
+            // potential) develops FAST toward it, then growth tapers as he closes in. This produces a
+            // real rookie-to-prime arc instead of letting high-but-unrealized players stall out.
+            const gap = (p.potential || p.rating) - p.rating;
             const r = Math.random();
-            if (p.rating < 75) {
-              if (r < 0.60) delta = 0;
-              else if (r < 0.90) delta = 1;
-              else delta = 2;
-            } else if (p.rating < 80) {
-              if (r < 0.70) delta = 0;
-              else if (r < 0.95) delta = 1;
-              else delta = 2;
-            } else if (p.rating < 85) {
-              if (r < 0.82) delta = 0;
-              else if (r < 0.98) delta = 1;
-              else delta = 2;
+            if (gap >= 8) {
+              if (r < 0.26) delta = 0; else if (r < 0.72) delta = 1; else delta = 2;
+            } else if (gap >= 5) {
+              if (r < 0.40) delta = 0; else if (r < 0.86) delta = 1; else delta = 2;
+            } else if (gap >= 2) {
+              if (r < 0.58) delta = 0; else if (r < 0.93) delta = 1; else delta = 2;
+            } else if (gap >= 1) {
+              delta = r < 0.74 ? 0 : 1;
             } else {
-              // 85+ already — diminishing returns at the elite tier
-              if (r < 0.92) delta = 0;
-              else if (r < 0.99) delta = 1;
-              else delta = 2;
+              delta = 0;
             }
-            // Slow growth even more as you approach the ability ceiling
+            // Slow growth as the ability approaches its individual ceiling.
             if (currentAbility >= abilityCeiling - 3) delta = Math.min(delta, 1);
             if (currentAbility >= abilityCeiling - 1) delta = 0;
           } else if (p.age >= aging.peakStart && p.age <= aging.peakEnd) {
-            // In peak: stable with slight fluctuation. High-OVR players get more downward pressure
-            // (regression to mean keeps the elite tier from accumulating).
+            // In peak: stable. Great players HOLD their level (continuity) — they shouldn't quietly
+            // erode out of the elite tier while still in their prime. Mild fluctuation only, roughly
+            // neutral, so a star stays a star until age-driven decline actually kicks in.
             if (p.rating >= 88) {
-              // Elite at peak: more likely to slip than gain
-              delta = Math.random() < 0.15 ? 1 : (Math.random() < 0.45 ? -1 : 0);
+              delta = Math.random() < 0.22 ? 1 : (Math.random() < 0.22 ? -1 : 0);
             } else if (p.rating >= 82) {
-              delta = Math.random() < 0.25 ? 1 : (Math.random() < 0.30 ? -1 : 0);
+              delta = Math.random() < 0.28 ? 1 : (Math.random() < 0.20 ? -1 : 0);
             } else {
-              delta = Math.random() < 0.30 ? 1 : (Math.random() < 0.25 ? -1 : 0);
+              delta = Math.random() < 0.32 ? 1 : (Math.random() < 0.22 ? -1 : 0);
             }
             if (currentAbility >= abilityCeiling) delta = Math.min(delta, 0);
           } else if (p.age >= aging.declineStart) {
@@ -10768,11 +10893,35 @@ let game = {
             // Clear the expired contract object but keep team affiliation until negotiation resolves
             p.contract = null;
           } else {
-            if (p.team !== null) {
-              this.state.teams[p.team].roster = this.state.teams[p.team].roster.filter(id => id !== p.id);
-              p.team = null;
+            // CONTINUITY: a team usually RE-SIGNS its own good players rather than letting them walk
+            // (real NFL keeps stars home via extensions/franchise tags). Re-sign odds scale with OVR
+            // and dip for aging vets; lower-OVR depth more often reaches the open market. This keeps
+            // great players great AND on the same team, and stops the FA board filling with starters.
+            // (The offseason AGM pass reconciles any resulting cap overage via restructures/cuts.)
+            const curTeam = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
+            // In dynasty mode the USER manages their own roster/cap, so we don't auto-re-sign their
+            // team's expiring players — they decide. Every other team (and other modes) auto-retains.
+            const _cmode = (this.state.career && this.state.career.mode) || 'dynasty';
+            const userManaged = (_cmode === 'dynasty') && curTeam && curTeam.id === this.state.userTeamId;
+            let reSignChance = 0;
+            if (curTeam && !userManaged) {
+              if (p.rating >= 88) reSignChance = 0.85;
+              else if (p.rating >= 83) reSignChance = 0.72;
+              else if (p.rating >= 78) reSignChance = 0.56;
+              else if (p.rating >= 73) reSignChance = 0.40;
+              else reSignChance = 0.18;
+              if (p.age >= 31) reSignChance *= 0.7;
+              if (p.age >= 34) reSignChance *= 0.45;
             }
-            p.contract = null;
+            if (curTeam && !userManaged && Math.random() < reSignChance) {
+              p.contract = generateContract(p.position, p.rating, p.age, this.state.year, false);
+            } else {
+              if (p.team !== null) {
+                this.state.teams[p.team].roster = this.state.teams[p.team].roster.filter(id => id !== p.id);
+                p.team = null;
+              }
+              p.contract = null;
+            }
           }
         }
       }
@@ -10787,7 +10936,12 @@ let game = {
         // do not retire them.
         if (p.team === null) p.yearsAsFA = (p.yearsAsFA || 0) + 1;
         else p.yearsAsFA = 0;
-        return; // skip all forced-retirement + HOF processing for the user player
+        // CRITICAL: still reset season stats here (career totals were already accumulated above).
+        // Skipping this — as the early return previously did — caused the user's seasonStats to pile
+        // up across seasons, so the Season Leaders board and MVP voting saw career totals and the
+        // user "won" everything every year.
+        p.seasonStats = EMPTY_SEASON_STATS();
+        return; // skip forced-retirement + HOF processing for the user player
       }
       if (p.age >= aging.forcedRetireAge) {
         willRetire = true;
@@ -10804,8 +10958,17 @@ let game = {
       // Track yearsAsFA — incremented each year they sit unsigned.
       if (p.team === null && !willRetire) {
         p.yearsAsFA = (p.yearsAsFA || 0) + 1;
-        if (p.yearsAsFA >= 2 && p.age >= 29) willRetire = true;
-        else if (p.yearsAsFA >= 1 && p.age >= 32) willRetire = true;
+        // Only mediocre players quietly retire from prolonged unemployment. GOOD players (still
+        // starter quality) keep trying — and the blue-chip sweep signs them, so they shouldn't be
+        // sitting in the first place. This stops 76-79 OVR 29-year-olds from "retiring" out of nowhere.
+        if (p.rating >= 74) {
+          // Good player: only gives up if old AND sat multiple seasons (very rare).
+          if (p.yearsAsFA >= 3 && p.age >= 34) willRetire = true;
+        } else {
+          if (p.yearsAsFA >= 2 && p.age >= 30) willRetire = true;
+          else if (p.yearsAsFA >= 1 && p.age >= 33) willRetire = true;
+          else if (p.yearsAsFA >= 3) willRetire = true; // even a young scrub gives up after 3 years unsigned
+        }
       } else if (p.team !== null) {
         p.yearsAsFA = 0;
       }
@@ -11311,8 +11474,39 @@ let game = {
 
   // Post-AGM: ensure no team exceeds ROSTER_SIZE. Cut lowest-value to get to 53.
   // Value = rating + a small youth bonus (so young projects stay over old declining vets when close).
-  enforceRosterMax() {
+  // Guarantee EVERY team is under the salary cap — in-season, in any game mode. Primary tool is
+  // contract restructuring (convert current-year base into prorated bonus), which lowers this year's
+  // cap hit WITHOUT creating dead money or losing the player, so the 53-man roster stays intact. A
+  // hard dead-cap ceiling prevents the dead-money spirals that pushed teams to 106%+ used. Any tiny
+  // residual is granted as cap relief out of dead money, so no team is ever shown over the cap.
+  enforceCapCompliance() {
+    const cap = getSalaryCap(this.state.year);
+    const maxDead = Math.round(cap * 0.20); // dead money can't exceed ~20% of the cap (anti-spiral)
     this.state.teams.forEach(team => {
+      if ((team.deadCap || 0) > maxDead) team.deadCap = maxDead;
+      let used = teamCapUsed(team, this.state.players);
+      if (used <= cap) return;
+      const rostered = team.roster.map(id => this.state.players[id])
+        .filter(p => p && !p.retired && p.contract && (p.contract.yearsRemaining || 0) >= 2)
+        .sort((a, b) => currentCapHit(b.contract) - currentCapHit(a.contract));
+      for (const p of rostered) {
+        if (used <= cap) break;
+        const c = p.contract;
+        const base = (c.baseSalaries && c.baseSalaries[0]) || 0;
+        if (base <= 1_500_000) continue;
+        const convert = Math.round(base * 0.75 / 50_000) * 50_000;
+        c.baseSalaries[0] = base - convert;
+        c.signingBonus = (c.signingBonus || 0) + convert;
+        c.bonusProrationYears = Math.max(c.bonusProrationYears || 1, Math.min(5, c.yearsRemaining));
+        used = teamCapUsed(team, this.state.players);
+      }
+      // Final guarantee — absorb any residual overage as cap relief (no forced cuts; roster stays full).
+      used = teamCapUsed(team, this.state.players);
+      if (used > cap) team.deadCap = Math.max(0, (team.deadCap || 0) - (used - cap));
+    });
+  },
+
+  enforceRosterMax() {    this.state.teams.forEach(team => {
       while (team.roster.length > ROSTER_SIZE) {
         const rosterPlayers = team.roster.map(id => ({ id, p: this.state.players[id] })).filter(x => x.p && !x.p.retired);
         // Sort ascending by adjusted value: rating + youth + potential
@@ -13035,6 +13229,15 @@ let game = {
     // their reputation, league connections, and banked post-tax earnings.
     if (stage === 'retired') {
       html += this._renderPlayerBranchPanel();
+    }
+
+    // ===== REQUEST A TRADE (active NFL player on a team) =====
+    if (stage === 'nfl' && !p.retired && team && this.state.offseasonPhase === null && !this.state.playoffActive) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Request a trade</div></div>' +
+        '<div style="padding:14px 16px">' +
+        '<div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">Want a change of scenery? Ask your agent to gauge the market. We\'ll bring back a short list of teams with a real fit — you choose whether to force a move.</div>' +
+        '<button class="btn" onclick="game.playerRequestTrade()">Request a trade →</button>' +
+        '</div></div>';
     }
 
     // ===== VOLUNTARY RETIREMENT (active) =====
@@ -21640,8 +21843,16 @@ let game = {
   // Render a single bracket game cell. Used for both college and NFL brackets.
   // game = { hi: {seed, abbr, name?}, lo: {seed, abbr, name?}, played, winnerSeed?, winnerAbbr?, ... }
   _renderBracketGame(g) {
-    const hiMeta = g.hi && g.hi.abbr ? (COLLEGE_SCHOOLS.find(s => s.abbr === g.hi.abbr) || this.state.teams.find(t => t.abbr === g.hi.abbr)) : null;
-    const loMeta = g.lo && g.lo.abbr ? (COLLEGE_SCHOOLS.find(s => s.abbr === g.lo.abbr) || this.state.teams.find(t => t.abbr === g.lo.abbr)) : null;
+    // Resolve each side's metadata. CRITICAL: NFL teams and college schools can share an
+    // abbreviation (e.g. both the Indianapolis Colts and Indiana use "IND"). For NFL brackets we
+    // must look up NFL teams FIRST, or the Colts render as "Indiana". College brackets do the reverse.
+    const lookupMeta = (abbr) => {
+      if (!abbr) return null;
+      if (g.isNfl) return this.state.teams.find(t => t.abbr === abbr) || (typeof COLLEGE_SCHOOLS !== 'undefined' ? COLLEGE_SCHOOLS.find(s => s.abbr === abbr) : null);
+      return (typeof COLLEGE_SCHOOLS !== 'undefined' ? COLLEGE_SCHOOLS.find(s => s.abbr === abbr) : null) || this.state.teams.find(t => t.abbr === abbr);
+    };
+    const hiMeta = g.hi && g.hi.abbr ? lookupMeta(g.hi.abbr) : null;
+    const loMeta = g.lo && g.lo.abbr ? lookupMeta(g.lo.abbr) : null;
     
     const hiName = hiMeta ? (hiMeta.name || (hiMeta.city + ' ' + hiMeta.name)) : (g.hi && g.hi.name) || (g.hi && g.hi.abbr) || 'TBD';
     const loName = loMeta ? (loMeta.name || (loMeta.city + ' ' + loMeta.name)) : (g.lo && g.lo.name) || (g.lo && g.lo.abbr) || 'TBD';
@@ -21663,8 +21874,13 @@ let game = {
     
     const clickHandler = (abbr) => {
       if (!abbr) return '';
+      // In an NFL bracket, prefer the NFL team (abbr can collide with a college school of the same code).
+      if (g.isNfl) {
+        const nflTeam = this.state.teams.find(t => t.abbr === abbr);
+        if (nflTeam) return 'onclick="game.showTeam(' + nflTeam.id + ')" style="cursor:pointer"';
+      }
       // College schools vs NFL teams use different show functions
-      const isCollege = COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
+      const isCollege = (typeof COLLEGE_SCHOOLS !== 'undefined') && COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
       if (isCollege) return 'onclick="game.showCollegeCard(\'' + abbr + '\')" style="cursor:pointer"';
       const nflTeam = this.state.teams.find(t => t.abbr === abbr);
       if (nflTeam) return 'onclick="game.showTeam(' + nflTeam.id + ')" style="cursor:pointer"';
