@@ -1522,18 +1522,25 @@ function generateContract(position, rating, age, year, isRookie) {
 
 function currentCapHit(contract) {
   if (!contract || contract.yearsRemaining <= 0) return 0;
-  const currentBase = contract.baseSalaries[0] || 0;
-  const yearIntoContract = contract.years - contract.yearsRemaining;
-  const proratedThisYear = yearIntoContract < contract.bonusProrationYears
-    ? contract.signingBonus / contract.bonusProrationYears : 0;
-  return Math.round(currentBase + proratedThisYear);
+  const bases = Array.isArray(contract.baseSalaries) ? contract.baseSalaries : [];
+  const currentBase = bases[0] || contract.aav || 0;
+  const years = contract.years || bases.length || 1;
+  const yearIntoContract = years - contract.yearsRemaining;
+  const proYears = contract.bonusProrationYears || 1;
+  const proratedThisYear = (yearIntoContract < proYears && contract.signingBonus)
+    ? contract.signingBonus / proYears : 0;
+  const hit = Math.round(currentBase + proratedThisYear);
+  return isFinite(hit) ? hit : (contract.aav || 0);
 }
 
 function deadCapIfReleased(contract) {
   if (!contract) return 0;
-  const yearIntoContract = contract.years - contract.yearsRemaining;
-  const remainingProration = Math.max(0, contract.bonusProrationYears - yearIntoContract);
-  return Math.round((contract.signingBonus / contract.bonusProrationYears) * remainingProration);
+  const proYears = contract.bonusProrationYears || 1;
+  const years = contract.years || 1;
+  const yearIntoContract = years - (contract.yearsRemaining || 0);
+  const remainingProration = Math.max(0, proYears - yearIntoContract);
+  const dead = Math.round(((contract.signingBonus || 0) / proYears) * remainingProration);
+  return isFinite(dead) ? dead : 0;
 }
 
 function teamCapUsed(team, players) {
@@ -7965,24 +7972,30 @@ let game = {
     // The offseason draft normally refills rosters, but this self-heals ANY save whose rosters fell
     // short (e.g. from a missed offseason refill) and enforces "always 53 during the season".
     if (this.state.week === 0) {
-      // Safety: a rostered user player should never start a season "playing for free". If a contract
-      // expired and the negotiation was left unresolved, auto-sign a fair market deal with their team.
-      if (this.state.career && this.state.career.mode === 'player' && this.getUserPlayer) {
-        const up = this.getUserPlayer();
-        if (up && !up.retired && up.team !== null && up.team !== undefined && !up.contract) {
-          up.contract = generateContract(up.position, up.rating, up.age, this.state.year, false);
-          if (this.state.career.pendingContractNegotiation && !this.state.career.pendingContractNegotiation.resolved) {
-            this.state.career.pendingContractNegotiation.resolved = true;
+      // Season-start maintenance. Wrapped so a single unexpected error in any one step can never
+      // freeze the season rollover (important when playing offline with no way to get a fix).
+      try {
+        // Safety: a rostered user player should never start a season "playing for free". If a contract
+        // expired and the negotiation was left unresolved, auto-sign a fair market deal with their team.
+        if (this.state.career && this.state.career.mode === 'player' && this.getUserPlayer) {
+          const up = this.getUserPlayer();
+          if (up && !up.retired && up.team !== null && up.team !== undefined && !up.contract) {
+            up.contract = generateContract(up.position, up.rating, up.age, this.state.year, false);
+            if (this.state.career.pendingContractNegotiation && !this.state.career.pendingContractNegotiation.resolved) {
+              this.state.career.pendingContractNegotiation.resolved = true;
+            }
           }
         }
+        // Good free agents shouldn't linger — let teams that need them sign the best available FIRST,
+        // then fill the remaining depth spots with cheap bodies. (Keeps the FA board from piling up with
+        // starter-quality talent and guarantees a full 53-man roster.)
+        this.runBlueChipFASweep();
+        this.fillRostersToMinimum();
+        this.enforceRosterMax();
+        this.enforceCapCompliance();
+      } catch (e) {
+        if (typeof console !== 'undefined' && console.warn) console.warn('Season-start maintenance skipped a step:', e);
       }
-      // Good free agents shouldn't linger — let teams that need them sign the best available FIRST,
-      // then fill the remaining depth spots with cheap bodies. (Keeps the FA board from piling up with
-      // starter-quality talent and guarantees a full 53-man roster.)
-      this.runBlueChipFASweep();
-      this.fillRostersToMinimum();
-      this.enforceRosterMax();
-      this.enforceCapCompliance();
     }
     this.state.week++;
     const weekGames = this.state.schedule.filter(g => g.week === this.state.week && !g.played);
