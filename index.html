@@ -4198,9 +4198,12 @@ let game = {
             const depthPenalty = i * 2.5;
             const noise = (Math.random() - 0.5) * 14;
             let grade = prestige + noise - depthPenalty;
-            if (year === 'Senior') grade += 2;
-            else if (year === 'Junior') grade += 0.5;
-            else if (year === 'Freshman') grade -= 2.5;
+            // Wider class-year arc so underclassmen start with real room to grow and seniors are the
+            // polished products (mirrors college: freshmen rarely dominate, upperclassmen carry teams).
+            if (year === 'Senior') grade += 3;
+            else if (year === 'Junior') grade += 1;
+            else if (year === 'Sophomore') grade -= 2;
+            else if (year === 'Freshman') grade -= 5;
             grade = Math.max(40, Math.min(99, grade));
             // Same global rarity cap as dynasty/coach mode — keep elite tier rare.
             // Without this, every blue-blood roster has starters at 95+, which inflates the NFL OVR curve.
@@ -4555,7 +4558,7 @@ let game = {
           for (let i = 0; i < need; i++) {
             const noise = (Math.random() - 0.5) * 14;
             const depthPenalty = (have + i) * 1.5;
-            let grade = prestige + noise - depthPenalty - 2.5;
+            let grade = prestige + noise - depthPenalty - 5;
             grade = Math.max(40, Math.min(99, grade));
             // Same global rarity cap — keep elite tier rare
             if (grade >= 95 && Math.random() < 0.92) {
@@ -5679,30 +5682,60 @@ let game = {
     };
   },
 
+  // Sample a small non-negative integer from an approximate Poisson(lambda), capped at 4.
+  // Used for realistic low-frequency event volumes (interceptions especially), so totals show
+  // believable dispersion instead of an always-tiny count.
+  _samplePoissonSmall(lambda) {
+    if (!(lambda > 0)) return 0;
+    const u = Math.random();
+    let cum = Math.exp(-lambda), term = cum, k = 0;
+    while (u > cum && k < 4) { k++; term *= lambda / k; cum += term; }
+    return k;
+  },
+
   // Generate a stat line for a college offensive player. Returns both the display string and
   // raw numbers (used by the Heisman race tracker to compute season totals).
   generateCollegeStatLine(p, teamScore) {
     // Scale stats with team score — high-scoring games have big individual lines
     const scoreFactor = teamScore / 28; // 1.0 = average game, 1.5 = ~42pt game
+    // Production scales with the player's QUALITY (prospect grade), not just the team's score, so
+    // elite players post elite lines and raw/young (low-grade) players stay modest — with real room
+    // to grow as their grade climbs year over year. A mild scoring-environment factor nudges output
+    // up in shootouts. Magnitudes are calibrated to real CFB single-season norms.
+    const grade = p.prospectGrade || 70;
+    const env = Math.min(1.25, 0.82 + scoreFactor * 0.20); // ~1.0 in an average game, up to ~1.25 in a shootout
     if (p.position === 'QB') {
-      const yds = Math.round((200 + Math.random() * 180) * scoreFactor);
-      const tds = Math.min(6, Math.floor(scoreFactor * (1 + Math.random() * 3)));
-      const ints = Math.random() < 0.35 ? 1 : 0;
+      // Passing yds/game by grade: elite (95) ~310, average starter (75) ~230, raw (60) ~170.
+      const ydMean = 130 + Math.max(0, grade - 50) * 4.0;
+      const yds = Math.max(60, Math.round(ydMean * (0.72 + Math.random() * 0.56) * env));
+      // Pass TD/game by grade: elite ~2.9, average ~2.0, raw ~1.3.
+      const tdMean = 0.95 + Math.max(0, grade - 50) * 0.044;
+      const tds = Math.min(6, Math.max(0, Math.round(tdMean * (0.5 + Math.random()) * Math.min(1.30, 0.78 + scoreFactor * 0.24))));
+      // Interceptions: realistic, quality-scaled volume (elite ~0.7/game ≈ 8/season, raw ~1.3/game).
+      const intLambda = Math.max(0.5, Math.min(1.4, 1.25 - Math.max(0, grade - 60) * 0.016));
+      const ints = this._samplePoissonSmall(intLambda);
       return {
-        display: yds + ' pass yds, ' + tds + ' TD' + (tds === 1 ? '' : 's') + (ints > 0 ? ', ' + ints + ' INT' : ''),
+        display: yds + ' pass yds, ' + tds + ' TD' + (tds === 1 ? '' : 's') + (ints > 0 ? ', ' + ints + ' INT' + (ints > 1 ? 's' : '') : ''),
         raw: { passYds: yds, passTDs: tds, ints }
       };
     } else if (p.position === 'RB') {
-      const yds = Math.round((70 + Math.random() * 130) * scoreFactor);
-      const tds = Math.floor(scoreFactor * Math.random() * 2.5);
+      // Rush yds/game by grade: elite (95) ~130, average (75) ~85, raw (60) ~50.
+      const ydMean = 30 + Math.max(0, grade - 50) * 2.0;
+      const yds = Math.max(10, Math.round(ydMean * (0.6 + Math.random() * 0.85) * env));
+      const tdMean = 0.45 + Math.max(0, grade - 55) * 0.018;
+      const tds = Math.min(4, Math.max(0, Math.round(tdMean * (0.45 + Math.random() * 1.3) * Math.min(1.35, 0.72 + scoreFactor * 0.28))));
       return {
         display: yds + ' rush yds, ' + tds + ' TD' + (tds === 1 ? '' : 's'),
         raw: { rushYds: yds, rushTDs: tds }
       };
     } else if (p.position === 'WR' || p.position === 'TE') {
-      const yds = Math.round((50 + Math.random() * 110) * scoreFactor);
-      const recs = 4 + Math.floor(Math.random() * 6);
-      const tds = Math.random() < 0.5 * scoreFactor ? Math.ceil(Math.random() * 2) : 0;
+      // Rec yds/game by grade: elite (95) ~105, average (75) ~65, raw (60) ~38.
+      const ydMean = 26 + Math.max(0, grade - 50) * 1.65;
+      const yds = Math.max(0, Math.round(ydMean * (0.5 + Math.random() * 1.0) * env));
+      const recMean = 2.6 + Math.max(0, grade - 55) * 0.07;
+      const recs = Math.max(1, Math.round(recMean * (0.6 + Math.random() * 0.8)));
+      const tdMean = 0.35 + Math.max(0, grade - 55) * 0.013;
+      const tds = Math.min(3, Math.max(0, Math.round(tdMean * (0.4 + Math.random() * 1.4) * Math.min(1.35, 0.72 + scoreFactor * 0.28))));
       return {
         display: recs + ' rec, ' + yds + ' yds' + (tds > 0 ? ', ' + tds + ' TD' : ''),
         raw: { receptions: recs, recYds: yds, recTDs: tds }
@@ -5769,9 +5802,18 @@ let game = {
     if (p.position === 'QB') {
       // QB stats only get generated if starter or close. Backup QBs occasionally take a series.
       if (depthIdx === 0) {
-        const yds = Math.round((180 + Math.random() * 220) * usage);
-        const tds = Math.max(0, Math.floor((1 + Math.random() * 3) * usage));
-        const ints = Math.random() < 0.30 ? (Math.random() < 0.25 ? 2 : 1) : 0;
+        // Grade-driven volume on the same realistic scale as CPU passers, scaled by snaps. A raw
+        // freshman starter (grade ~60) is modest (~170 yds/game); an elite upperclassman (~92) ~300.
+        // This gives the user a genuine development arc instead of instant stardom as a freshman.
+        const qbGrade = p.prospectGrade || 70;
+        const env = Math.min(1.25, 0.82 + (teamScore / 28) * 0.20);
+        const ydMean = 130 + Math.max(0, qbGrade - 50) * 4.0;
+        const yds = Math.max(50, Math.round(ydMean * (0.72 + Math.random() * 0.56) * env * snapFactor));
+        const tdMean = 0.95 + Math.max(0, qbGrade - 50) * 0.044;
+        const tds = Math.min(6, Math.max(0, Math.round(tdMean * (0.5 + Math.random()) * Math.min(1.30, 0.78 + (teamScore / 28) * 0.24) * snapFactor)));
+        // Quality-scaled INT volume (Poisson) with realistic game-to-game dispersion.
+        const intLambda = Math.max(0.5, Math.min(1.4, 1.25 - Math.max(0, qbGrade - 60) * 0.016)) * Math.max(0.6, snapFactor);
+        const ints = this._samplePoissonSmall(intLambda);
         const att = 24 + Math.floor(Math.random() * 18);
         const cmp = Math.max(8, Math.round(att * (0.55 + Math.random() * 0.18)));
         raw.passYds = yds; raw.passTDs = tds; raw.ints = ints; raw.cmp = cmp; raw.att = att;
@@ -7756,8 +7798,19 @@ let game = {
     // Re-render the CURRENT view (do NOT switch the user's tab/page), then overlay the week
     // recap as a dismissable popup. Agent careers also get forced NIL / contract popups, which
     // are surfaced from within the recap modal flow.
+    const isPlayerCareer = this.state.career && this.state.career.mode === 'player';
+    // Player career: clear stale modal history so the personal game popup opens fresh (no back arrow).
+    if (isPlayerCareer) this._modalHistory = [];
     this.render();
-    this.showWeekRecapModal();
+    if (isPlayerCareer) {
+      // Player career: the personal post-game popup (fired by render() when the player's team
+      // played) IS the weekly window — we do NOT overlay the generic league recap on top of it.
+      // _playerShowWeekPopup backstops bye / no-game weeks so a popup always appears, then arms the
+      // forced-representation chain (NIL offers / agent pitches) for when the popup is dismissed.
+      this._playerShowWeekPopup();
+    } else {
+      this.showWeekRecapModal();
+    }
   },
 
   // Build and show the weekly recap as a modal popup. This replaces the old behaviour of
@@ -7783,6 +7836,97 @@ let game = {
     this.showModal(title, body);
     // After the user closes this recap, chain into any forced agent popups.
     this._pendingForcedAfterRecap = true;
+  },
+
+  // PLAYER CAREER weekly popup backstop. The personal post-game popup is fired from render() when
+  // the player's team played this week (the screenshot window). This method ensures a weekly popup
+  // ALWAYS appears — if no game popup opened (a bye / no game this week), it shows a bye-week
+  // check-in instead — and arms the forced-representation chain (NIL offers / agent pitches) so
+  // those surface once the player dismisses the popup.
+  _playerShowWeekPopup() {
+    const modalEl = document.getElementById('modal');
+    const modalOpen = modalEl && modalEl.classList && typeof modalEl.classList.contains === 'function' && modalEl.classList.contains('show');
+    // If render() didn't open the personal game popup, the player had no game this week — show a
+    // bye-week check-in. Guarded by modalOpen so we never stack over another forced popup that
+    // render() may have surfaced (e.g. a contract negotiation or pre-draft step).
+    if (!modalOpen) {
+      try { this._showPlayerByeWeekPopup(); } catch (e) { /* defensive — never break sim flow */ }
+    }
+    // Once the popup is dismissed, surface any forced representation popups queued this week.
+    this._pendingForcedAfterRecap = true;
+  },
+
+  // Bye-week / no-game check-in popup for the player career. Keeps the weekly cadence intact even
+  // when the player's team is idle, so the player gets a weekly window after every sim.
+  _showPlayerByeWeekPopup() {
+    const p = this.getUserPlayer();
+    if (!p) return;
+    const stage = this.state.career ? this.state.career.careerStage : null;
+    const wk = this.state.week;
+    let teamLine = '';
+    if (stage === 'nfl' && p.team !== null && p.team !== undefined && this.state.teams[p.team]) {
+      const t = this.state.teams[p.team];
+      teamLine = t.city + ' ' + t.name + ' (' + t.wins + '\u2013' + t.losses + ')';
+    } else if (stage === 'college' && p.school) {
+      const sc = (typeof COLLEGE_SCHOOLS !== 'undefined') ? COLLEGE_SCHOOLS.find(s => s.abbr === p.school) : null;
+      teamLine = sc ? sc.name : p.school;
+    }
+    let body = '<div style="background:var(--surface-2);padding:14px 18px;margin-bottom:16px;border-left:4px solid var(--border-strong)">' +
+      '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.8px;font-weight:600">WEEK ' + wk + ' \u00b7 BYE</div>' +
+      '<div style="font-size:16px;font-weight:700;margin-top:2px">No game this week</div>' +
+      (teamLine ? '<div class="muted" style="font-size:12px;margin-top:2px">' + teamLine + '</div>' : '') +
+      '</div>';
+    body += '<div style="background:var(--surface);padding:18px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:13px;color:var(--text-muted)">' + p.name + ' is on a bye \u2014 nothing on the schedule.</div>' +
+      '<div class="muted" style="font-size:11px;margin-top:4px">Rest up and keep developing in practice.</div>' +
+      '</div>';
+    const seasonSummary = this._playerSeasonSummaryLine(p, stage);
+    if (seasonSummary) {
+      body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+        '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">SEASON SO FAR</div>' +
+        '<div style="font-size:14px;font-weight:500">' + seasonSummary + '</div></div>';
+    }
+    body += '<div style="text-align:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
+      '<button onclick="closeModal()" class="btn btn-primary">Continue \u2192</button></div>';
+    this.showModal(p.name + ' \u00b7 Week ' + wk, body);
+  },
+
+  // Build a position-appropriate "season so far" stat line for the player. College totals live on
+  // _heismanStats; NFL totals on seasonStats. Returns '' if there's nothing to show.
+  _playerSeasonSummaryLine(p, stage) {
+    let s;
+    if (stage === 'college') {
+      const h = p._heismanStats;
+      if (!h) return '';
+      s = { passingYards: h.passYds || 0, passingTDs: h.passTDs || 0, interceptionsThrown: h.ints || 0,
+            rushingYards: h.rushYds || 0, rushingTDs: h.rushTDs || 0,
+            receivingYards: h.recYds || 0, receivingTDs: h.recTDs || 0, receptions: h.receptions || 0,
+            sacks: h.sacks || 0, tackles: h.tackles || 0, interceptionsMade: h.intsMade || 0 };
+    } else {
+      s = p.seasonStats;
+      if (!s) return '';
+    }
+    const pos = p.position;
+    const parts = [];
+    if (pos === 'QB') {
+      if (s.passingYards) parts.push(s.passingYards + ' pass yds');
+      if (s.passingTDs) parts.push(s.passingTDs + ' pass TD' + (s.passingTDs === 1 ? '' : 's'));
+      if (s.interceptionsThrown) parts.push(s.interceptionsThrown + ' INT');
+      if (s.rushingYards) parts.push(s.rushingYards + ' rush yds');
+    } else if (pos === 'RB') {
+      if (s.rushingYards) parts.push(s.rushingYards + ' rush yds');
+      if (s.rushingTDs) parts.push(s.rushingTDs + ' rush TD' + (s.rushingTDs === 1 ? '' : 's'));
+      if (s.receptions) parts.push(s.receptions + ' rec, ' + (s.receivingYards || 0) + ' yds');
+    } else if (pos === 'WR' || pos === 'TE') {
+      if (s.receptions) parts.push(s.receptions + ' rec');
+      if (s.receivingYards) parts.push(s.receivingYards + ' rec yds');
+      if (s.receivingTDs) parts.push(s.receivingTDs + ' rec TD' + (s.receivingTDs === 1 ? '' : 's'));
+    } else {
+      if (s.tackles) parts.push(s.tackles + ' tackles');
+      if (s.sacks) parts.push(s.sacks + ' sacks');
+      if (s.interceptionsMade) parts.push(s.interceptionsMade + ' INT');
+    }
+    return parts.join(' \u00b7 ');
   },
 
   // Compose the recap modal body. Mirrors the key content from renderRecap but condensed for a
@@ -8159,7 +8303,14 @@ let game = {
     const away = this.state.teams[g.awayTeam];
     const hs = this.getTeamStrength(home);
     const as = this.getTeamStrength(away);
-    const homeWinProb = (hs / (hs + as)) + 0.05;
+    // Win probability from the strength DIFFERENCE on a logistic curve. The old hs/(hs+as)+0.05
+    // ratio compressed everything toward a coin flip (a 4-pt OVR edge was only ~57%), so playoff
+    // upsets piled up and low seeds reached the Super Bowl far more than real life. This curve gives
+    // favorites realistic edges — home-field ~1.2 strength pts, a ~4-pt edge ≈ 66%, ~8-pt ≈ 76% —
+    // while keeping upsets live. Clamped so no game is ever a true lock.
+    const adjDiff = (hs - as) + 1.2;
+    let homeWinProb = 1 / (1 + Math.exp(-adjDiff / 8));
+    homeWinProb = Math.max(0.05, Math.min(0.95, homeWinProb));
     const homeWins = Math.random() < homeWinProb;
     // Real NFL avg team score: ~22-23. So baseline ~15, range ~10-38 with winner skew.
     const base = 15;
@@ -8452,14 +8603,16 @@ let game = {
       let teamPassYards = 0, teamCompletions = 0, teamPassTDs = 0;
       if (qbs[0]) {
         const qb = qbs[0];
-        // Passing volume calibrated to NFL realism (last 10 years):
-        // - Avg starter (OVR 75): ~225 yds/game → ~3,825/season
-        // - Top starter (OVR 85): ~265 yds/game → ~4,500/season
-        // - Elite (OVR 92): ~295 yds/game → ~5,000/season
-        // Formula: base + variance × rating multiplier × passEmph scaling
-        const ratingMult = 0.90 + Math.max(0, (qb.rating - 75)) / 38; // 0.90 at OVR 75, 1.16 at 85, 1.35 at 92
-        const passEmphMult = 0.85 + passEmph * 0.32; // 0.85 to 1.17 range
-        teamPassYards = Math.floor((175 + Math.random() * 80) * ratingMult * passEmphMult * (trainBoost.passYdsMult || 1));
+        // Passing volume calibrated to real NFL single-season norms (per-game mean × 17):
+        // - Below-avg starter (OVR 68): ~185 yds/game → ~3,150/season
+        // - Average starter (OVR 78): ~215 yds/game → ~3,650/season
+        // - Top starter (OVR 85): ~250 yds/game → ~4,250/season
+        // - Elite (OVR 92): ~278 yds/game → ~4,700/season (only the very best flirt with 5,000)
+        // The old curve sent elite QBs past 5,700 while leaving average starters near 3,300; this
+        // tightens both ends so the league reads like real life.
+        const baseYpg = 170 + Math.max(0, qb.rating - 65) * 3.5;
+        const passEmphMult = 0.92 + passEmph * 0.20; // ~0.98 (run-heavy) to ~1.08 (air raid)
+        teamPassYards = Math.floor(baseYpg * (0.82 + Math.random() * 0.36) * passEmphMult * (trainBoost.passYdsMult || 1));
         const att = Math.floor((24 + Math.random() * 12) * passEmphMult);
         teamCompletions = Math.floor(att * (0.58 + Math.random() * 0.12 + (qb.rating - 75) / 200));
         teamCompletions = Math.min(teamCompletions, att);
@@ -8468,7 +8621,11 @@ let game = {
         // Training: qbDev reduces INT rate; defensive coverage/passRush on OPPOSING team adds INTs
         // (we model INTs as a function of this offense's training only, since opponent boosts are out of scope)
         let intRate = trainBoost.intMult !== undefined ? trainBoost.intMult : 1.0;
-        const ints = Math.random() < 0.4 * intRate ? Math.floor(Math.random() * 2) : 0;
+        // Realistic, rating-scaled INT volume. Elite QBs (OVR ~92) average ~0.58 INT/game (~10 over a
+        // 17-game season); average starters (OVR ~75) ~0.80/game (~13-14); weak QBs more. Sampled from a
+        // small Poisson so multi-INT games occur. Replaces the old ~0.2/game (~3/season) model.
+        const intLambda = Math.max(0.40, Math.min(1.05, 1.0 - Math.max(0, qb.rating - 60) * 0.013)) * intRate;
+        const ints = this._samplePoissonSmall(intLambda);
         const gs = ensureStats(qb.id);
         gs.passingYards += teamPassYards; gs.passingTDs += teamPassTDs;
         gs.attempts += att; gs.completions += teamCompletions; gs.interceptionsThrown += ints; gs.touchdowns += teamPassTDs;
@@ -9972,7 +10129,11 @@ let game = {
       // Super Bowl: 1 team per conf, neutral site (we'll treat AFC as home arbitrarily)
       const afcChamp = po.alive.AFC[0];
       const nfcChamp = po.alive.NFC[0];
-      po.games = [{ conf: 'SB', round: 4, homeSeed: 1, awaySeed: 1, homeTeam: afcChamp, awayTeam: nfcChamp, played: false, homeScore: 0, awayScore: 0, playerStats: {} }];
+      // Carry each finalist's REAL seed into the SB game (was hardcoded to 1/1, which made the
+      // bracket always read "#1 vs #1" no matter who actually advanced).
+      const afcChampSeed = (po.afcSeeds.find(s => s.teamId === afcChamp) || {}).seed || 1;
+      const nfcChampSeed = (po.nfcSeeds.find(s => s.teamId === nfcChamp) || {}).seed || 1;
+      po.games = [{ conf: 'SB', round: 4, homeSeed: afcChampSeed, awaySeed: nfcChampSeed, homeTeam: afcChamp, awayTeam: nfcChamp, played: false, homeScore: 0, awayScore: 0, playerStats: {} }];
     } else {
       // round 5+ means SB was just simmed
       const sbResult = po.results[po.results.length - 1];
@@ -11428,6 +11589,15 @@ let game = {
       }
     }
     
+    // Keep the user identity tag in sync with live state — the class year advances each offseason
+    // (Freshman → Sophomore → ...), the career stage transitions (college → declared → NFL), and
+    // teams can change. updateUserTag was previously only set at game creation/resume, so the tag
+    // would freeze (e.g. stuck on "Freshman"). Skip agent mode here: its updateUserTag re-asserts
+    // the agency nav tab, which we don't want to force on every render (it's static anyway).
+    if (!(this.state.career && this.state.career.mode === 'agent')) {
+      this.updateUserTag();
+    }
+
     // Snapshot previous view state for back navigation. We track currentView + a few key
     // filter/context fields that affect what the user sees. We only push when a NEW view
     // is being rendered — not when re-rendering the same view (e.g. filter toggles).
@@ -19418,20 +19588,24 @@ let game = {
     // For prospect IDs that have since graduated, find the resulting NFL player via fromProspectId.
     const rows = [];
     pinnedIds.forEach(id => {
-      if (typeof id === 'string' && id.indexOf('cp_') === 0) {
-        // Prospect ID — first try to find them in the current college prospect pool
+      if (typeof id === 'string') {
+        // Prospect-origin id. This covers BOTH CPU prospects ("cp_...") AND the user's own prospect
+        // ("user_prospect_..."). Track them through every stage so a pin ALWAYS follows the player:
+        //   1) still enrolled  -> live college pool
+        //   2) graduated, pre-draft -> pendingDraftClass (the "declared" limbo)
+        //   3) drafted / in the NFL -> the player created from this prospect (linked by fromProspectId)
         const prospect = (this.state.collegeProspects || []).find(p => p.id === id);
-        if (prospect) {
-          rows.push({ kind: 'prospect', prospect, id });
-          return;
+        if (prospect) { rows.push({ kind: 'prospect', prospect, id }); return; }
+        const pending = (this.state.pendingDraftClass || []).find(p => p.id === id);
+        if (pending) { rows.push({ kind: 'prospect', prospect: pending, id }); return; }
+        const player = (this.state.players || []).find(p => p && p.fromProspectId === id);
+        if (player) { rows.push({ kind: 'player', player, id, wasProspect: true }); return; }
+        // Last resort for the user's own pin: resolve via the career entity if it now points at an
+        // NFL player (covers any id-format drift across saves).
+        if (this.state.career && (this.state.career.entityId === id) && typeof this.state.career.entityId === 'number') {
+          const ep = this.state.players[this.state.career.entityId];
+          if (ep) { rows.push({ kind: 'player', player: ep, id, wasProspect: true }); return; }
         }
-        // Prospect has graduated — find the NFL player who came from this prospect
-        const player = this.state.players.find(p => p.fromProspectId === id);
-        if (player) {
-          rows.push({ kind: 'player', player, id, wasProspect: true });
-          return;
-        }
-        // Lost track — show as missing
         rows.push({ kind: 'missing', id });
       } else {
         // NFL player ID (numeric)
