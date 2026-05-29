@@ -4,8 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gridiron Dynasty</title>
+<!-- OFFLINE-FIRST: the game is fully self-contained — all logic, pixel-art avatars (inline SVG), and
+     saves (localStorage) are local, so no network is ever required to play. Web fonts load
+     non-blockingly when online and fall back instantly to system fonts offline. Standalone meta tags
+     let it run app-like (and offline) when added to a phone's home screen. -->
+<meta name="theme-color" content="#2a2118">
+<meta name="color-scheme" content="light">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Gridiron Dynasty">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 * { margin: 0; padding: 0; box-sizing: border-box; }
 :root {
   --bg: #f7f2e9; --surface: #fffcf5; --surface-2: #efe8da;
@@ -16,8 +27,8 @@
   --user-bg: #fff4d6;
   --gold: #b8861b;
 }
-body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; height: 100vh; overflow: hidden; }
-.mono { font-family: 'JetBrains Mono', monospace; }
+body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; height: 100vh; overflow: hidden; }
+.mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; }
 #app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
 header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; }
 .brand { display: flex; align-items: center; gap: 10px; }
@@ -341,12 +352,72 @@ select { font-family: inherit; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
-@media (max-width: 1024px) { main { grid-template-columns: 56px 1fr; } .news-feed { display: none; } .nav-item span:not(.nav-icon) { display: none; } .nav-title { display: none; } .nav-item { justify-content: center; padding: 7px 0; } .standout-grid { grid-template-columns: 1fr; } .games-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1024px) and (min-width: 641px) { main { grid-template-columns: 56px 1fr; } .news-feed { display: none; } .nav-item span:not(.nav-icon) { display: none; } .nav-title { display: none; } .nav-item { justify-content: center; padding: 7px 0; } .standout-grid { grid-template-columns: 1fr; } .games-grid { grid-template-columns: 1fr; } }
+
+/* Mobile nav toggle (hamburger) + backdrop — hidden on desktop, shown on phones */
+.mobile-nav-toggle { display: none; background: transparent; border: 1px solid var(--border-strong); color: var(--text); font-size: 17px; width: 36px; height: 36px; cursor: pointer; align-items: center; justify-content: center; flex-shrink: 0; }
+.nav-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.42); z-index: 90; }
+.nav-backdrop.open { display: block; }
+
+/* ===== PHONE LAYOUT (<= 640px) =====
+   Single column. The sidebar becomes an off-canvas drawer toggled by the hamburger. !important is
+   used on the grid/news-feed because the sim loop sets gridTemplateColumns inline on #mainGrid. */
+@media (max-width: 640px) {
+  main#mainGrid { grid-template-columns: 1fr !important; }
+  .news-feed { display: none !important; }
+  .mobile-nav-toggle { display: inline-flex; }
+
+  /* Compact header */
+  header { padding: 8px 10px; gap: 8px; flex-wrap: nowrap; }
+  .brand { gap: 7px; min-width: 0; }
+  .brand-mark { width: 24px; height: 24px; font-size: 12px; }
+  .brand-name { display: none; }
+  .status-bar { gap: 12px; min-width: 0; }
+  .status-bar .era-tag, .status-bar .user-team-tag { display: none; }
+  .status-item { gap: 0; }
+  .status-label { font-size: 9px; }
+  .status-value { font-size: 12px; }
+  .header-actions { gap: 5px; flex-shrink: 0; }
+  .header-actions .btn { padding: 8px 9px; font-size: 11px; }
+
+  /* Off-canvas drawer */
+  .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 84%; max-width: 320px; z-index: 100;
+    transform: translateX(-102%); transition: transform 0.22s ease; box-shadow: 2px 0 18px rgba(0,0,0,0.22);
+    -webkit-overflow-scrolling: touch; }
+  .sidebar.open { transform: translateX(0); }
+  /* Restore labels/titles (the tablet query hides them) and use big tap targets */
+  .sidebar .nav-item span:not(.nav-icon) { display: inline !important; }
+  .sidebar .nav-title { display: block !important; }
+  .nav-item { justify-content: flex-start !important; padding: 12px 20px !important; font-size: 14px; }
+  .nav-pane .nav-item { padding-left: 26px !important; font-size: 14px; }
+  .nav-group-items .nav-item { padding-left: 38px !important; }
+  .nav-tab { padding: 10px 0; font-size: 13px; }
+
+  /* Content: tighter padding, smaller page headers */
+  .content { padding: 12px 11px; }
+  .page-title { font-size: 18px; }
+  .page-header { margin-bottom: 14px; padding-bottom: 12px; }
+
+  /* Tables/cards scroll sideways instead of squishing; bigger touch rows */
+  .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { width: 100%; }
+  table th, table td { padding: 9px 8px; }
+  .btn { min-height: 38px; }
+
+  /* Stack two-column choices and reduce welcome padding */
+  .mode-choice { grid-template-columns: 1fr; }
+  .welcome { padding: 24px 16px; }
+  .standout-grid, .games-grid, .ability-grid { grid-template-columns: 1fr; }
+
+  /* Modals near full-screen */
+  .modal { width: 96%; max-width: 96%; max-height: 92vh; }
+}
 </style>
 </head>
 <body>
 <div id="app">
   <header>
+    <button class="mobile-nav-toggle" id="mobileNavToggle" onclick="game.toggleMobileNav()" aria-label="Menu">☰</button>
     <div class="brand">
       <div class="brand-mark">GD</div>
       <div class="brand-name">Gridiron <span>Dynasty</span></div>
@@ -467,6 +538,7 @@ select { font-family: inherit; }
       <div id="newsContent"><div class="empty-state" style="padding:24px 0;font-size:12px">No news yet</div></div>
     </aside>
   </main>
+  <div class="nav-backdrop" id="navBackdrop" onclick="game._closeMobileNav()"></div>
 </div>
 <div class="modal-overlay" id="modal">
   <div class="modal">
@@ -1505,6 +1577,22 @@ let game = {
   // Switch between NFL and College top-level sidebar tabs. View itself is unchanged — this only
   // controls which list of links is visible. If the user has navigated to a view that lives under
   // the OTHER tab, syncNavGroupForActive will auto-switch tabs to keep state visually consistent.
+  // ===== MOBILE NAV DRAWER ===== off-canvas sidebar toggled by the header hamburger on phones.
+  toggleMobileNav() {
+    const sb = document.getElementById('sidebar');
+    const bd = document.getElementById('navBackdrop');
+    if (!sb) return;
+    const open = !sb.classList.contains('open');
+    sb.classList.toggle('open', open);
+    if (bd) bd.classList.toggle('open', open);
+  },
+  _closeMobileNav() {
+    const sb = document.getElementById('sidebar');
+    const bd = document.getElementById('navBackdrop');
+    if (sb) sb.classList.remove('open');
+    if (bd) bd.classList.remove('open');
+  },
+
   setNavTab(tab) {
     this.navTab = tab;
     document.querySelectorAll('.nav-tab').forEach(t => {
@@ -1601,6 +1689,7 @@ let game = {
         // Reset drill-down sub-state when navigating via the sidebar so users always see the
         // landing view (e.g. team-history list, not a stale drill-down).
         if (this.currentView === 'teamhistory') this.viewingTeamHistoryId = null;
+        this._closeMobileNav();
         this.render();
       });
     }
@@ -7844,6 +7933,20 @@ let game = {
       this.render();
       return;
     }
+    // AGENT MODE: a pending NFL CONTRACT NEGOTIATION is also sticky — the user must work the deal
+    // (fair-market / push / holdout) before the sim advances, since that's how the agent earns their
+    // commission split on the client's playing contract. Surface any queued talk and block here.
+    if (this.state.career && this.state.career.mode === 'agent' && this.state.agency) {
+      const ag = this.state.agency;
+      if (!ag.currentNflTalk && ag.pendingNflTalks && ag.pendingNflTalks.length > 0) {
+        ag.currentNflTalk = ag.pendingNflTalks.shift();
+      }
+      if (ag.currentNflTalk) {
+        this.currentView = 'myagency';
+        this.render();
+        return;
+      }
+    }
     // NIL offers no longer block the sim. They accumulate in a reviewable inbox (pendingNilOffers)
     // that the user works through at their own pace from the weekly recap link or the agency page —
     // fielding many offers and signing only the best (max 4 deals per client). Stale offers older
@@ -13670,6 +13773,18 @@ let game = {
     return base;
   },
 
+  // Roll a NIL/endorsement deal length. Most deals are short (1-2 yr), but a meaningful share are
+  // longer flagship 4-5 year deals — mirroring how brands lock in marketable athletes long-term.
+  // Distribution: 1yr 38% · 2yr 22% · 3yr 15% · 4yr 14% · 5yr 11%.
+  _rollNilDealLength() {
+    const r = Math.random();
+    if (r < 0.38) return 1;
+    if (r < 0.60) return 2;
+    if (r < 0.75) return 3;
+    if (r < 0.89) return 4;
+    return 5;
+  },
+
   // Generate a single NIL/endorsement offer for the player. Value scales with marketability and
   // is bumped by a good agent. Returns { brand, category, annualValue, lengthYears, totalValue,
   // commissionRate, agentCut, playerCut }.
@@ -13678,7 +13793,7 @@ let game = {
     const valueMult = 1 + (agentOvr / 250); // OVR 90 agent ≈ +36% value
     const annualValue = Math.round(this._agentNILDealValue(marketability) * valueMult);
     if (annualValue < 100) return null;
-    const lengthYears = Math.random() < 0.6 ? 1 : (Math.random() < 0.5 ? 2 : 3);
+    const lengthYears = this._rollNilDealLength();
     const totalValue = annualValue * lengthYears;
     const stage = this.state.career.careerStage;
     // College deals are "NIL"; NFL deals are "endorsements". Different brand flavor.
@@ -15407,10 +15522,15 @@ let game = {
       if (!player) return;
       if (!client.nflContract) return; // only drafted/signed NFL clients
       const yearsIn = player.yearsInLeague || 0;
-      // Trigger window: every ~4 years of league service, and not already queued.
-      if (yearsIn < 3) return;
-      if (client._lastTalkYear && this.state.year - client._lastTalkYear < 3) return;
-      if (Math.random() > 0.5) return; // not every eligible client each year
+      // Trigger a negotiation when the client's deal is actually winding down (the natural moment a
+      // new contract — and the agent's split — gets done), or periodically once they're a vet. This
+      // is far more reliable than the old "every 4 years, 50%" clock so the user regularly negotiates
+      // their clients' contracts and banks commission.
+      const contractExpiring = player.contract && (player.contract.yearsRemaining || 99) <= 1;
+      const dueByService = yearsIn >= 3 && (!client._lastTalkYear || this.state.year - (client._lastTalkYear || 0) >= 4);
+      if (!contractExpiring && !dueByService) return;
+      if (client._lastTalkYear && this.state.year - client._lastTalkYear < 2) return; // no back-to-back years
+      if (Math.random() > 0.85) return; // nearly every eligible client gets a negotiation
       if (agency.pendingNflTalks.some(t => t.prospectId === client.prospectId)) return;
       // Base market value for the new deal from the player's rating/age.
       const base = this._agentNflMarketValue(player);
@@ -15545,8 +15665,8 @@ let game = {
   _agentBuildNilOffer(client, prospect, marketability, dealValueMult) {
     const m = marketability;
     const annualValue = Math.round(this._agentNILDealValue(m) * (dealValueMult || 1));
-    // Deal length in college SEASONS (1-3), converted to weeks for the check schedule.
-    const lengthYears = Math.random() < 0.6 ? 1 : (Math.random() < 0.5 ? 2 : 3);
+    // Deal length in SEASONS — a mix of short deals and longer 4-5 year flagship deals.
+    const lengthYears = this._rollNilDealLength();
     const WEEKS_PER_SEASON = 16;
     const totalWeeks = lengthYears * WEEKS_PER_SEASON;
     const totalValue = annualValue * lengthYears;
@@ -16422,6 +16542,12 @@ let game = {
       html += this._renderContractDecisionPopup();
     }
 
+    // FORCED NFL CONTRACT NEGOTIATION — sticky; the agent works the deal (fair / push / holdout) to
+    // land the contract and bank their commission split. Shown up top so it can't be missed.
+    if (agency.currentNflTalk) {
+      html += this._renderNflTalkCard();
+    }
+
     // Hero block: agency stats
     html += this._renderAgencyHero();
 
@@ -16441,10 +16567,9 @@ let game = {
       html += this._renderAgentNegotiation();
     }
 
-    // NFL CONTRACT TALK (Feature #2) — active negotiation decision, or a banner to start one.
-    if (agency.currentNflTalk) {
-      html += this._renderNflTalkCard();
-    } else if (agency.pendingNflTalks && agency.pendingNflTalks.length > 0) {
+    // NFL CONTRACT TALK (Feature #2) — a banner to start a queued negotiation (active talk is shown
+    // at the top of the page).
+    if (!agency.currentNflTalk && agency.pendingNflTalks && agency.pendingNflTalks.length > 0) {
       const n = agency.pendingNflTalks.length;
       html += '<div class="card" style="border-left:4px solid var(--accent);cursor:pointer" onclick="game.agentReviewNflTalk()">' +
         '<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center">' +
@@ -25412,6 +25537,29 @@ function _syncModalCloseVisibility() {
 document.getElementById('modal').addEventListener('click', (e) => {
   if (e.target.id === 'modal') closeModal();
 });
+
+// Installable / standalone support: build a web-app manifest at runtime so the game can be added to
+// a phone's home screen and launched app-like (and offline). Wrapped defensively — if the browser
+// rejects a blob manifest (or anything throws), it's a harmless no-op; the game already works offline
+// as a local file, and nothing here is required to play.
+try {
+  if (typeof URL !== 'undefined' && URL.createObjectURL && !document.querySelector('link[rel="manifest"]')) {
+    var _manifest = {
+      name: 'Gridiron Dynasty',
+      short_name: 'Gridiron',
+      display: 'standalone',
+      orientation: 'any',
+      background_color: '#f7f2e9',
+      theme_color: '#2a2118',
+      start_url: (location && location.href) ? location.href : '.'
+    };
+    var _mblob = new Blob([JSON.stringify(_manifest)], { type: 'application/manifest+json' });
+    var _mlink = document.createElement('link');
+    _mlink.rel = 'manifest';
+    _mlink.href = URL.createObjectURL(_mblob);
+    document.head.appendChild(_mlink);
+  }
+} catch (e) { /* offline install is optional — ignore */ }
 
 game.init();
 </script>
