@@ -446,6 +446,7 @@ select { font-family: inherit; }
       <div class="nav-section" id="navCoachCareer" style="display:none">
         <div class="nav-title">Your Career</div>
         <div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Coach</span></div>
+        <div class="nav-item" data-view="contract"><span class="nav-icon">$</span><span>Contract</span></div>
         <div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>
         <div class="nav-item" data-view="staff"><span class="nav-icon">⚭</span><span>Coaching Staff</span></div>
       </div>
@@ -1855,6 +1856,7 @@ let game = {
             '<div class="nav-title">Your Career</div>' +
             '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>' +
             '<div class="nav-item" data-view="relationships"><span class="nav-icon">♥</span><span>Relationships</span></div>' +
+            '<div class="nav-item" data-view="contract"><span class="nav-icon">$</span><span>Contract</span></div>' +
             '<div class="nav-item" data-view="training"><span class="nav-icon">⏱</span><span>Training</span></div>' +
             '<div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>' +
             '<div class="nav-item" data-view="agencies"><span class="nav-icon">✎</span><span>Agencies</span></div>';
@@ -3042,6 +3044,9 @@ let game = {
         // with them (see fromProspectId handling in _updateUserChemistry).
         if (id.chemistry) matchingPlayer._chemistry = id.chemistry;
         if (id.coachChem) matchingPlayer._coachChem = id.coachChem;
+        // Carry the representation the user signed in college onto their NFL self, so the agency on
+        // their card stays consistent through the draft instead of being randomly reassigned.
+        if (this.state.career.rep) matchingPlayer.agentId = this.state.career.rep.agentId || null;
         this.state.career.entityId = matchingPlayer.id;
         this.state.career.careerStage = 'nfl';
         this.state.career.declaredIdentity = null; // consumed
@@ -9520,15 +9525,15 @@ let game = {
       let rbYdMult = 1, rbTdMult = 1;
       if (rb1Tier === 'gen') { rbYdMult = 1.45 + Math.random() * 0.23; rbTdMult = 1.75 + Math.random() * 0.30; }
       else if (rb1Tier === 'career') { rbYdMult = 1.18 + Math.random() * 0.18; rbTdMult = 1.28 + Math.random() * 0.28; }
-      const teamRushYards = Math.min(330, Math.floor((52 + Math.random() * 100) * (1.55 - passEmph) * (trainBoost.rushYdsMult || 1) * rbYdMult));
-      const teamCarries = Math.floor((22 + Math.random() * 14) * (1.4 - passEmph) * (rb1Tier === 'gen' ? 1.18 : rb1Tier === 'career' ? 1.08 : 1));
+      const teamRushYards = Math.min(355, Math.floor((62 + Math.random() * 105) * (1.60 - passEmph) * (trainBoost.rushYdsMult || 1) * rbYdMult));
+      const teamCarries = Math.floor((25 + Math.random() * 14) * (1.46 - passEmph) * (rb1Tier === 'gen' ? 1.18 : rb1Tier === 'career' ? 1.08 : 1));
       // Force rushing TDs to match the decomposed target, then apply any generational multiplier (capped).
       const teamRushTDs = Math.min(6, Math.round(targetRushTDs * rbTdMult));
       
       // Distribute among top 2 RBs + maybe QB (scrambler bonus)
       const rushers = [];
-      if (rbs[0]) rushers.push({ p: rbs[0], baseShare: 0.65 });
-      if (rbs[1]) rushers.push({ p: rbs[1], baseShare: 0.28 });
+      if (rbs[0]) rushers.push({ p: rbs[0], baseShare: 0.68 });
+      if (rbs[1]) rushers.push({ p: rbs[1], baseShare: 0.26 });
       // QB scramble: more if mobile (low rating-tier QBs scramble more in practice, but let's tie to archetype if available)
       if (qbs[0]) {
         let qbRushShare = 0.07;
@@ -12014,7 +12019,59 @@ let game = {
         coach.age++;
         coach.wins = 0;
         coach.losses = 0;
-        
+
+        // ===== COACHING CAROUSEL — fire underperforming CPU head coaches, NFL-style. =====
+        // Unsuccessful programs cut their HC loose after a couple of bad years; coaches who make the
+        // playoffs or win titles are safe and can stay for decades (only leaving via retirement at
+        // 70+). Coordinators/scouts and the user's coach are untouched here. The season just played
+        // is the last entry pushed to seasonHistory above (wins were captured before the reset).
+        if (!coach.isUserControlled && coach.role === 'HC' && coach.teamId !== null && coach.teamId !== undefined && !coach.retired) {
+          const hist = coach.seasonHistory || [];
+          // The coach's current uninterrupted stint as THIS team's head coach.
+          const stint = [];
+          for (let i = hist.length - 1; i >= 0; i--) {
+            const h = hist[i];
+            if (h.role === 'HC' && h.teamId === coach.teamId) stint.unshift(h); else break;
+          }
+          const tenure = stint.length;
+          const last = tenure ? stint[stint.length - 1] : null;
+          const lastWins = last ? (last.wins || 0) : 0;
+          const lastLosses = last ? (last.losses || 0) : 0;
+          const madePlayoffs = (w) => w >= 10; // ~10 wins ≈ a playoff team in an 18-week season
+          const recentPlayoffs = stint.slice(-2).some(h => madePlayoffs(h.wins || 0));
+          let badStreak = 0;
+          for (let i = stint.length - 1; i >= 0; i--) { if ((stint[i].wins || 0) <= 6) badStreak++; else break; }
+          const wonRecentTitle = (this.state.champions || []).some(c => c.teamId === coach.teamId && c.year >= this.state.year - 2);
+          // Fire probability — ruthless for sustained failure, with a first-year grace period.
+          let fireChance = 0;
+          if (tenure >= 2) {
+            if (badStreak >= 3) fireChance = 0.90;
+            else if (badStreak >= 2) fireChance = 0.65;
+            else if (lastWins <= 4) fireChance = 0.55;                                   // a single disaster
+            else if (lastWins <= 6 && !recentPlayoffs && tenure >= 4) fireChance = 0.40; // prolonged mediocrity
+          } else if (tenure === 1 && lastWins <= 2) {
+            fireChance = 0.30; // rare first-year axe after a total collapse
+          }
+          // Success buys safety; a recent title makes you untouchable.
+          if (madePlayoffs(lastWins)) fireChance = 0;
+          else if (lastWins >= 8) fireChance *= 0.35;
+          if (wonRecentTitle) fireChance = 0;
+          if (fireChance > 0 && Math.random() < fireChance) {
+            const team = this.state.teams[coach.teamId];
+            if (team && team.staff && team.staff.HC === coach.id) team.staff.HC = null;
+            const totW = hist.reduce((s, h) => s + (h.wins || 0), 0);
+            const totL = hist.reduce((s, h) => s + (h.losses || 0), 0);
+            this.addHeadline({
+              type: 'fire',
+              title: (team ? team.city + ' ' + team.name : 'Club') + ' fire head coach ' + coach.name,
+              body: 'After a ' + lastWins + '\u2013' + lastLosses + ' season (' + tenure + ' year' + (tenure === 1 ? '' : 's') + ' at the helm), the front office moves on. Career: ' + totW + '\u2013' + totL + (coach.coachOfYears ? ', ' + coach.coachOfYears + '\u00d7 COY' : '') + '.'
+            });
+            coach.teamId = null;
+            coach.firedYear = this.state.year;
+            return; // now a free agent — skip the retirement check this cycle; backfill will hire a replacement
+          }
+        }
+
         // RETIREMENT — at 70 base, but successful coaches can stay.
         // The USER'S coach is NEVER force-retired — they step down only by choice (see
         // coachRetireNow). Skip the forced-retirement evaluation for them.
@@ -12735,6 +12792,7 @@ let game = {
       case 'mycareer': this.renderMyCareer(); break;
       case 'training': this.renderPlayerTraining(); break;
       case 'relationships': this.renderRelationships(); break;
+      case 'contract': this.renderContract(); break;
       case 'myagency': this.renderMyAgency(); break;
       case 'agencyclients': this.renderAgencyClients(); break;
       case 'agencyscout': this.renderAgencyScout(); break;
@@ -13943,6 +14001,110 @@ let game = {
     });
     out.sort((a, b) => b.score - a.score);
     return out;
+  },
+
+  // CONTRACT page — the user's playing contract (player mode) or coaching deal + job security
+  // (coach mode). A dedicated tab so terms aren't buried and contract changes are easy to audit.
+  renderContract() {
+    const car = this.state.career;
+    let html = '';
+    const cell = (label, val, color) => '<div style="flex:1;min-width:110px;text-align:center;padding:8px 4px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">' + label + '</div>' +
+      '<div style="font-size:20px;font-weight:800;margin-top:4px' + (color ? ';color:' + color : '') + '">' + val + '</div></div>';
+
+    if (car && car.mode === 'player') {
+      const p = this.getUserPlayer();
+      if (!p || p.team === null || p.team === undefined) { this.currentView = 'mycareer'; this.render(); return; }
+      const team = this.state.teams[p.team];
+      html += '<div class="page-header"><div class="page-title">Contract</div>' +
+        '<div class="page-subtitle">' + p.name + '\u2019s playing contract' + (team ? ' with the ' + team.city + ' ' + team.name : '') + '.</div></div>';
+      const c = p.contract;
+      if (!c) {
+        html += '<div class="card"><div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">No active contract on the books right now.</div></div>';
+      } else {
+        const capHit = currentCapHit(c);
+        const dead = deadCapIfReleased(c);
+        const yearInto = (c.years || 1) - (c.yearsRemaining || 0);
+        const expiresAfter = (c.signedYear || this.state.year) + (c.years || 1) - 1;
+        html += '<div class="card"><div style="display:flex;flex-wrap:wrap;padding:12px 8px;gap:2px">' +
+          cell('Years left', (c.yearsRemaining || 0) + ' / ' + (c.years || 0)) +
+          cell('Avg / yr', formatMoney(c.aav || 0)) +
+          cell('Total value', formatMoney(c.totalValue || 0)) +
+          cell('Cap hit', formatMoney(capHit)) +
+          cell('Dead cap', formatMoney(dead), 'var(--danger)') +
+          '</div></div>';
+        if (Array.isArray(c.baseSalaries) && c.baseSalaries.length) {
+          html += '<div class="card"><div class="card-header"><div class="card-title">Year-by-year base salary</div>' +
+            '<div class="card-meta">Signed ' + (c.signedYear || '?') + (c.signedAtRating ? ' at ' + c.signedAtRating + ' OVR' : '') + '</div></div>' +
+            '<table><thead><tr><th>Season</th><th class="text-right">Base salary</th><th class="text-right">Status</th></tr></thead><tbody>';
+          c.baseSalaries.forEach((bs, i) => {
+            const seasonYr = (c.signedYear || this.state.year) + i;
+            const isCurrent = i === yearInto;
+            const status = i < yearInto ? '<span class="muted">Paid</span>' : isCurrent ? '<span style="color:var(--success);font-weight:600">Current</span>' : '<span class="muted">Upcoming</span>';
+            html += '<tr' + (isCurrent ? ' style="background:var(--surface-2)"' : '') + '><td class="mono">' + seasonYr + '</td>' +
+              '<td class="text-right mono-num">' + formatMoney(bs) + '</td><td class="text-right">' + status + '</td></tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+        html += '<div class="card"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted)">' +
+          'Signing bonus ' + formatMoney(c.signingBonus || 0) + ', prorated over ' + (c.bonusProrationYears || 1) + ' year' + ((c.bonusProrationYears || 1) === 1 ? '' : 's') + '. ' +
+          'Deal runs through the ' + expiresAfter + ' season.</div></div>';
+      }
+    } else if (car && car.mode === 'coach') {
+      const coach = this.getUserCoach();
+      if (!coach) { this.currentView = 'mycareer'; this.render(); return; }
+      const team = (coach.teamId !== null && coach.teamId !== undefined) ? this.state.teams[coach.teamId] : null;
+      html += '<div class="page-header"><div class="page-title">Contract</div>' +
+        '<div class="page-subtitle">' + coach.name + ' · ' + (COACH_ROLE_NAMES[coach.role] || coach.role) + (team ? ' · ' + team.city + ' ' + team.name : ' · Free Agent') + '</div></div>';
+      const tenure = Math.max(1, this.state.year - (coach.hiredYear || this.state.year) + 1);
+      const histW = (coach.seasonHistory || []).reduce((s, h) => s + (h.wins || 0), 0) + (coach.wins || 0);
+      const histL = (coach.seasonHistory || []).reduce((s, h) => s + (h.losses || 0), 0) + (coach.losses || 0);
+      html += '<div class="card"><div style="display:flex;flex-wrap:wrap;padding:12px 8px;gap:2px">' +
+        cell('Salary / yr', formatMoney(coach.salary || 0)) +
+        cell('Tenure', tenure + (tenure === 1 ? ' yr' : ' yrs')) +
+        cell('Career record', histW + '\u2013' + histL) +
+        cell('Coach of Year', (coach.coachOfYears || 0) + '\u00d7') +
+        '</div></div>';
+      // JOB SECURITY — mirrors the coaching carousel (HC role). Recent results drive the hot seat.
+      if (team) {
+        const stint = (coach.seasonHistory || []).filter(h => h.role === coach.role && h.teamId === coach.teamId);
+        const lastSeasons = stint.slice(-3).map(h => h.wins);
+        let badStreak = 0;
+        for (let i = stint.length - 1; i >= 0; i--) { if ((stint[i].wins || 0) <= 6) badStreak++; else break; }
+        const recentPlayoffs = stint.slice(-2).some(h => (h.wins || 0) >= 10);
+        const wonRecentTitle = (this.state.champions || []).some(c => c.teamId === coach.teamId && c.year >= this.state.year - 2);
+        let label, color, note;
+        if (coach.role !== 'HC') {
+          label = 'Stable'; color = 'var(--text)';
+          note = 'Coordinators generally move with their head coach. Strong unit results build a reputation for a future HC job.';
+        } else if (wonRecentTitle || recentPlayoffs) {
+          label = 'Secure'; color = 'var(--success)';
+          note = 'Recent playoff success has the front office firmly behind you. Win-now coaches get time.';
+        } else if (badStreak >= 2) {
+          label = 'Hot seat'; color = 'var(--danger)';
+          note = 'Multiple losing seasons in a row. Ownership is impatient — another poor year likely ends your tenure here.';
+        } else if (badStreak === 1) {
+          label = 'On notice'; color = 'var(--warning)';
+          note = 'One down year. The seat is warming — a bounce-back season would quiet the noise.';
+        } else {
+          label = 'Stable'; color = 'var(--text)';
+          note = 'No immediate pressure. Keep the program trending up.';
+        }
+        html += '<div class="card" style="border-left:3px solid ' + color + '"><div style="padding:14px 16px">' +
+          '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Job security</div>' +
+          '<div style="font-size:18px;font-weight:800;margin-top:2px;color:' + color + '">' + label + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-top:6px">' + note + '</div>';
+        if (lastSeasons.length) {
+          html += '<div style="font-size:11px;color:var(--text-muted);margin-top:8px">Recent seasons: ' + lastSeasons.map(w => w + '\u2013' + (17 - w)).join(', ') + '</div>';
+        }
+        html += '</div></div>';
+      } else {
+        html += '<div class="card"><div style="padding:18px;text-align:center;color:var(--text-muted);font-size:13px">You\u2019re between jobs. Land a role to start a new deal.</div></div>';
+      }
+    } else {
+      this.currentView = 'mycareer'; this.render(); return;
+    }
+    document.getElementById('content').innerHTML = html;
   },
 
   renderRelationships() {
@@ -15658,7 +15820,11 @@ let game = {
     Object.values(this.state.agencies).forEach(a => { a.clientCount = 0; });
     
     (this.state.players || []).forEach(p => {
-      if (p.agentId === undefined) {
+      if (p.isUserControlled && this.state.career && this.state.career.rep) {
+        // The user's representation is governed by the rep system (who they signed), not a random
+        // auto-assignment — keep p.agentId in lockstep so cards and agency client lists never disagree.
+        p.agentId = this.state.career.rep.agentId || null;
+      } else if (p.agentId === undefined) {
         p.agentId = this._pickAgencyForPlayer(p);
       }
       if (p.agentId && this.state.agencies[p.agentId]) {
