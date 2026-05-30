@@ -9723,7 +9723,7 @@ let game = {
       let inc = 0.16; if (won) inc += 0.12; if (perfGood) inc += 0.06;
       c.score = Math.min(100, (c.score || 0) + inc);
       c.name = tm.name; c.pos = tm.position; c.college = true;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, c.score + 3); }
+      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; } // seasons counter only — chem rises from shared games, not from the calendar
       up._chemistry[tm.id] = c;
     });
     // Coaches: the head coach and the coordinator on the user's side of the ball.
@@ -9738,7 +9738,7 @@ let game = {
         if (role === 'HC') inc *= 1.05;
         c.score = Math.min(100, (c.score || 0) + inc);
         c.name = coach.name; c.role = role; c.college = true; c.collegeTeam = up.school;
-        if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, c.score + 4); }
+        if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; } // seasons counter only — chem rises from shared games, not from the calendar
         up._coachChem[cid] = c;
       });
     }
@@ -21092,7 +21092,7 @@ let game = {
       // Snapshot identity (so the Relationships page can show them even after they move/retire)
       // and count distinct seasons spent as teammates.
       c.name = tm.name; c.pos = tm.position;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, c.score + 3); }
+      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; } // seasons counter only — chem rises from shared games, not from the calendar
       up._chemistry[pid] = c;
     });
     // Build the bond with the coaching staff in the same pass.
@@ -21127,7 +21127,7 @@ let game = {
       if (role === 'HC') inc *= 1.05;
       c.score = Math.min(100, (c.score || 0) + inc);
       c.name = coach.name; c.role = role;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, c.score + 4); }
+      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; } // seasons counter only — chem rises from shared games, not from the calendar
       up._coachChem[id] = c;
     });
   },
