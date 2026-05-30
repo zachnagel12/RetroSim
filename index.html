@@ -1263,6 +1263,101 @@ const COLLEGE_STORYLINE_TEMPLATES = [
 // Position split: OL → OT/OG/C, DL → EDGE/DT
 // 53-man roster: 3QB, 4RB, 7WR, 3TE, 3OT, 4OG, 2C, 4EDGE, 3DT, 8LB, 6CB, 4S, 1K, 1P = 53
 const MODERN_PASS_EMPH = 0.65;
+
+// ============================================================================
+// REAL-WORLD HISTORY (1985–2024) — 40 seasons of actual NFL & NCAA results used to seed the
+// league's record book. The simulated league's own champions/MVPs/Heismans are appended on top of
+// this in the Champions and Record Book views, producing one continuous history (real past →
+// simulated future). Compact keys: y=season year, c=champion, r=runner-up, m=MVP, h=Heisman.
+// Co-champion / co-MVP seasons list both. Recent and error-prone years were verified against
+// authoritative sources.
+// ============================================================================
+const REAL_HISTORY = {
+  nfl: [
+    { y:1985, c:'Chicago Bears', r:'New England Patriots', m:'Marcus Allen' },
+    { y:1986, c:'New York Giants', r:'Denver Broncos', m:'Lawrence Taylor' },
+    { y:1987, c:'Washington', r:'Denver Broncos', m:'John Elway' },
+    { y:1988, c:'San Francisco 49ers', r:'Cincinnati Bengals', m:'Boomer Esiason' },
+    { y:1989, c:'San Francisco 49ers', r:'Denver Broncos', m:'Joe Montana' },
+    { y:1990, c:'New York Giants', r:'Buffalo Bills', m:'Joe Montana' },
+    { y:1991, c:'Washington', r:'Buffalo Bills', m:'Thurman Thomas' },
+    { y:1992, c:'Dallas Cowboys', r:'Buffalo Bills', m:'Steve Young' },
+    { y:1993, c:'Dallas Cowboys', r:'Buffalo Bills', m:'Emmitt Smith' },
+    { y:1994, c:'San Francisco 49ers', r:'San Diego Chargers', m:'Steve Young' },
+    { y:1995, c:'Dallas Cowboys', r:'Pittsburgh Steelers', m:'Brett Favre' },
+    { y:1996, c:'Green Bay Packers', r:'New England Patriots', m:'Brett Favre' },
+    { y:1997, c:'Denver Broncos', r:'Green Bay Packers', m:'Brett Favre & Barry Sanders' },
+    { y:1998, c:'Denver Broncos', r:'Atlanta Falcons', m:'Terrell Davis' },
+    { y:1999, c:'St. Louis Rams', r:'Tennessee Titans', m:'Kurt Warner' },
+    { y:2000, c:'Baltimore Ravens', r:'New York Giants', m:'Marshall Faulk' },
+    { y:2001, c:'New England Patriots', r:'St. Louis Rams', m:'Kurt Warner' },
+    { y:2002, c:'Tampa Bay Buccaneers', r:'Oakland Raiders', m:'Rich Gannon' },
+    { y:2003, c:'New England Patriots', r:'Carolina Panthers', m:'Peyton Manning & Steve McNair' },
+    { y:2004, c:'New England Patriots', r:'Philadelphia Eagles', m:'Peyton Manning' },
+    { y:2005, c:'Pittsburgh Steelers', r:'Seattle Seahawks', m:'Shaun Alexander' },
+    { y:2006, c:'Indianapolis Colts', r:'Chicago Bears', m:'LaDainian Tomlinson' },
+    { y:2007, c:'New York Giants', r:'New England Patriots', m:'Tom Brady' },
+    { y:2008, c:'Pittsburgh Steelers', r:'Arizona Cardinals', m:'Peyton Manning' },
+    { y:2009, c:'New Orleans Saints', r:'Indianapolis Colts', m:'Peyton Manning' },
+    { y:2010, c:'Green Bay Packers', r:'Pittsburgh Steelers', m:'Tom Brady' },
+    { y:2011, c:'New York Giants', r:'New England Patriots', m:'Aaron Rodgers' },
+    { y:2012, c:'Baltimore Ravens', r:'San Francisco 49ers', m:'Adrian Peterson' },
+    { y:2013, c:'Seattle Seahawks', r:'Denver Broncos', m:'Peyton Manning' },
+    { y:2014, c:'New England Patriots', r:'Seattle Seahawks', m:'Aaron Rodgers' },
+    { y:2015, c:'Denver Broncos', r:'Carolina Panthers', m:'Cam Newton' },
+    { y:2016, c:'New England Patriots', r:'Atlanta Falcons', m:'Matt Ryan' },
+    { y:2017, c:'Philadelphia Eagles', r:'New England Patriots', m:'Tom Brady' },
+    { y:2018, c:'New England Patriots', r:'Los Angeles Rams', m:'Patrick Mahomes' },
+    { y:2019, c:'Kansas City Chiefs', r:'San Francisco 49ers', m:'Lamar Jackson' },
+    { y:2020, c:'Tampa Bay Buccaneers', r:'Kansas City Chiefs', m:'Aaron Rodgers' },
+    { y:2021, c:'Los Angeles Rams', r:'Cincinnati Bengals', m:'Aaron Rodgers' },
+    { y:2022, c:'Kansas City Chiefs', r:'Philadelphia Eagles', m:'Patrick Mahomes' },
+    { y:2023, c:'Kansas City Chiefs', r:'San Francisco 49ers', m:'Lamar Jackson' },
+    { y:2024, c:'Philadelphia Eagles', r:'Kansas City Chiefs', m:'Josh Allen' }
+  ],
+  ncaa: [
+    { y:1985, c:'Oklahoma', h:'Bo Jackson (Auburn, RB)' },
+    { y:1986, c:'Penn State', h:'Vinny Testaverde (Miami, QB)' },
+    { y:1987, c:'Miami (FL)', h:'Tim Brown (Notre Dame, WR)' },
+    { y:1988, c:'Notre Dame', h:'Barry Sanders (Oklahoma St., RB)' },
+    { y:1989, c:'Miami (FL)', h:'Andre Ware (Houston, QB)' },
+    { y:1990, c:'Colorado / Georgia Tech', h:'Ty Detmer (BYU, QB)' },
+    { y:1991, c:'Miami (FL) / Washington', h:'Desmond Howard (Michigan, WR)' },
+    { y:1992, c:'Alabama', h:'Gino Torretta (Miami, QB)' },
+    { y:1993, c:'Florida State', h:'Charlie Ward (Florida State, QB)' },
+    { y:1994, c:'Nebraska', h:'Rashaan Salaam (Colorado, RB)' },
+    { y:1995, c:'Nebraska', h:'Eddie George (Ohio State, RB)' },
+    { y:1996, c:'Florida', h:'Danny Wuerffel (Florida, QB)' },
+    { y:1997, c:'Michigan / Nebraska', h:'Charles Woodson (Michigan, DB)' },
+    { y:1998, c:'Tennessee', h:'Ricky Williams (Texas, RB)' },
+    { y:1999, c:'Florida State', h:'Ron Dayne (Wisconsin, RB)' },
+    { y:2000, c:'Oklahoma', h:'Chris Weinke (Florida State, QB)' },
+    { y:2001, c:'Miami (FL)', h:'Eric Crouch (Nebraska, QB)' },
+    { y:2002, c:'Ohio State', h:'Carson Palmer (USC, QB)' },
+    { y:2003, c:'LSU / USC', h:'Jason White (Oklahoma, QB)' },
+    { y:2004, c:'USC', h:'Matt Leinart (USC, QB)' },
+    { y:2005, c:'Texas', h:'Reggie Bush (USC, RB)' },
+    { y:2006, c:'Florida', h:'Troy Smith (Ohio State, QB)' },
+    { y:2007, c:'LSU', h:'Tim Tebow (Florida, QB)' },
+    { y:2008, c:'Florida', h:'Sam Bradford (Oklahoma, QB)' },
+    { y:2009, c:'Alabama', h:'Mark Ingram (Alabama, RB)' },
+    { y:2010, c:'Auburn', h:'Cam Newton (Auburn, QB)' },
+    { y:2011, c:'Alabama', h:'Robert Griffin III (Baylor, QB)' },
+    { y:2012, c:'Alabama', h:'Johnny Manziel (Texas A&M, QB)' },
+    { y:2013, c:'Florida State', h:'Jameis Winston (Florida State, QB)' },
+    { y:2014, c:'Ohio State', h:'Marcus Mariota (Oregon, QB)' },
+    { y:2015, c:'Alabama', h:'Derrick Henry (Alabama, RB)' },
+    { y:2016, c:'Clemson', h:'Lamar Jackson (Louisville, QB)' },
+    { y:2017, c:'Alabama', h:'Baker Mayfield (Oklahoma, QB)' },
+    { y:2018, c:'Clemson', h:'Kyler Murray (Oklahoma, QB)' },
+    { y:2019, c:'LSU', h:'Joe Burrow (LSU, QB)' },
+    { y:2020, c:'Alabama', h:'DeVonta Smith (Alabama, WR)' },
+    { y:2021, c:'Georgia', h:'Bryce Young (Alabama, QB)' },
+    { y:2022, c:'Georgia', h:'Caleb Williams (USC, QB)' },
+    { y:2023, c:'Michigan', h:'Jayden Daniels (LSU, QB)' },
+    { y:2024, c:'Ohio State', h:'Travis Hunter (Colorado, WR/CB)' }
+  ]
+};
 const MODERN_GAME_RATE = 1.0;
 
 function getSalaryCap(year) {
@@ -22907,7 +23002,7 @@ let game = {
       return label;
     };
     let html = '<div class="page-header"><div class="page-title">Records</div>' +
-      '<div class="page-subtitle">Single-season records and franchise championships</div></div>' +
+      '<div class="page-subtitle">Single-season records, championships, and 40 years of MVP &amp; Heisman history</div></div>' +
       '<div class="card"><div class="card-header"><div class="card-title">Single-season records</div></div>' +
       '<div class="record-item"><div class="record-label">Passing yards</div>' +
       '<div class="record-value">' + (r.seasonPassingYards.value > 0 ? r.seasonPassingYards.value.toLocaleString() : '—') + '</div>' +
@@ -22930,31 +23025,90 @@ let game = {
       });
       html += '</tbody></table></div>';
     }
+
+    // HONORS BY YEAR — 40 years of real winners (1985–2024) with the simulated league appended on top.
+    const simMvp = (this.state.awardsHistory || []).filter(a => a.mvp && a.mvp.name).map(a => ({ year: a.year, name: a.mvp.name, sim: true }));
+    const realMvp = REAL_HISTORY.nfl.map(e => ({ year: e.y, name: e.m, sim: false }));
+    const mvpRows = simMvp.concat(realMvp).sort((a, b) => b.year - a.year);
+    html += '<div class="card"><div class="card-header"><div class="card-title">Most Valuable Player \u2014 Pro Football</div>' +
+      '<div class="card-meta">' + mvpRows.length + ' seasons</div></div>' +
+      '<table><thead><tr><th style="width:72px">Year</th><th>MVP</th></tr></thead><tbody>';
+    mvpRows.forEach(m => {
+      html += '<tr><td class="mono">' + m.year + '</td><td>' + m.name +
+        (m.sim ? '' : ' <span class="muted" style="font-size:9px;letter-spacing:0.5px">REAL</span>') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+
+    const simH = (this.state.collegeHistory || []).filter(r => r.heismanName).map(r => ({
+      year: r.year,
+      name: r.heismanName + (r.heismanSchool ? ' (' + r.heismanSchool + (r.heismanPosition ? ', ' + r.heismanPosition : '') + ')' : ''),
+      sim: true
+    }));
+    const realH = REAL_HISTORY.ncaa.map(e => ({ year: e.y, name: e.h, sim: false }));
+    const hRows = simH.concat(realH).sort((a, b) => b.year - a.year);
+    html += '<div class="card"><div class="card-header"><div class="card-title">Heisman Trophy \u2014 College</div>' +
+      '<div class="card-meta">' + hRows.length + ' seasons</div></div>' +
+      '<table><thead><tr><th style="width:72px">Year</th><th>Winner</th></tr></thead><tbody>';
+    hRows.forEach(h => {
+      html += '<tr><td class="mono">' + h.year + '</td><td>' + h.name +
+        (h.sim ? '' : ' <span class="muted" style="font-size:9px;letter-spacing:0.5px">REAL</span>') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+
     document.getElementById('content').innerHTML = html;
   },
 
   // CHAMPIONS
   renderChampions() {
+    // Continuous championship history: 40 years of real results (1985–2024) with the simulated
+    // league's own champions appended on top. Pro Football and College shown as separate timelines,
+    // each most-recent-first. Real entries are static; simulated entries link to the franchise.
+    const simNfl = (this.state.champions || []).map(c => ({
+      year: c.year, champ: c.team, runnerUp: c.runnerUp, record: c.record, teamId: c.teamId, sim: true
+    }));
+    const realNfl = REAL_HISTORY.nfl.map(e => ({ year: e.y, champ: e.c, runnerUp: e.r, sim: false }));
+    const nflRows = simNfl.concat(realNfl).sort((a, b) => b.year - a.year);
+
+    const simColl = (this.state.collegeHistory || []).map(r => ({
+      year: r.year, champ: r.champion, runnerUp: r.runnerUp, record: r.championRecord, sim: true
+    }));
+    const realColl = REAL_HISTORY.ncaa.map(e => ({ year: e.y, champ: e.c, runnerUp: null, sim: false }));
+    const collRows = simColl.concat(realColl).sort((a, b) => b.year - a.year);
+
+    const totalTitles = nflRows.length + collRows.length;
     let html = '<div class="page-header"><div class="page-title">Champions</div>' +
-      '<div class="page-subtitle">' + this.state.champions.length + ' champions in league history</div></div>';
-    if (this.state.champions.length === 0) {
-      html += '<div class="empty-state">No champion yet. Finish a season to crown one.</div>';
-    } else {
-      html += '<div class="card">';
-      [...this.state.champions].reverse().forEach(c => {
-        // Resolve runner-up team by its full name (champ records store strings)
-        const runnerUpTeam = this.state.teams.find(t => (t.city + ' ' + t.name) === c.runnerUp);
-        const runnerUpLabel = runnerUpTeam
-          ? '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + runnerUpTeam.id + ')">' + c.runnerUp + '</span>'
-          : c.runnerUp;
-        html += '<div class="champ-row" onclick="game.showTeam(' + c.teamId + ')" style="cursor:pointer">' +
-          '<div class="champ-year">' + c.year + '</div>' +
-          '<div><div class="champ-team">' + c.team + '</div>' +
-          '<div class="champ-record">' + c.record + '</div></div>' +
-          '<div class="champ-runnerup">Runner-up: ' + runnerUpLabel + '</div></div>';
-      });
-      html += '</div>';
-    }
+      '<div class="page-subtitle">' + totalTitles + ' championships on record \u00b7 real history from 1985, your league\u2019s seasons added on top</div></div>';
+
+    // ---- Pro Football ----
+    html += '<div class="card"><div class="card-header"><div class="card-title">Pro Football \u2014 Champions</div>' +
+      '<div class="card-meta">' + nflRows.length + ' seasons</div></div>';
+    nflRows.forEach(c => {
+      let runnerUpLabel = c.runnerUp || '';
+      if (c.sim) {
+        const ruTeam = this.state.teams.find(t => (t.city + ' ' + t.name) === c.runnerUp);
+        if (ruTeam) runnerUpLabel = '<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();game.showTeam(' + ruTeam.id + ')">' + c.runnerUp + '</span>';
+      }
+      const clickable = c.sim && c.teamId !== null && c.teamId !== undefined;
+      html += '<div class="champ-row"' + (clickable ? ' onclick="game.showTeam(' + c.teamId + ')" style="cursor:pointer"' : '') + '>' +
+        '<div class="champ-year">' + c.year + '</div>' +
+        '<div><div class="champ-team">' + c.champ + (c.sim ? '' : ' <span class="muted" style="font-size:9px;letter-spacing:0.5px">REAL</span>') + '</div>' +
+        (c.record ? '<div class="champ-record">' + c.record + '</div>' : '') + '</div>' +
+        '<div class="champ-runnerup">' + (runnerUpLabel ? 'Runner-up: ' + runnerUpLabel : '') + '</div></div>';
+    });
+    html += '</div>';
+
+    // ---- College Football ----
+    html += '<div class="card"><div class="card-header"><div class="card-title">College Football \u2014 National Champions</div>' +
+      '<div class="card-meta">' + collRows.length + ' seasons</div></div>';
+    collRows.forEach(c => {
+      html += '<div class="champ-row">' +
+        '<div class="champ-year">' + c.year + '</div>' +
+        '<div><div class="champ-team">' + c.champ + (c.sim ? '' : ' <span class="muted" style="font-size:9px;letter-spacing:0.5px">REAL</span>') + '</div>' +
+        (c.record ? '<div class="champ-record">' + c.record + '</div>' : '') + '</div>' +
+        '<div class="champ-runnerup">' + (c.runnerUp ? 'Runner-up: ' + c.runnerUp : '') + '</div></div>';
+    });
+    html += '</div>';
+
     document.getElementById('content').innerHTML = html;
   },
 
