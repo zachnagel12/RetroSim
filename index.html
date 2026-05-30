@@ -452,6 +452,7 @@ select { font-family: inherit; }
       <div class="nav-section" id="navPlayerCareer" style="display:none">
         <div class="nav-title">Your Career</div>
         <div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>
+        <div class="nav-item" data-view="training"><span class="nav-icon">⏱</span><span>Training</span></div>
         <div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>
       </div>
       <div class="nav-section" id="navAgentCareer" style="display:none">
@@ -1211,6 +1212,17 @@ const COLLEGE_SCHOOLS = [
   { name: 'New Mexico State', abbr: 'NMST', primary: '#891216', prestige: 50, conference: 'CUSA' }
 ];
 
+// NCAA bowl slate (non-CFP), ordered most prestigious → least. The highest-ranked bowl-eligible
+// teams (6+ wins, not in the 12-team CFP) get matched into the more prestigious bowls.
+const BOWL_NAMES = [
+  'Citrus Bowl', 'Cotton Bowl', 'Gator Bowl', 'Sun Bowl', 'Liberty Bowl',
+  'Holiday Bowl', 'Alamo Bowl', 'Music City Bowl', 'Las Vegas Bowl', 'Texas Bowl',
+  'Pinstripe Bowl', "Duke's Mayo Bowl", 'Gasparilla Bowl', 'Birmingham Bowl', 'Armed Forces Bowl',
+  'Independence Bowl', 'Military Bowl', 'First Responder Bowl', 'Cure Bowl', 'Camellia Bowl',
+  'New Mexico Bowl', 'Frisco Bowl', 'Boca Raton Bowl', 'Idaho Potato Bowl', 'Hawaii Bowl',
+  'Bahamas Bowl', 'Myrtle Beach Bowl', 'Quick Lane Bowl', 'Fenway Bowl', 'LA Bowl'
+];
+
 // Conference display info (for standings/UI)
 const COLLEGE_CONFERENCES = {
   'SEC': { name: 'SEC', tier: 'P5' },
@@ -1490,11 +1502,11 @@ function calculateContractAAV(position, rating, age, year) {
 }
 
 function determineContractYears(rating, age) {
-  if (age >= 32) return 1 + Math.floor(Math.random() * 2);
-  if (age >= 29) return 2 + Math.floor(Math.random() * 2);
-  if (rating >= 85 && age <= 27) return 3 + Math.floor(Math.random() * 3);
-  if (rating >= 75) return 2 + Math.floor(Math.random() * 3);
-  return 1 + Math.floor(Math.random() * 2);
+  if (age >= 33) return 1 + Math.floor(Math.random() * 2);
+  if (age >= 30) return 2 + Math.floor(Math.random() * 2);
+  if (rating >= 85 && age <= 27) return 4 + Math.floor(Math.random() * 3);
+  if (rating >= 75) return 3 + Math.floor(Math.random() * 3);
+  return 2 + Math.floor(Math.random() * 3); // depth gets multi-year deals too (more continuity)
 }
 
 function generateContract(position, rating, age, year, isRookie) {
@@ -2209,14 +2221,15 @@ let game = {
     const name = document.getElementById('playerNameInput').value.trim() || this.generateName(2026);
     const position = document.getElementById('playerPositionInput').value;
     
-    // Map star tier → grade range
+    // Map star tier → grade range. Recruits now START about 5 points lower than their eventual
+    // ceiling — they earn the rest through (bigger) year-by-year development in college.
     let grade;
-    if (stars === 5) grade = 90 + Math.random() * 9;
-    else if (stars === 4) grade = 82 + Math.random() * 7;
-    else if (stars === 3) grade = 72 + Math.random() * 9;
-    else if (stars === 2) grade = 62 + Math.random() * 9;
-    else if (stars === 1) grade = 52 + Math.random() * 9;
-    else grade = 40 + Math.random() * 11; // walk-on
+    if (stars === 5) grade = 85 + Math.random() * 9;       // 85-94
+    else if (stars === 4) grade = 77 + Math.random() * 7;  // 77-84
+    else if (stars === 3) grade = 67 + Math.random() * 9;  // 67-76
+    else if (stars === 2) grade = 57 + Math.random() * 9;  // 57-66
+    else if (stars === 1) grade = 47 + Math.random() * 9;  // 47-56
+    else grade = 38 + Math.random() * 10; // walk-on, 38-48
     grade = Math.round(grade * 10) / 10;
     
     // Generate offers. Number of offers + which schools depends on star tier.
@@ -3927,7 +3940,10 @@ let game = {
     let band = adj[adj.length - 1];
     for (const b of adj) { r -= b.w; if (r <= 0) { band = b; break; } }
     const grade = band.lo + Math.random() * (band.hi - band.lo);
-    return Math.max(45, Math.min(99, grade));
+    // Class-year offset: underclassmen come in clearly lower and develop UP over their career (the
+    // bigger year-by-year growth in applyCollegeProgression). Seniors are the finished product.
+    const yearOffset = year === 'Senior' ? 0 : year === 'Junior' ? -1.5 : year === 'Sophomore' ? -4.0 : -6.5;
+    return Math.max(42, Math.min(99, grade + yearOffset));
   },
 
   generateProspect(yearInCollege, position, targetGrade, legacy) {
@@ -3991,15 +4007,16 @@ let game = {
     const current = p.prospectGrade;
     const position = p.position;
     
-    // Base progression by year transition. Most growth happens early (Fr → So, So → Jr).
-    // Sr year is more of a "filling out" — small bump unless breakout.
+    // Base progression by year transition. Most growth happens early (Fr → So, So → Jr). Players now
+    // come in lower and develop MORE each year, so college is a real growth arc rather than instant
+    // stardom. Sr year still fills out but meaningfully.
     let baseAvg, baseStdev;
     if (fromYear === 'Freshman') {
-      baseAvg = 2.5; baseStdev = 2.2; // big developmental year
+      baseAvg = 4.2; baseStdev = 2.4; // big developmental year
     } else if (fromYear === 'Sophomore') {
-      baseAvg = 2.0; baseStdev = 2.0;
+      baseAvg = 3.4; baseStdev = 2.1;
     } else if (fromYear === 'Junior') {
-      baseAvg = 1.2; baseStdev = 1.8; // smaller bump in senior year
+      baseAvg = 2.2; baseStdev = 1.9; // senior-year jump still notable
     } else {
       baseAvg = 0; baseStdev = 1.0;
     }
@@ -5211,10 +5228,12 @@ let game = {
       this.state.collegeStandings = null;
       this.state.apPoll = null;
       this.state.cfpBracket = null;
+      this.state.collegeBowls = null;
       return;
     }
     // Clear any CFP bracket from last season — fresh one builds at week 13 of new season
     this.state.cfpBracket = null;
+    this.state.collegeBowls = null;
     const schedule = []; // array of { week, home, away, played, homeScore, awayScore, topPerformers }
     const schools = COLLEGE_SCHOOLS;
     const byConference = {};
@@ -5302,6 +5321,7 @@ let game = {
     });
     // Clear the AP poll — will be repopulated after week 1
     this.state.apPoll = null;
+    this.state.collegeBowls = null;
   },
 
   // CFP BRACKET BUILDER — runs once at end of college regular season (week 12 → 13 transition).
@@ -5351,6 +5371,60 @@ let game = {
       title: this.state.year + ' College Football Playoff bracket announced',
       body: '12 teams. #1 ' + seeds[0].name + ', #2 ' + seeds[1].name + ', #3 ' + seeds[2].name + ', #4 ' + seeds[3].name + ' get first-round byes. First-round games begin next week.'
     });
+  },
+
+  // BOWL SEASON — every bowl-eligible team (6+ wins) that did NOT make the 12-team CFP gets matched
+  // into a bowl game, just like real NCAA football. Ranked the same way as the CFP (wins, then
+  // strength); adjacent pairs are matched so bowls are competitive, with the most prestigious bowl
+  // going to the highest-ranked pairing. Each game is played once via simCollegeGame (which also
+  // captures the user's performance + popup if their school is in a bowl, and counts the result
+  // toward final records). Runs one-shot at college week 13.
+  _buildAndSimBowls() {
+    if (this.state.collegeBowls) return; // already played this postseason
+    const prestigeMap = this.state.collegePrestige || {};
+    const standings = this.state.collegeStandings || {};
+
+    // Full ranking on the same basis as the CFP.
+    const ranked = COLLEGE_SCHOOLS.map(s => {
+      const st = standings[s.abbr] || { wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0 };
+      const cp = prestigeMap[s.abbr] !== undefined ? prestigeMap[s.abbr] : s.prestige;
+      const pointDiff = (st.pointsFor || 0) - (st.pointsAgainst || 0);
+      return { abbr: s.abbr, name: s.name, wins: st.wins || 0, losses: st.losses || 0, strength: cp + pointDiff * 0.05 };
+    }).sort((a, b) => (a.wins !== b.wins ? b.wins - a.wins : b.strength - a.strength));
+
+    // CFP teams (top 12) are excluded; the rest with 6+ wins are bowl-eligible.
+    const cfpAbbrs = new Set(((this.state.cfpBracket && this.state.cfpBracket.seeds) || []).map(s => s.abbr));
+    const eligible = ranked.filter(t => !cfpAbbrs.has(t.abbr) && t.wins >= 6);
+
+    const bowls = [];
+    const maxBowls = Math.min(Math.floor(eligible.length / 2), BOWL_NAMES.length);
+    for (let i = 0; i < maxBowls; i++) {
+      const a = eligible[i * 2];       // higher-ranked team (neutral site, treated as "home")
+      const b = eligible[i * 2 + 1];
+      const g = { home: a.abbr, away: b.abbr, week: this.state.collegeWeek, isBowl: true, bowlName: BOWL_NAMES[i] };
+      this.simCollegeGame(g); // sets scores, updates records, fires the user popup if they're in it
+      const homeWin = g.homeScore > g.awayScore;
+      bowls.push({
+        bowlName: BOWL_NAMES[i],
+        home: a.abbr, away: b.abbr, homeName: a.name, awayName: b.name,
+        homeScore: g.homeScore, awayScore: g.awayScore,
+        homeRecord: a.wins + '-' + a.losses, awayRecord: b.wins + '-' + b.losses,
+        winnerAbbr: homeWin ? a.abbr : b.abbr
+      });
+    }
+    this.state.collegeBowls = bowls;
+
+    if (bowls.length > 0) {
+      const top = bowls[0];
+      const line = top.homeScore > top.awayScore
+        ? top.homeName + ' ' + top.homeScore + ', ' + top.awayName + ' ' + top.awayScore
+        : top.awayName + ' ' + top.awayScore + ', ' + top.homeName + ' ' + top.homeScore;
+      this.addHeadline({
+        type: 'college',
+        title: 'Bowl season: ' + bowls.length + ' games kick off',
+        body: top.bowlName + ' — ' + line + '.'
+      });
+    }
   },
   
   // CFP ROUND SIM — plays one round of the bracket each week 13-16.
@@ -5538,6 +5612,11 @@ let game = {
       }
       if (this.state.cfpBracket) {
         this._simCFPRound(week);
+      }
+      // BOWL SEASON — one-shot at week 13, AFTER the CFP first round so the user's bowl-game popup
+      // (if their team missed the playoff but is bowl-eligible) isn't clobbered by the CFP sim.
+      if (week === 13 && !this.state.collegeBowls) {
+        this._buildAndSimBowls();
       }
       return [];
     }
@@ -5848,11 +5927,11 @@ let game = {
     const grade = p.prospectGrade || 70;
     const env = Math.min(1.25, 0.82 + scoreFactor * 0.20); // ~1.0 in an average game, up to ~1.25 in a shootout
     if (p.position === 'QB') {
-      // Passing yds/game by grade: elite (95) ~310, average starter (75) ~230, raw (60) ~170.
-      const ydMean = 130 + Math.max(0, grade - 50) * 4.0;
-      const yds = Math.max(60, Math.round(ydMean * (0.72 + Math.random() * 0.56) * env));
-      // Pass TD/game by grade: elite ~2.9, average ~2.0, raw ~1.3.
-      const tdMean = 0.95 + Math.max(0, grade - 50) * 0.044;
+      // Passing yds/game by grade (toned down): elite (95) ~260, average starter (75) ~195, raw (60) ~145.
+      const ydMean = 108 + Math.max(0, grade - 50) * 3.3;
+      const yds = Math.max(55, Math.round(ydMean * (0.72 + Math.random() * 0.56) * env));
+      // Pass TD/game by grade: elite ~2.5, average ~1.7, raw ~1.1.
+      const tdMean = 0.78 + Math.max(0, grade - 50) * 0.038;
       const tds = Math.min(6, Math.max(0, Math.round(tdMean * (0.5 + Math.random()) * Math.min(1.30, 0.78 + scoreFactor * 0.24))));
       // Interceptions: realistic, quality-scaled volume (elite ~0.7/game ≈ 8/season, raw ~1.3/game).
       const intLambda = Math.max(0.5, Math.min(1.4, 1.25 - Math.max(0, grade - 60) * 0.016));
@@ -5862,22 +5941,22 @@ let game = {
         raw: { passYds: yds, passTDs: tds, ints }
       };
     } else if (p.position === 'RB') {
-      // Rush yds/game by grade: elite (95) ~130, average (75) ~85, raw (60) ~50.
-      const ydMean = 30 + Math.max(0, grade - 50) * 2.0;
+      // Rush yds/game by grade (toned down): elite (95) ~96, average (75) ~64, raw (60) ~40.
+      const ydMean = 24 + Math.max(0, grade - 50) * 1.6;
       const yds = Math.max(10, Math.round(ydMean * (0.6 + Math.random() * 0.85) * env));
-      const tdMean = 0.45 + Math.max(0, grade - 55) * 0.018;
+      const tdMean = 0.40 + Math.max(0, grade - 55) * 0.016;
       const tds = Math.min(4, Math.max(0, Math.round(tdMean * (0.45 + Math.random() * 1.3) * Math.min(1.35, 0.72 + scoreFactor * 0.28))));
       return {
         display: yds + ' rush yds, ' + tds + ' TD' + (tds === 1 ? '' : 's'),
         raw: { rushYds: yds, rushTDs: tds }
       };
     } else if (p.position === 'WR' || p.position === 'TE') {
-      // Rec yds/game by grade: elite (95) ~105, average (75) ~65, raw (60) ~38.
-      const ydMean = 26 + Math.max(0, grade - 50) * 1.65;
+      // Rec yds/game by grade (toned down): elite (95) ~85, average (75) ~52, raw (60) ~30.
+      const ydMean = 22 + Math.max(0, grade - 50) * 1.4;
       const yds = Math.max(0, Math.round(ydMean * (0.5 + Math.random() * 1.0) * env));
-      const recMean = 2.6 + Math.max(0, grade - 55) * 0.07;
+      const recMean = 2.4 + Math.max(0, grade - 55) * 0.065;
       const recs = Math.max(1, Math.round(recMean * (0.6 + Math.random() * 0.8)));
-      const tdMean = 0.35 + Math.max(0, grade - 55) * 0.013;
+      const tdMean = 0.32 + Math.max(0, grade - 55) * 0.012;
       const tds = Math.min(3, Math.max(0, Math.round(tdMean * (0.4 + Math.random() * 1.4) * Math.min(1.35, 0.72 + scoreFactor * 0.28))));
       return {
         display: recs + ' rec, ' + yds + ' yds' + (tds > 0 ? ', ' + tds + ' TD' : ''),
@@ -5950,9 +6029,9 @@ let game = {
         // This gives the user a genuine development arc instead of instant stardom as a freshman.
         const qbGrade = p.prospectGrade || 70;
         const env = Math.min(1.25, 0.82 + (teamScore / 28) * 0.20);
-        const ydMean = 130 + Math.max(0, qbGrade - 50) * 4.0;
-        const yds = Math.max(50, Math.round(ydMean * (0.72 + Math.random() * 0.56) * env * snapFactor));
-        const tdMean = 0.95 + Math.max(0, qbGrade - 50) * 0.044;
+        const ydMean = 108 + Math.max(0, qbGrade - 50) * 3.3;
+        const yds = Math.max(45, Math.round(ydMean * (0.72 + Math.random() * 0.56) * env * snapFactor));
+        const tdMean = 0.78 + Math.max(0, qbGrade - 50) * 0.038;
         const tds = Math.min(6, Math.max(0, Math.round(tdMean * (0.5 + Math.random()) * Math.min(1.30, 0.78 + (teamScore / 28) * 0.24) * snapFactor)));
         // Quality-scaled INT volume (Poisson) with realistic game-to-game dispersion.
         const intLambda = Math.max(0.5, Math.min(1.4, 1.25 - Math.max(0, qbGrade - 60) * 0.016)) * Math.max(0.6, snapFactor);
@@ -5978,9 +6057,9 @@ let game = {
         }
       }
     } else if (p.position === 'RB') {
-      const carries = Math.max(0, Math.round((8 + Math.random() * 18) * usage));
-      const yds = Math.round(carries * (3.5 + Math.random() * 2.5));
-      const tds = (carries >= 8 && Math.random() < 0.45 * usage) ? 1 + Math.floor(Math.random() * 1.4) : 0;
+      const carries = Math.max(0, Math.round((6 + Math.random() * 15) * usage));
+      const yds = Math.round(carries * (3.3 + Math.random() * 2.3));
+      const tds = (carries >= 8 && Math.random() < 0.42 * usage) ? 1 + Math.floor(Math.random() * 1.3) : 0;
       raw.carries = carries; raw.rushYds = yds; raw.rushTDs = tds;
       if (carries > 0) lines.push(carries + ' carries for ' + yds + ' yards');
       if (tds > 0) lines.push(tds + ' rushing TD' + (tds > 1 ? 's' : ''));
@@ -8920,7 +8999,7 @@ let game = {
       // RUSHING GAME — team rush totals split between RBs and QB scrambles.
       // Sum of player rush yards/TDs must equal team rush totals.
       // =========================================================
-      const teamRushYards = Math.floor((75 + Math.random() * 145) * (1.6 - passEmph) * (trainBoost.rushYdsMult || 1));
+      const teamRushYards = Math.floor((52 + Math.random() * 100) * (1.55 - passEmph) * (trainBoost.rushYdsMult || 1));
       const teamCarries = Math.floor((22 + Math.random() * 14) * (1.4 - passEmph));
       // Force rushing TDs to match the decomposed target (instead of random)
       const teamRushTDs = targetRushTDs;
@@ -10975,13 +11054,14 @@ let game = {
             const userManaged = (_cmode === 'dynasty') && curTeam && curTeam.id === this.state.userTeamId;
             let reSignChance = 0;
             if (curTeam && !userManaged) {
-              if (p.rating >= 88) reSignChance = 0.85;
-              else if (p.rating >= 83) reSignChance = 0.72;
-              else if (p.rating >= 78) reSignChance = 0.56;
-              else if (p.rating >= 73) reSignChance = 0.40;
-              else reSignChance = 0.18;
-              if (p.age >= 31) reSignChance *= 0.7;
-              if (p.age >= 34) reSignChance *= 0.45;
+              if (p.rating >= 88) reSignChance = 0.95;
+              else if (p.rating >= 83) reSignChance = 0.90;
+              else if (p.rating >= 78) reSignChance = 0.82;
+              else if (p.rating >= 73) reSignChance = 0.72;
+              else if (p.rating >= 67) reSignChance = 0.62;
+              else reSignChance = 0.50;
+              if (p.age >= 32) reSignChance *= 0.8;
+              if (p.age >= 35) reSignChance *= 0.55;
             }
             if (curTeam && !userManaged && Math.random() < reSignChance) {
               p.contract = generateContract(p.position, p.rating, p.age, this.state.year, false);
@@ -11932,6 +12012,7 @@ let game = {
       case 'combine': this.renderCombine(); break;
       case 'trades': this.renderTrades(); break;
       case 'mycareer': this.renderMyCareer(); break;
+      case 'training': this.renderPlayerTraining(); break;
       case 'myagency': this.renderMyAgency(); break;
       case 'agencyclients': this.renderAgencyClients(); break;
       case 'agencyscout': this.renderAgencyScout(); break;
@@ -12767,9 +12848,13 @@ let game = {
   },
 
   // Apply player training boosts after the week sims. Called from simWeek after games run.
+  // Training develops the player's underlying skills every week, and raises their OVERALL rating —
+  // their prospect grade in college, their NFL rating in the pros — but only THROUGH the end of their
+  // peak. Once age-related decline sets in, drills can still sharpen individual skills, yet they can
+  // no longer push the overall rating back up (you can't train your way out of getting older).
   applyPlayerTrainingBoost() {
     const p = this.getUserPlayer();
-    if (!p || !p.weeklyTraining) return;
+    if (!p || !p.weeklyTraining || p.retired) return;
     const opts = this.PLAYER_TRAINING_BY_POS[p.position] || [];
     const pick = opts.find(o => o.key === p.weeklyTraining);
     if (!pick) return;
@@ -12777,11 +12862,111 @@ let game = {
     Object.entries(pick.boosts).forEach(([k, v]) => {
       p.abilities[k] = Math.min(99, (p.abilities[k] || 70) + v);
     });
-    // Bump OVR slightly if a primary boost lands (sum of all boosts × small factor)
     const totalBoost = Object.values(pick.boosts).reduce((s, v) => s + v, 0);
-    if (Math.random() < totalBoost * 0.15) {
-      p.rating = Math.min(99, p.rating + 1);
+    const stage = this.state.career ? this.state.career.careerStage : null;
+    if (stage === 'college') {
+      // College: every week of focused work develops the prospect — raises their prospect grade
+      // (their college "OVR"), which in turn lifts production and draft stock.
+      if (p.prospectGrade !== undefined && Math.random() < totalBoost * 0.6) {
+        p.prospectGrade = Math.min(99, Math.round((p.prospectGrade + 0.3) * 10) / 10);
+      }
+    } else if (stage === 'nfl') {
+      // Pros: training raises OVR only up through the end of your peak. In decline, no OVR gain.
+      const aging = POSITION_AGING[p.position];
+      const inDecline = aging && p.age >= aging.declineStart;
+      if (!inDecline && typeof p.rating === 'number' && Math.random() < totalBoost * 0.18) {
+        p.rating = Math.min(99, p.rating + 1);
+      }
     }
+  },
+
+  // PLAYER TRAINING TAB — dedicated page to pick a training focus and watch your skills (and overall
+  // rating) develop through college and the pros, up until decline.
+  renderPlayerTraining() {
+    const p = this.getUserPlayer();
+    const stage = this.state.career ? this.state.career.careerStage : null;
+    let html = '<div class="page-header"><div class="page-title">Training</div>' +
+      '<div class="page-subtitle">Develop your skills and raise your overall rating</div></div>';
+
+    if (!p || p.retired || (stage !== 'college' && stage !== 'nfl')) {
+      const msg = stage === 'declared'
+        ? 'You\'ve declared for the draft — pre-draft workouts are out of your hands now.'
+        : (stage === 'coaching' || stage === 'agency') ? 'Your playing career is over.'
+        : 'Training is available while you\'re an active player in college or the NFL.';
+      html += '<div class="card" style="padding:18px;color:var(--text-muted)">' + msg + '</div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+
+    const isCollege = stage === 'college';
+    const aging = POSITION_AGING[p.position] || {};
+    const ovr = isCollege ? (p.prospectGrade || 70) : (p.rating || 70);
+    const ovrLabel = isCollege ? 'Prospect grade' : 'Overall';
+
+    // Career phase — determines whether training can still lift your overall rating.
+    let phase, phaseColor, phaseNote;
+    if (isCollege) {
+      phase = 'Developing'; phaseColor = 'var(--success)';
+      phaseNote = 'You\'re early in your development. Every week of focused training raises your prospect grade — and a higher grade means better production and draft stock.';
+    } else if (p.age < (aging.peakStart || 26)) {
+      phase = 'Ascending'; phaseColor = 'var(--success)';
+      phaseNote = 'You\'re still climbing toward your prime. Training raises your overall rating week to week.';
+    } else if (p.age <= (aging.peakEnd || 30)) {
+      phase = 'Prime'; phaseColor = 'var(--accent)';
+      phaseNote = 'You\'re in your prime. Keep training to push your overall toward its ceiling before decline sets in.';
+    } else {
+      phase = 'Decline'; phaseColor = 'var(--danger)';
+      phaseNote = 'Age has caught up with you. Training still sharpens individual skills, but it can no longer raise your overall rating.';
+    }
+
+    html += '<div class="card" style="margin-bottom:16px"><div style="padding:16px;display:flex;align-items:center;gap:24px;flex-wrap:wrap">' +
+      '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted)">' + ovrLabel + '</div>' +
+      '<div style="font-size:32px;font-weight:700;font-family:var(--font-mono)">' + (Math.round(ovr * 10) / 10) + '</div></div>' +
+      '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted)">Player</div>' +
+      '<div style="font-size:15px;font-weight:600">' + p.name + ' · ' + p.position + (isCollege ? ' · ' + (p.year || '') : ' · age ' + p.age) + '</div></div>' +
+      '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted)">Career phase</div>' +
+      '<div style="font-size:15px;font-weight:700;color:' + phaseColor + '">' + phase + '</div></div>' +
+      '</div>' +
+      '<div style="padding:0 16px 16px;font-size:12px;color:var(--text-muted)">' + phaseNote + '</div></div>';
+
+    const opts = this.PLAYER_TRAINING_BY_POS[p.position] || [];
+    const currentPick = p.weeklyTraining || null;
+    html += '<div class="card"><div class="card-header"><div class="card-title">Training focus</div>' +
+      '<div class="card-meta">Pick one — it stays active every week until you change it</div></div>' +
+      '<div style="padding:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">';
+    opts.forEach(opt => {
+      const selected = currentPick === opt.key;
+      const boostStr = Object.entries(opt.boosts).map(([k, v]) => '+' + v + ' ' + k).join(', ');
+      html += '<div onclick="game.setPlayerTraining(\'' + opt.key + '\')" style="cursor:pointer;border:' + (selected ? '2px solid var(--accent)' : '1px solid var(--border)') + ';background:' + (selected ? 'var(--surface-2)' : 'var(--surface)') + ';padding:12px">' +
+        '<div style="font-size:13px;font-weight:600;margin-bottom:4px">' + opt.label + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">' + opt.desc + '</div>' +
+        '<div style="font-size:10px;font-family:var(--font-mono)">' + boostStr + '</div>' +
+        (selected ? '<div style="margin-top:6px;font-size:10px;color:var(--success);font-weight:600">✓ ACTIVE</div>' : '') +
+        '</div>';
+    });
+    html += '</div><div style="padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">' +
+      (currentPick ? 'Your focus is active and applies every week you play.' : 'No focus selected yet — pick one to start developing.') +
+      (phase === 'Decline' ? ' In decline, drills sharpen skills but won\'t raise your overall.' : '') +
+      '</div></div>';
+
+    // Current skills relevant to this position's focuses.
+    if (p.abilities && Object.keys(p.abilities).length) {
+      const shownKeys = Array.from(new Set(opts.reduce((acc, o) => acc.concat(Object.keys(o.boosts)), [])));
+      const rows = shownKeys.filter(k => p.abilities[k] !== undefined);
+      if (rows.length) {
+        html += '<div class="card" style="margin-top:16px"><div class="card-header"><div class="card-title">Your skills</div></div>' +
+          '<div style="padding:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">';
+        rows.forEach(k => {
+          const val = Math.round(p.abilities[k]);
+          html += '<div><div style="font-size:11px;color:var(--text-muted);text-transform:capitalize">' + k.replace(/([A-Z])/g, ' $1') + '</div>' +
+            '<div style="height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden;margin-top:4px"><div style="height:100%;width:' + Math.min(100, val) + '%;background:var(--accent)"></div></div>' +
+            '<div style="font-size:11px;font-family:var(--font-mono);margin-top:2px">' + val + '</div></div>';
+        });
+        html += '</div></div>';
+      }
+    }
+
+    document.getElementById('content').innerHTML = html;
   },
 
   // PLAYER CAREER PAGE — shows college recap, NFL stats, or retirement based on stage
@@ -20878,6 +21063,24 @@ let game = {
     return { wins: w, losses: l, titles };
   },
 
+  // Every team a coach has worked for (unique, chronological) — mirrors players' "teams played for".
+  _coachTeamsCoached(coach) {
+    if (!coach) return [];
+    const seen = new Set();
+    const abbrs = [];
+    (coach.seasonHistory || []).forEach(h => {
+      if (h.teamId === null || h.teamId === undefined || seen.has(h.teamId)) return;
+      seen.add(h.teamId);
+      const t = this.state.teams[h.teamId];
+      if (t) abbrs.push(t.abbr);
+    });
+    if (coach.teamId !== null && coach.teamId !== undefined && !seen.has(coach.teamId)) {
+      const t = this.state.teams[coach.teamId];
+      if (t) abbrs.push(t.abbr);
+    }
+    return abbrs;
+  },
+
   _coachLegacyScore(coach) {
     if (!coach) return 0;
     const t = this._coachWinTotals(coach);
@@ -20991,9 +21194,12 @@ let game = {
       const c = e.coach;
       const isUser = uc && c.id === uc.id;
       const medal = e.rank === 1 ? '🥇' : e.rank === 2 ? '🥈' : e.rank === 3 ? '🥉' : '';
+      const teamsCoached = this._coachTeamsCoached(c);
+      const teamsStr = teamsCoached.length ? teamsCoached.join(' · ') : '—';
       html += '<tr' + (isUser ? ' style="background:var(--surface-2)"' : '') + '>' +
         '<td class="mono-num" style="font-weight:700">' + medal + ' ' + e.rank + '</td>' +
-        '<td><strong>' + c.name + '</strong>' + (isUser ? ' <span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px">YOU</span>' : '') + ' <span class="muted" style="font-size:11px">' + (c.role || '') + '</span></td>' +
+        '<td><strong>' + c.name + '</strong>' + (isUser ? ' <span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px">YOU</span>' : '') + ' <span class="muted" style="font-size:11px">' + (c.role || '') + '</span>' +
+          '<div style="font-size:10px;color:var(--text-dim);margin-top:2px;font-family:var(--font-mono)">' + teamsStr + '</div></td>' +
         '<td class="text-right mono-num">' + e.totals.titles + '</td>' +
         '<td class="text-right mono-num">' + e.totals.wins + '-' + e.totals.losses + '</td>' +
         '<td class="text-right mono-num">' + (c.coachOfYears || 0) + '</td>' +
@@ -21928,8 +22134,44 @@ let game = {
         '</tr>';
     });
     html += '</tbody></table></div>';
-    
+
+    // Bowl slate (non-CFP bowl-eligible teams) below the playoff bracket.
+    html += this._renderBowlsSection();
+
     document.getElementById('content').innerHTML = html;
+  },
+
+  // Render the bowl-game results table. Highlights the user's bowl game if their school is in one.
+  _renderBowlsSection() {
+    const bowls = this.state.collegeBowls;
+    if (!bowls || bowls.length === 0) return '';
+    const userSchool = (this.state.career && this.state.career.mode === 'player' && this.getUserPlayer)
+      ? (this.getUserPlayer() || {}).school : null;
+    let html = '<div class="card" style="margin-top:18px">' +
+      '<div style="font-weight:600;margin-bottom:4px">' + this.state.year + ' Bowl Games</div>' +
+      '<div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">' + bowls.length +
+      ' bowl games · every 6-win team that missed the 12-team Playoff</div>';
+    html += '<table style="width:100%;font-size:12px;border-collapse:collapse"><tbody>';
+    bowls.forEach(b => {
+      const homeWon = b.homeScore > b.awayScore;
+      const isUserBowl = userSchool && (b.home === userSchool || b.away === userSchool);
+      const rowBg = isUserBowl ? 'background:var(--surface-2)' : '';
+      const winStyle = 'font-weight:700';
+      const loseStyle = 'opacity:0.6';
+      html += '<tr style="border-top:1px solid var(--border);' + rowBg + '">' +
+        '<td style="padding:8px 10px;width:34%;color:var(--text-dim);font-size:11px">' + b.bowlName +
+          (isUserBowl ? ' <span style="color:var(--accent);font-weight:700">· YOUR BOWL</span>' : '') + '</td>' +
+        '<td style="padding:8px 6px;text-align:right;' + (homeWon ? winStyle : loseStyle) + '">' +
+          b.homeName + ' <span style="color:var(--text-dim);font-weight:400">(' + b.homeRecord + ')</span></td>' +
+        '<td style="padding:8px 8px;text-align:right;font-family:var(--font-mono);' + (homeWon ? winStyle : loseStyle) + '">' + b.homeScore + '</td>' +
+        '<td style="padding:8px 4px;color:var(--text-dim)">–</td>' +
+        '<td style="padding:8px 8px;font-family:var(--font-mono);' + (!homeWon ? winStyle : loseStyle) + '">' + b.awayScore + '</td>' +
+        '<td style="padding:8px 6px;' + (!homeWon ? winStyle : loseStyle) + '">' +
+          b.awayName + ' <span style="color:var(--text-dim);font-weight:400">(' + b.awayRecord + ')</span></td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    return html;
   },
   
   // Render a single bracket game cell. Used for both college and NFL brackets.
