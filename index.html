@@ -6271,10 +6271,11 @@ let game = {
       // Passing yds/game by grade — college runs hotter than the NFL: elite (95) ~340, average
       // starter (75) ~255, raw (60) ~190. A season is ~13 games, so an elite QB lands near 4,400.
       const ydMean = 150 + Math.max(0, grade - 50) * 4.2;
-      const yds = Math.max(55, Math.round(ydMean * (0.72 + Math.random() * 0.56) * env));
+      // Bell-shaped per-game swing (mean preserved) — college runs hot, with real duds and shootouts.
+      const yds = Math.max(40, Math.round(ydMean * (0.62 + ((Math.random() + Math.random()) / 2) * 0.76) * env));
       // Pass TD/game by grade: elite ~2.9, average ~2.0, raw ~1.3.
       const tdMean = 0.85 + Math.max(0, grade - 50) * 0.046;
-      const tds = Math.min(6, Math.max(0, Math.round(tdMean * (0.5 + Math.random()) * Math.min(1.30, 0.78 + scoreFactor * 0.24))));
+      const tds = Math.min(7, Math.max(0, Math.round(tdMean * (0.45 + Math.random() * 1.1) * Math.min(1.32, 0.78 + scoreFactor * 0.24))));
       // Interceptions: realistic, quality-scaled volume (elite ~0.7/game ≈ 8/season, raw ~1.3/game).
       const intLambda = Math.max(0.5, Math.min(1.4, 1.25 - Math.max(0, grade - 60) * 0.016));
       const ints = this._samplePoissonSmall(intLambda);
@@ -6375,14 +6376,21 @@ let game = {
         const qbGrade = p.prospectGrade || 70;
         const env = Math.min(1.25, 0.82 + (teamScore / 28) * 0.20);
         const ydMean = 150 + Math.max(0, qbGrade - 50) * 4.2;
-        const yds = Math.max(45, Math.round(ydMean * (0.72 + Math.random() * 0.56) * env * snapFactor));
+        // College box scores swing even harder than the NFL. Bell-shaped yardage (mean preserved),
+        // then attempts from a realistic college yards-per-attempt (runs hotter than the pros), then
+        // completion %. Keeps cmp/att/yds/ypa internally consistent the way a real stat line is.
+        const _cym = 0.62 + ((Math.random() + Math.random()) / 2) * 0.76; // ~0.62–1.38, mean 1.0
+        const yds = Math.max(35, Math.round(ydMean * _cym * env * snapFactor));
         const tdMean = 0.85 + Math.max(0, qbGrade - 50) * 0.046;
-        const tds = Math.min(6, Math.max(0, Math.round(tdMean * (0.5 + Math.random()) * Math.min(1.30, 0.78 + (teamScore / 28) * 0.24) * snapFactor)));
+        const tds = Math.min(7, Math.max(0, Math.round(tdMean * (0.45 + Math.random() * 1.1) * Math.min(1.32, 0.78 + (teamScore / 28) * 0.24) * snapFactor)));
         // Quality-scaled INT volume (Poisson) with realistic game-to-game dispersion.
         const intLambda = Math.max(0.5, Math.min(1.4, 1.25 - Math.max(0, qbGrade - 60) * 0.016)) * Math.max(0.6, snapFactor);
         const ints = this._samplePoissonSmall(intLambda);
-        const att = 24 + Math.floor(Math.random() * 18);
-        const cmp = Math.max(8, Math.round(att * (0.55 + Math.random() * 0.18)));
+        const cYpaBase = 7.0 + Math.max(0, qbGrade - 60) * 0.045; // ~7.0 → ~8.8 elite (higher than NFL)
+        const cYpa = Math.max(5.0, Math.min(12.5, cYpaBase * (0.80 + _cym * 0.20) + (Math.random() - 0.5) * 1.6));
+        const att = Math.max(8, Math.round(yds / cYpa));
+        const cmpPct = Math.max(0.45, Math.min(0.82, 0.55 + Math.max(0, qbGrade - 60) * 0.0045 + ((Math.random() + Math.random()) / 2 - 0.5) * 0.22));
+        const cmp = Math.max(5, Math.min(att, Math.round(att * cmpPct)));
         raw.passYds = yds; raw.passTDs = tds; raw.ints = ints; raw.cmp = cmp; raw.att = att;
         lines.push(cmp + '/' + att + ' for ' + yds + ' yards');
         lines.push(tds + ' passing TD' + (tds === 1 ? '' : 's'));
@@ -7318,7 +7326,12 @@ let game = {
       const _age0 = rookieAge();
       const window = Math.max(1, _peakStart - _age0); // years of development runway before peak
       const baseDisc = potential >= 90 ? 11 : potential >= 82 ? 8 : potential >= 74 ? 6 : 4;
-      const discount = Math.min(baseDisc, Math.max(2, window * 2.0)) + Math.random() * 2;
+      // Cap the runway-driven discount at 6 (the WR/TE level). Without this cap, late-peaking QBs
+      // (long runway) debuted ~10 below their ceiling while early-peaking RBs debuted ~2 below —
+      // dragging the league-wide QB pool far below the other skill positions. Capping it lets QBs
+      // debut alongside WR/TE and keeps their high-end dispersion in line, while RBs still debut
+      // nearly ready (their short runway already yields a small discount).
+      const discount = Math.min(baseDisc, Math.max(2, window * 2.0), 6) + Math.random() * 2;
       const targetOvr = Math.max(48, Math.round(potential - discount));
       // Count college Heismans so the draft board can covet decorated prospects (carried to the player).
       let collegeHeismans = 0;
@@ -9508,10 +9521,20 @@ let game = {
         let qbYdMult = 1, qbTdMult = 1;
         if (qb._seasonTier === 'gen') { qbYdMult = 1.06 + Math.random() * 0.06; qbTdMult = 1.08 + Math.random() * 0.14; }
         else if (qb._seasonTier === 'career') { qbYdMult = 1.03 + Math.random() * 0.05; qbTdMult = 1.06 + Math.random() * 0.12; }
-        teamPassYards = Math.min(600, Math.floor(baseYpg * (0.82 + Math.random() * 0.36) * passEmphMult * (trainBoost.passYdsMult || 1) * qbYdMult));
-        const att = Math.floor((26 + Math.random() * 13) * passEmphMult);
-        teamCompletions = Math.floor(att * (0.58 + Math.random() * 0.12 + (qb.rating - 75) / 200));
-        teamCompletions = Math.min(teamCompletions, att);
+        // Per-game line built like a real NFL box score so individual games read true. Three steps:
+        // (1) bell-shaped yardage swing — most games near the mean, with real duds and the occasional
+        //     explosion — that PRESERVES the season-mean calibration above;
+        // (2) attempts derived from a realistic per-game yards-per-attempt (nudged up in big games,
+        //     down in duds), so volume tracks the game instead of drifting free;
+        // (3) completion % rating-scaled with believable game-to-game noise.
+        const _tri = (Math.random() + Math.random()) / 2;   // triangular ~bell, centered 0.5
+        const ym = 0.55 + _tri * 0.90;                       // yardage mult ~0.55–1.45, mean 1.0
+        teamPassYards = Math.min(560, Math.floor(baseYpg * ym * passEmphMult * (trainBoost.passYdsMult || 1) * qbYdMult));
+        const ypaBase = 6.6 + Math.max(0, qb.rating - 65) * 0.045;  // ~6.6 weak → ~8.1 elite
+        const ypa = Math.max(4.6, Math.min(11.5, ypaBase * (0.80 + ym * 0.20) + (Math.random() - 0.5) * 1.4));
+        const att = Math.max(10, Math.round(teamPassYards / ypa));
+        const compPct = Math.max(0.42, Math.min(0.82, 0.575 + Math.max(0, qb.rating - 65) * 0.005 + ((Math.random() + Math.random()) / 2 - 0.5) * 0.22));
+        teamCompletions = Math.min(att, Math.round(att * compPct));
         // Force passing TDs to match the decomposed target (instead of random), then apply any
         // generational-year multiplier (capped so no single game looks absurd).
         teamPassTDs = Math.min(7, Math.round(targetPassTDs * qbTdMult));
@@ -10887,6 +10910,7 @@ let game = {
       const tradeCandidates = getPlayers()
         .filter(p =>
           p.contract &&
+          !isFranchiseUntouchable(p) && // never ship out the user's player (or a young franchise piece)
           p.rating >= 70 && p.rating < 85 && // mid-tier vets, not stars
           p.age >= 28 && // older vets
           currentCapHit(p.contract) > 5_000_000 && // meaningful contract
