@@ -1837,6 +1837,7 @@ let game = {
           playerCareerNav.innerHTML =
             '<div class="nav-title">Your Career</div>' +
             '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>' +
+            '<div class="nav-item" data-view="relationships"><span class="nav-icon">♥</span><span>Relationships</span></div>' +
             '<div class="nav-item" data-view="myschool"><span class="nav-icon">▲</span><span>My School</span></div>' +
             '<div class="nav-item" data-view="myschoolschedule"><span class="nav-icon">▣</span><span>Schedule</span></div>' +
             '<div class="nav-item" data-view="myschoolstandings"><span class="nav-icon">≡</span><span>Standings</span></div>' +
@@ -1853,12 +1854,15 @@ let game = {
           playerCareerNav.innerHTML =
             '<div class="nav-title">Your Career</div>' +
             '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>' +
+            '<div class="nav-item" data-view="relationships"><span class="nav-icon">♥</span><span>Relationships</span></div>' +
+            '<div class="nav-item" data-view="training"><span class="nav-icon">⏱</span><span>Training</span></div>' +
             '<div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>' +
             '<div class="nav-item" data-view="agencies"><span class="nav-icon">✎</span><span>Agencies</span></div>';
         } else {
           playerCareerNav.innerHTML =
             '<div class="nav-title">Your Career</div>' +
-            '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>';
+            '<div class="nav-item" data-view="mycareer"><span class="nav-icon">★</span><span>My Player</span></div>' +
+            '<div class="nav-item" data-view="relationships"><span class="nav-icon">♥</span><span>Relationships</span></div>';
         }
         // No rebind needed — event delegation on #sidebar catches clicks on these items
       }
@@ -5921,6 +5925,15 @@ let game = {
       });
       // Queue the popup. simWeek will check this flag after college sim finishes.
       this._pendingUserGamePopup = { gameRef: g };
+      // RELATIONSHIPS — build the user's college bonds (teammates + school staff) from this game.
+      if (perf.raw && !perf.didNotPlay) {
+        const r = perf.raw;
+        const pg = (userPlayer.position === 'QB') ? ((r.passYds || 0) >= 250 || (r.passTDs || 0) >= 2)
+          : (userPlayer.position === 'RB') ? (((r.rushYds || 0) + (r.recYds || 0)) >= 90 || ((r.rushTDs || 0) + (r.recTDs || 0)) >= 1)
+          : (userPlayer.position === 'WR' || userPlayer.position === 'TE') ? ((r.recYds || 0) >= 70 || (r.recTDs || 0) >= 1)
+          : ((r.tackles || 0) >= 6 || (r.sacks || 0) >= 1 || (r.intsMade || 0) >= 1);
+        try { this._updateUserCollegeChem(userPlayer, userIsWin, pg); } catch (e) { /* defensive */ }
+      }
       // Signature moment + press take for college games. The college version of stats lives
       // in perf.raw with shorthand keys (passYds vs passingYards). We normalize before dispatch.
       if (perf.raw && !perf.didNotPlay) {
@@ -6209,7 +6222,9 @@ let game = {
     const gradeFactor = Math.max(0.4, Math.min(1.4, p.prospectGrade / 78)); // 0.4 to 1.4
     const teamScoreFactor = teamScore / 28;
     const snapFactor = snapPct / 100;
-    const usage = gradeFactor * snapFactor * (0.7 + teamScoreFactor * 0.5);
+    let usage = gradeFactor * snapFactor * (0.7 + teamScoreFactor * 0.5);
+    // Surrounding-cast chemistry lifts production slightly (same idea as the NFL bump).
+    usage *= this._userCollegeProdMult(p);
     
     // Approximate snap count
     const totalSnaps = 65 + Math.floor(Math.random() * 15);
@@ -9664,6 +9679,99 @@ let game = {
   _userProductionRatingBump(up, team) {
     const f = this._userSurroundingChem(up, team);
     return Math.round((f / 100) * 3);
+  },
+
+  // Lazily build + cache a persistent college coaching staff for a school (HC + coordinators).
+  // College schools ship with no coach objects, so we synthesize them on demand and register them
+  // in state.coaches (tagged with collegeTeam) so the user's bonds with them persist and show up
+  // on the Relationships page — even years later, after the player has gone pro.
+  _getCollegeStaff(schoolAbbr) {
+    if (!schoolAbbr) return null;
+    if (!this.state.collegeStaff) this.state.collegeStaff = {};
+    if (!this.state.coaches) this.state.coaches = {};
+    let staff = this.state.collegeStaff[schoolAbbr];
+    if (staff && this.getCoach(staff.HC) && this.getCoach(staff.OC) && this.getCoach(staff.DC)) return staff;
+    const namePool = () => this.generateName(this.state.year);
+    const mk = (role) => {
+      const c = this.generateCoach(role, this.state.year, namePool);
+      c.teamId = null; c.collegeTeam = schoolAbbr; c.salary = 0;
+      return c.id;
+    };
+    staff = { HC: mk('HC'), OC: mk('OC'), DC: mk('DC') };
+    this.state.collegeStaff[schoolAbbr] = staff;
+    return staff;
+  },
+
+  // Builds the user's COLLEGE bonds (same-side teammates + the school's HC and side coordinator)
+  // after a college game they played. Mirrors the NFL chemistry build so the Relationships page is
+  // alive in college too.
+  _updateUserCollegeChem(up, won, perfGood) {
+    if (!up || !up.school) return;
+    if (!up._chemistry) up._chemistry = {};
+    if (!up._coachChem) up._coachChem = {};
+    const yr = this.state.year;
+    const side = this._playerSide(up.position);
+    // Teammates: same school, same side of the ball. Capped to the most prominent so the bond list
+    // tracks the players you'd actually share a unit with rather than the whole depth chart.
+    const mates = (this.state.collegeProspects || [])
+      .filter(p => p && p.id !== up.id && p.school === up.school && this._playerSide(p.position) === side)
+      .sort((a, b) => (b.prospectGrade || 0) - (a.prospectGrade || 0))
+      .slice(0, 14);
+    mates.forEach(tm => {
+      const c = up._chemistry[tm.id] || { gp: 0, score: 0 };
+      c.gp += 1;
+      let inc = 0.16; if (won) inc += 0.12; if (perfGood) inc += 0.06;
+      c.score = Math.min(100, (c.score || 0) + inc);
+      c.name = tm.name; c.pos = tm.position; c.college = true;
+      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, c.score + 3); }
+      up._chemistry[tm.id] = c;
+    });
+    // Coaches: the head coach and the coordinator on the user's side of the ball.
+    const staff = this._getCollegeStaff(up.school);
+    if (staff) {
+      const coordRole = this._coordRoleForUser(up);
+      [['HC', staff.HC], [coordRole, staff[coordRole]]].forEach(([role, cid]) => {
+        const coach = this.getCoach(cid);
+        if (!coach) return;
+        const c = up._coachChem[cid] || { score: 0, seasons: 0 };
+        let inc = 0.18; if (won) inc += 0.12; if (perfGood) inc += 0.05;
+        if (role === 'HC') inc *= 1.05;
+        c.score = Math.min(100, (c.score || 0) + inc);
+        c.name = coach.name; c.role = role; c.college = true; c.collegeTeam = up.school;
+        if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, c.score + 4); }
+        up._coachChem[cid] = c;
+      });
+    }
+  },
+
+  // Slight college production multiplier (1.00..1.05) from the user's surrounding college chemistry.
+  _userCollegeProdMult(up) {
+    if (!up || !up.school) return 1;
+    const side = this._playerSide(up.position);
+    let tmSum = 0, tmN = 0;
+    (this.state.collegeProspects || []).forEach(p => {
+      if (!p || p.id === up.id || p.school !== up.school) return;
+      if (this._playerSide(p.position) !== side) return;
+      const c = up._chemistry && up._chemistry[p.id];
+      if (c && c.score > 0) { tmSum += c.score; tmN++; }
+    });
+    const staff = (this.state.collegeStaff && this.state.collegeStaff[up.school]) || null;
+    let coachSum = 0, coachN = 0;
+    if (staff && up._coachChem) {
+      const coordRole = this._coordRoleForUser(up);
+      [staff.HC, staff[coordRole]].forEach(cid => {
+        const c = up._coachChem[cid];
+        if (c && c.score > 0) { coachSum += c.score; coachN++; }
+      });
+    }
+    const tmAvg = tmN > 0 ? tmSum / tmN : 0;
+    const coachAvg = coachN > 0 ? coachSum / coachN : 0;
+    let surround;
+    if (tmN === 0 && coachN === 0) surround = 0;
+    else if (tmN === 0) surround = coachAvg;
+    else if (coachN === 0) surround = tmAvg;
+    else surround = tmAvg * 0.65 + coachAvg * 0.35;
+    return 1 + (surround / 100) * 0.05;
   },
 
   // Position-based injury risk multiplier. NFL data: RBs and CBs lead, QB/K/P trail.
@@ -13500,13 +13608,16 @@ let game = {
     if (!up) return [];
     const out = [];
     const userTeam = (up.team !== null && up.team !== undefined) ? up.team : null;
+    const userSchool = up.school || null;
+    const inCollege = this.state.career && this.state.career.careerStage === 'college';
     // ---- Teammates ----
     const chem = up._chemistry || {};
     Object.keys(chem).forEach(pid => {
       const c = chem[pid];
       const score = Math.round(c.score || 0);
       if (score <= 0) return;
-      const pl = this.state.players ? this.state.players[pid] : null;
+      const pl = (this.state.players ? this.state.players[pid] : null)
+        || ((this.state.collegeProspects || []).find(p => p.id === pid)) || null;
       const name = (pl && pl.name) || c.name || 'Former teammate';
       const pos = (pl && pl.position) || c.pos || '';
       let status, statusColor;
@@ -13515,14 +13626,18 @@ let game = {
       } else if (pl && !pl.retired && pl.team !== null && pl.team !== undefined) {
         const t = this.state.teams[pl.team];
         status = 'Now with ' + (t ? t.city + ' ' + t.name : '—'); statusColor = 'var(--text-muted)';
+      } else if (pl && pl.school) {
+        // College teammate (prospect). Current if you're still at the same school.
+        if (inCollege && userSchool && pl.school === userSchool) { status = 'College teammate'; statusColor = 'var(--success)'; }
+        else { const sc = COLLEGE_SCHOOLS.find(s => s.abbr === pl.school); status = 'College · ' + (sc ? sc.name : pl.school); statusColor = 'var(--text-muted)'; }
       } else if (pl && pl.retired) {
         status = 'Retired'; statusColor = 'var(--text-muted)';
       } else {
-        status = 'Former teammate'; statusColor = 'var(--text-muted)';
+        status = c.college ? 'College teammate' : 'Former teammate'; statusColor = 'var(--text-muted)';
       }
       const seasons = c.seasons || 0;
       const noteBits = [];
-      if (seasons > 0) noteBits.push(seasons + ' season' + (seasons === 1 ? '' : 's') + ' as teammates');
+      if (seasons > 0) noteBits.push(seasons + ' season' + (seasons === 1 ? '' : 's') + (c.college ? ' together in college' : ' as teammates'));
       if (c.gp) noteBits.push(c.gp + ' game' + (c.gp === 1 ? '' : 's') + ' together');
       out.push({
         kind: 'player', id: pid, name, sub: pos, score, status, statusColor,
@@ -13538,8 +13653,18 @@ let game = {
       const coach = this.getCoach(cid);
       const name = (coach && coach.name) || c.name || 'Former coach';
       const bondRole = COACH_ROLE_NAMES[c.role] || 'Coach';
+      const isCollegeBond = !!c.college || !!(coach && coach.collegeTeam);
       let status, statusColor;
-      if (coach && !coach.retired && coach.teamId !== null && coach.teamId !== undefined && coach.teamId === userTeam) {
+      if (coach && coach.collegeTeam) {
+        // College coach. Current if you're still at that school in college.
+        const sc = COLLEGE_SCHOOLS.find(s => s.abbr === coach.collegeTeam);
+        const schoolName = sc ? sc.name : coach.collegeTeam;
+        if (inCollege && userSchool && coach.collegeTeam === userSchool) {
+          status = 'Your college ' + (COACH_ROLE_NAMES[coach.role] || 'coach').toLowerCase(); statusColor = 'var(--success)';
+        } else {
+          status = (COACH_ROLE_NAMES[coach.role] || 'Coach') + ' at ' + schoolName; statusColor = 'var(--text-muted)';
+        }
+      } else if (coach && !coach.retired && coach.teamId !== null && coach.teamId !== undefined && coach.teamId === userTeam) {
         status = 'Your ' + (COACH_ROLE_NAMES[coach.role] || 'coach'); statusColor = 'var(--success)';
       } else if (coach && !coach.retired && coach.teamId !== null && coach.teamId !== undefined) {
         const t = this.state.teams[coach.teamId];
@@ -13553,7 +13678,7 @@ let game = {
       const seasons = c.seasons || 0;
       const noteBits = [];
       if (c.drafted) noteBits.push('Drafted you in ' + (c.draftedYear || ''));
-      if (seasons > 0) noteBits.push('Coached you for ' + seasons + ' year' + (seasons === 1 ? '' : 's') + ' as your ' + bondRole.toLowerCase());
+      if (seasons > 0) noteBits.push((isCollegeBond ? 'Coached you in college for ' : 'Coached you for ') + seasons + ' year' + (seasons === 1 ? '' : 's') + ' as your ' + bondRole.toLowerCase());
       else noteBits.push('Was your ' + bondRole.toLowerCase());
       out.push({
         kind: 'coach', id: cid, name, sub: bondRole, score, status, statusColor,
@@ -13575,6 +13700,7 @@ let game = {
 
     // Surrounding-cast chemistry summary (current team) — explains the production tie-in.
     const team = (up.team !== null && up.team !== undefined) ? this.state.teams[up.team] : null;
+    const inCollege = this.state.career && this.state.career.careerStage === 'college';
     if (team) {
       const surround = Math.round(this._userSurroundingChem(up, team));
       const tier = this._chemTier(surround);
@@ -13583,6 +13709,19 @@ let game = {
         '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Locker-room chemistry · ' + team.city + ' ' + team.name + '</div>' +
         '<div style="font-size:15px;font-weight:700;margin-top:2px">' + tier.label + '</div>' +
         '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + (prodPct > 0 ? 'Playing up to +' + prodPct + ' effective OVR from your surrounding cast' : 'Build bonds with teammates and coaches to start playing up') + '</div></div>' +
+        '<div style="text-align:right"><div style="font-size:10px;text-transform:uppercase;color:var(--text-muted)">Surround</div><div style="font-size:24px;font-weight:800;color:' + tier.color + '">' + surround + '%</div></div>' +
+        '</div></div>';
+    } else if (inCollege && up.school) {
+      // College equivalent — same surrounding-cast idea, measured against your school's roster + staff.
+      const mult = this._userCollegeProdMult(up);
+      const surround = Math.round((mult - 1) / 0.05 * 100); // invert the 0..+5% mapping back to a %
+      const tier = this._chemTier(surround);
+      const sc = COLLEGE_SCHOOLS.find(s => s.abbr === up.school);
+      const prodPct = Math.round((mult - 1) * 100);
+      html += '<div class="card" style="border-left:3px solid ' + tier.color + '"><div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px">' +
+        '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Locker-room chemistry · ' + (sc ? sc.name : up.school) + '</div>' +
+        '<div style="font-size:15px;font-weight:700;margin-top:2px">' + tier.label + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + (prodPct > 0 ? 'Playing up ~' + prodPct + '% from your surrounding cast' : 'Build bonds with teammates and your staff to start playing up') + '</div></div>' +
         '<div style="text-align:right"><div style="font-size:10px;text-transform:uppercase;color:var(--text-muted)">Surround</div><div style="font-size:24px;font-weight:800;color:' + tier.color + '">' + surround + '%</div></div>' +
         '</div></div>';
     }
@@ -20953,7 +21092,7 @@ let game = {
       // Snapshot identity (so the Relationships page can show them even after they move/retire)
       // and count distinct seasons spent as teammates.
       c.name = tm.name; c.pos = tm.position;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; }
+      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, c.score + 3); }
       up._chemistry[pid] = c;
     });
     // Build the bond with the coaching staff in the same pass.
@@ -20988,7 +21127,7 @@ let game = {
       if (role === 'HC') inc *= 1.05;
       c.score = Math.min(100, (c.score || 0) + inc);
       c.name = coach.name; c.role = role;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; }
+      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, c.score + 4); }
       up._coachChem[id] = c;
     });
   },
