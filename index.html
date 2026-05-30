@@ -1714,7 +1714,27 @@ let game = {
     }
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') closeModal();
-      if (e.key === ' ' && this.state && !this.state.draftActive && !document.getElementById('modal').classList.contains('show')) {
+      // ENTER = advance. If a weekly recap/bye popup is open, Enter acts as its "Continue" button to
+      // dismiss it; with no popup open, Enter sims the next week. So you can just keep tapping Enter to
+      // continue past each week's recap and roll straight into the next sim. Ignored while typing in a
+      // field, and it never auto-resolves a forced DECISION popup (those have no recapContinueBtn).
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+      const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || (e.target && e.target.isContentEditable);
+      const modalOpen = document.getElementById('modal').classList.contains('show');
+      if (e.key === 'Enter' && !typing) {
+        if (modalOpen) {
+          const cont = document.getElementById('recapContinueBtn');
+          if (cont) { e.preventDefault(); closeModal(); }
+          return;
+        }
+        const simBtn = document.getElementById('simBtn');
+        if (simBtn && simBtn.style.display !== 'none' && this.state && !this.state.draftActive) {
+          e.preventDefault();
+          this.simWeek();
+        }
+        return;
+      }
+      if (e.key === ' ' && this.state && !this.state.draftActive && !modalOpen) {
         e.preventDefault();
         this.simWeek();
       }
@@ -8169,9 +8189,8 @@ let game = {
         '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">SEASON SO FAR</div>' +
         '<div style="font-size:14px;font-weight:500">' + seasonSummary + '</div></div>';
     }
-    body += '<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
-      '<button onclick="closeModal()" class="btn" style="flex:0 0 auto">Close</button>' +
-      '<button onclick="game.simWeekFromRecap()" class="btn btn-primary" style="flex:1">Sim Week \u2192</button></div>';
+    body += '<div style="text-align:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
+      '<button id="recapContinueBtn" onclick="closeModal()" class="btn btn-primary">Continue \u2192</button></div>';
     this.showModal(p.name + ' \u00b7 Week ' + wk, body);
   },
 
@@ -24757,26 +24776,14 @@ let game = {
       if (standingsBlock) body += standingsBlock;
     }
     
-    // Footer — sim the next week directly, or just close to look around.
-    body += '<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
-      '<button onclick="closeModal()" class="btn" style="flex:0 0 auto">Close</button>' +
-      '<button onclick="game.simWeekFromRecap()" class="btn btn-primary" style="flex:1">Sim Week →</button>' +
+    // Footer — Continue button (the Enter key also triggers this).
+    body += '<div style="text-align:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
+      '<button id="recapContinueBtn" onclick="closeModal()" class="btn btn-primary">Continue →</button>' +
       '</div>';
     
     this.showModal(userPlayer.name + ' · Week ' + (perf.week || '?') + ' performance', body);
   },
 
-  // Sim the next week directly from the weekly recap/bye popup, so the player can chain weeks without
-  // clicking out. Closes the popup first; if closing surfaces a forced popup (e.g. a contract
-  // negotiation or declaration choice queued during the week), we stop and let the user handle that
-  // instead of simming over it.
-  simWeekFromRecap() {
-    closeModal();
-    const modalEl = document.getElementById('modal');
-    if (modalEl && modalEl.classList && modalEl.classList.contains('show')) return; // a forced popup appeared
-    this.simWeek();
-  },
-  
   // Generate light qualitative commentary on a user game performance based on stat line + result
   _getGameCommentary(p, perf) {
     if (perf.didNotPlay) return null;
