@@ -8026,6 +8026,7 @@ let game = {
         this.fillRostersToMinimum();
         this.enforceRosterMax();
         this.enforceCapCompliance();
+        this.assignSeasonCeilings();
       } catch (e) {
         if (typeof console !== 'undefined' && console.warn) console.warn('Season-start maintenance skipped a step:', e);
       }
@@ -8168,8 +8169,9 @@ let game = {
         '<div style="font-size:10px;color:var(--text-muted);letter-spacing:0.6px;font-weight:600;margin-bottom:8px">SEASON SO FAR</div>' +
         '<div style="font-size:14px;font-weight:500">' + seasonSummary + '</div></div>';
     }
-    body += '<div style="text-align:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
-      '<button onclick="closeModal()" class="btn btn-primary">Continue \u2192</button></div>';
+    body += '<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
+      '<button onclick="closeModal()" class="btn" style="flex:0 0 auto">Close</button>' +
+      '<button onclick="game.simWeekFromRecap()" class="btn btn-primary" style="flex:1">Sim Week \u2192</button></div>';
     this.showModal(p.name + ' \u00b7 Week ' + wk, body);
   },
 
@@ -8835,6 +8837,58 @@ let game = {
     return 'Balanced';
   },
 
+  // Average rating of a team's best players at given positions (for assessing supporting cast).
+  _teamUnitAvg(team, positions, topN) {
+    if (!team) return 60;
+    const players = (team.roster || []).map(id => this.state.players[id])
+      .filter(p => p && !p.retired && positions.indexOf(p.position) !== -1)
+      .sort((a, b) => b.rating - a.rating).slice(0, topN);
+    if (!players.length) return 60;
+    return players.reduce((s, p) => s + p.rating, 0) / players.length;
+  },
+
+  // GENERATIONAL SEASONS — decides whether an elite QB/RB is set up for a special year. Real NFL
+  // outliers (Peyton's 55 TD / 5,477 yds; a 2,000-yd / 25-TD rusher) only happen when a truly
+  // generational talent has a great supporting cast, a great coach, and a strong line — and even
+  // then it's rare. Returns 'gen' (all-time), 'career' (a strong career year), or null (typical).
+  _computeSeasonCeiling(player, team) {
+    if (!player || !team) return null;
+    if (player.position !== 'QB' && player.position !== 'RB') return null;
+    if ((player.rating || 0) < 93) return null; // must be (near-)generational talent
+    const ol = this._teamUnitAvg(team, ['OT', 'OG', 'C'], 5);
+    const hc = this.getTeamHC(team); const oc = this.getCoach(team.staff && team.staff.OC);
+    const coachQual = ((hc && hc.ovr) || 70) * 0.6 + ((oc && oc.ovr) || 70) * 0.4;
+    const cast = player.position === 'QB'
+      ? this._teamUnitAvg(team, ['WR', 'TE'], 4)
+      : (ol * 0.55 + this._teamUnitAvg(team, ['WR', 'TE'], 3) * 0.45); // RB: line + a passing threat to keep boxes honest
+    const nOL = Math.max(0, Math.min(1, (ol - 74) / 16));
+    const nCast = Math.max(0, Math.min(1, (cast - 74) / 16));
+    const nCoach = Math.max(0, Math.min(1, (coachQual - 74) / 16));
+    const situation = nOL * 0.30 + nCast * 0.45 + nCoach * 0.25; // 0..1; ~0.8+ means elite everything
+    const ratingFactor = Math.max(0, Math.min(1, (player.rating - 93) / 6)); // 93→0, 99→1
+    const genChance = ratingFactor * Math.pow(situation, 2) * 0.18;          // very rare
+    const careerChance = Math.max(0, Math.min(1, (player.rating - 88) / 8)) * situation * 0.25;
+    const r = Math.random();
+    if (r < genChance) return 'gen';
+    if (r < genChance + careerChance) return 'career';
+    return null;
+  },
+
+  // Called at the start of each NFL season: tag each team's QB1 and RB1 with a season tier (if any).
+  assignSeasonCeilings() {
+    if (!this.state.players) return;
+    this.state.players.forEach(p => { if (p) p._seasonTier = null; });
+    (this.state.teams || []).forEach(team => {
+      if (!team || !team.roster) return;
+      ['QB', 'RB'].forEach(pos => {
+        const starter = team.roster.map(id => this.state.players[id])
+          .filter(p => p && !p.retired && p.position === pos)
+          .sort((a, b) => b.rating - a.rating)[0];
+        if (starter) starter._seasonTier = this._computeSeasonCeiling(starter, team);
+      });
+    });
+  },
+
   generateGameStats(gameObj, home, away) {
     [{ team: home, score: gameObj.homeScore }, { team: away, score: gameObj.awayScore }].forEach(({ team, score }) => {
       // Filter out retired AND currently-injured players. Injured players can't accumulate stats.
@@ -8894,12 +8948,17 @@ let game = {
         // tightens both ends so the league reads like real life.
         const baseYpg = 170 + Math.max(0, qb.rating - 65) * 3.5;
         const passEmphMult = 0.92 + passEmph * 0.20; // ~0.98 (run-heavy) to ~1.08 (air raid)
-        teamPassYards = Math.floor(baseYpg * (0.82 + Math.random() * 0.36) * passEmphMult * (trainBoost.passYdsMult || 1));
+        // Generational/career-year ceiling (rare; only elite QBs in elite situations get tagged).
+        let qbYdMult = 1, qbTdMult = 1;
+        if (qb._seasonTier === 'gen') { qbYdMult = 1.06 + Math.random() * 0.06; qbTdMult = 1.08 + Math.random() * 0.14; }
+        else if (qb._seasonTier === 'career') { qbYdMult = 1.03 + Math.random() * 0.05; qbTdMult = 1.06 + Math.random() * 0.12; }
+        teamPassYards = Math.min(600, Math.floor(baseYpg * (0.82 + Math.random() * 0.36) * passEmphMult * (trainBoost.passYdsMult || 1) * qbYdMult));
         const att = Math.floor((24 + Math.random() * 12) * passEmphMult);
         teamCompletions = Math.floor(att * (0.58 + Math.random() * 0.12 + (qb.rating - 75) / 200));
         teamCompletions = Math.min(teamCompletions, att);
-        // Force passing TDs to match the decomposed target (instead of random)
-        teamPassTDs = targetPassTDs;
+        // Force passing TDs to match the decomposed target (instead of random), then apply any
+        // generational-year multiplier (capped so no single game looks absurd).
+        teamPassTDs = Math.min(7, Math.round(targetPassTDs * qbTdMult));
         // Training: qbDev reduces INT rate; defensive coverage/passRush on OPPOSING team adds INTs
         // (we model INTs as a function of this offense's training only, since opponent boosts are out of scope)
         let intRate = trainBoost.intMult !== undefined ? trainBoost.intMult : 1.0;
@@ -8999,10 +9058,16 @@ let game = {
       // RUSHING GAME — team rush totals split between RBs and QB scrambles.
       // Sum of player rush yards/TDs must equal team rush totals.
       // =========================================================
-      const teamRushYards = Math.floor((52 + Math.random() * 100) * (1.55 - passEmph) * (trainBoost.rushYdsMult || 1));
-      const teamCarries = Math.floor((22 + Math.random() * 14) * (1.4 - passEmph));
-      // Force rushing TDs to match the decomposed target (instead of random)
-      const teamRushTDs = targetRushTDs;
+      // RB1's generational/career-year ceiling lifts the whole run game for the season (a 2,000-yd
+      // back means an elite line + scheme). Rare, and only set on a tagged elite RB.
+      const rb1Tier = rbs[0] && rbs[0]._seasonTier;
+      let rbYdMult = 1, rbTdMult = 1;
+      if (rb1Tier === 'gen') { rbYdMult = 1.45 + Math.random() * 0.23; rbTdMult = 1.75 + Math.random() * 0.30; }
+      else if (rb1Tier === 'career') { rbYdMult = 1.18 + Math.random() * 0.18; rbTdMult = 1.28 + Math.random() * 0.28; }
+      const teamRushYards = Math.min(330, Math.floor((52 + Math.random() * 100) * (1.55 - passEmph) * (trainBoost.rushYdsMult || 1) * rbYdMult));
+      const teamCarries = Math.floor((22 + Math.random() * 14) * (1.4 - passEmph) * (rb1Tier === 'gen' ? 1.18 : rb1Tier === 'career' ? 1.08 : 1));
+      // Force rushing TDs to match the decomposed target, then apply any generational multiplier (capped).
+      const teamRushTDs = Math.min(6, Math.round(targetRushTDs * rbTdMult));
       
       // Distribute among top 2 RBs + maybe QB (scrambler bonus)
       const rushers = [];
@@ -24692,12 +24757,24 @@ let game = {
       if (standingsBlock) body += standingsBlock;
     }
     
-    // Footer — continue button
-    body += '<div style="text-align:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
-      '<button onclick="closeModal()" class="btn btn-primary">Continue →</button>' +
+    // Footer — sim the next week directly, or just close to look around.
+    body += '<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
+      '<button onclick="closeModal()" class="btn" style="flex:0 0 auto">Close</button>' +
+      '<button onclick="game.simWeekFromRecap()" class="btn btn-primary" style="flex:1">Sim Week →</button>' +
       '</div>';
     
     this.showModal(userPlayer.name + ' · Week ' + (perf.week || '?') + ' performance', body);
+  },
+
+  // Sim the next week directly from the weekly recap/bye popup, so the player can chain weeks without
+  // clicking out. Closes the popup first; if closing surfaces a forced popup (e.g. a contract
+  // negotiation or declaration choice queued during the week), we stop and let the user handle that
+  // instead of simming over it.
+  simWeekFromRecap() {
+    closeModal();
+    const modalEl = document.getElementById('modal');
+    if (modalEl && modalEl.classList && modalEl.classList.contains('show')) return; // a forced popup appeared
+    this.simWeek();
   },
   
   // Generate light qualitative commentary on a user game performance based on stat line + result
