@@ -766,7 +766,7 @@ const TEAM_DATA = [
   { city:'Cleveland',name:'Browns',abbr:'CLE',conf:'AFC',div:'North',primary:'#FF3C00' },
   { city:'Cincinnati',name:'Bengals',abbr:'CIN',conf:'AFC',div:'North',primary:'#FB4F14' },
   { city:'Baltimore',name:'Ravens',abbr:'BAL',conf:'AFC',div:'North',primary:'#241773' },
-  { city:'Houston',name:'Stallions',abbr:'HOU',conf:'AFC',div:'South',primary:'#03202F' },
+  { city:'Houston',name:'Texans',abbr:'HOU',conf:'AFC',div:'South',primary:'#03202F' },
   { city:'Tennessee',name:'Titans',abbr:'TEN',conf:'AFC',div:'South',primary:'#0C2340' },
   { city:'Jacksonville',name:'Jaguars',abbr:'JAX',conf:'AFC',div:'South',primary:'#006778' },
   { city:'Indianapolis',name:'Colts',abbr:'IND',conf:'AFC',div:'South',primary:'#002C5F' },
@@ -776,7 +776,7 @@ const TEAM_DATA = [
   { city:'Los Angeles',name:'Chargers',abbr:'LAC',conf:'AFC',div:'West',primary:'#0080C6' },
   { city:'Dallas',name:'Cowboys',abbr:'DAL',conf:'NFC',div:'East',primary:'#003594' },
   { city:'Philadelphia',name:'Eagles',abbr:'PHI',conf:'NFC',div:'East',primary:'#004C54' },
-  { city:'Washington',name:'Sentinels',abbr:'WAS',conf:'NFC',div:'East',primary:'#773141' },
+  { city:'Washington',name:'Commanders',abbr:'WAS',conf:'NFC',div:'East',primary:'#773141' },
   { city:'New York',name:'Giants',abbr:'NYG',conf:'NFC',div:'East',primary:'#0B2265' },
   { city:'Chicago',name:'Bears',abbr:'CHI',conf:'NFC',div:'North',primary:'#0B162A' },
   { city:'Green Bay',name:'Packers',abbr:'GB',conf:'NFC',div:'North',primary:'#203731' },
@@ -786,7 +786,7 @@ const TEAM_DATA = [
   { city:'Atlanta',name:'Falcons',abbr:'ATL',conf:'NFC',div:'South',primary:'#A71930' },
   { city:'Tampa Bay',name:'Buccaneers',abbr:'TB',conf:'NFC',div:'South',primary:'#D50A0A' },
   { city:'Carolina',name:'Panthers',abbr:'CAR',conf:'NFC',div:'South',primary:'#0085CA' },
-  { city:'San Francisco',name:'Niners',abbr:'SF',conf:'NFC',div:'West',primary:'#AA0000' },
+  { city:'San Francisco',name:'49ers',abbr:'SF',conf:'NFC',div:'West',primary:'#AA0000' },
   { city:'Seattle',name:'Seahawks',abbr:'SEA',conf:'NFC',div:'West',primary:'#002244' },
   { city:'Los Angeles',name:'Rams',abbr:'LAR',conf:'NFC',div:'West',primary:'#003594' },
   { city:'Arizona',name:'Cardinals',abbr:'ARI',conf:'NFC',div:'West',primary:'#97233F' }
@@ -15359,26 +15359,38 @@ let game = {
       html += '<div class="empty-state" style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">No deals yet. ' +
         (rep.agentId ? 'Your agent is working on it — keep playing well.' : 'Sign with an agent to attract bigger brands.') + '</div>';
     } else {
-      // Active deals first (most recent on top), then expired.
-      const sorted = [...rep.nilDeals].sort((a, b) => {
-        const ae = a.expired ? 1 : 0, be = b.expired ? 1 : 0;
-        if (ae !== be) return ae - be;
-        return (b.signedYear || b.year || 0) - (a.signedYear || a.year || 0);
-      });
-      html += '<table><thead><tr><th>Brand</th><th>Category</th><th class="text-right">TOTAL</th><th class="text-right">YOU KEEP</th><th class="text-right">STATUS</th></tr></thead><tbody>';
-      sorted.forEach(d => {
+      const active = rep.nilDeals.filter(d => !d.expired).sort((a, b) => (b.signedYear || b.year || 0) - (a.signedYear || a.year || 0));
+      const expired = rep.nilDeals.filter(d => d.expired).sort((a, b) => (b.signedYear || b.year || 0) - (a.signedYear || a.year || 0));
+      const rowFor = (d) => {
         const through = (d.expireYear !== undefined ? d.expireYear - 1 : ((d.signedYear || d.year || 0) + (d.lengthYears || 1) - 1));
         const statusHtml = d.expired
           ? '<span style="font-size:10px;background:var(--surface-2);color:var(--text-muted);padding:1px 6px;border-radius:2px;font-weight:600">EXPIRED</span>'
           : '<span style="font-size:10px;background:var(--success);color:#fff;padding:1px 6px;border-radius:2px;font-weight:600">ACTIVE</span>' +
             '<div style="font-size:10px;color:var(--text-muted);margin-top:2px">through ' + through + '</div>';
-        html += '<tr' + (d.expired ? ' style="opacity:0.55"' : '') + '><td><strong>' + d.brand + '</strong></td>' +
+        return '<tr' + (d.expired ? ' style="opacity:0.55"' : '') + '><td><strong>' + d.brand + '</strong></td>' +
           '<td style="font-size:12px;color:var(--text-muted)">' + d.category + '</td>' +
           '<td class="text-right mono-num">' + formatMoney(d.totalValue) + '</td>' +
           '<td class="text-right mono-num" style="color:var(--success)">' + formatMoney(d.playerCut) + '</td>' +
           '<td class="text-right">' + statusHtml + '</td></tr>';
-      });
-      html += '</tbody></table>';
+      };
+      const tableOpen = '<table><thead><tr><th>Brand</th><th>Category</th><th class="text-right">TOTAL</th><th class="text-right">YOU KEEP</th><th class="text-right">STATUS</th></tr></thead><tbody>';
+      // Active deals (always visible).
+      if (active.length) {
+        html += tableOpen + active.map(rowFor).join('') + '</tbody></table>';
+      } else {
+        html += '<div style="padding:14px 16px;font-size:12px;color:var(--text-muted);font-style:italic">No active deals right now.</div>';
+      }
+      // Expired deals — tucked into a collapsible section so they don't fill the screen.
+      if (expired.length) {
+        const expiredEarned = expired.reduce((s, d) => s + (d.playerCut || 0), 0);
+        html += '<details style="border-top:1px solid var(--border)">' +
+          '<summary style="cursor:pointer;padding:10px 16px;font-size:11px;text-transform:uppercase;letter-spacing:0.6px;font-weight:700;color:var(--text-muted);list-style:none;display:flex;justify-content:space-between;align-items:center">' +
+          '<span>▸ Expired deals (' + expired.length + ')</span>' +
+          '<span style="text-transform:none;font-weight:500;color:var(--text-muted)">' + formatMoney(expiredEarned) + ' earned</span>' +
+          '</summary>' +
+          tableOpen + expired.map(rowFor).join('') + '</tbody></table>' +
+          '</details>';
+      }
     }
     html += '</div>';
     return html;
@@ -15667,10 +15679,17 @@ let game = {
   // Returns a formatted HTML snippet like "Apex Sports Group" with click handler, or "Unrepresented".
   _renderAgencyForPlayer(player) {
     if (!this.state.agencies) return '<span class="muted">—</span>';
-    if (!player.agentId) return '<span class="muted">Unrepresented</span>';
-    const a = this.state.agencies[player.agentId];
+    // For the user's OWN player, the representation they actually signed (career.rep.agentId) is the
+    // single source of truth — so the card never disagrees with their agent/endorsements page.
+    let agentId = player.agentId;
+    const car = this.state.career;
+    if (car && car.mode === 'player' && car.rep && (player.isUserControlled || player.id === car.entityId)) {
+      agentId = car.rep.agentId || null;
+    }
+    if (!agentId) return '<span class="muted">Unrepresented</span>';
+    const a = this.state.agencies[agentId];
     if (!a) return '<span class="muted">Unknown</span>';
-    const isUser = player.agentId === 'user';
+    const isUser = agentId === 'user';
     return '<span style="cursor:pointer;text-decoration:underline' + (isUser ? ';color:var(--accent);font-weight:600' : '') + '" onclick="game.showAgencyCard(\'' + a.id + '\')">' + a.name + '</span>' +
       (isUser ? ' <span style="font-size:10px;color:var(--accent);background:var(--surface-2);padding:1px 5px;border-radius:2px;margin-left:4px">YOURS</span>' : '');
   },
