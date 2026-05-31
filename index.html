@@ -440,6 +440,7 @@ select { font-family: inherit; }
       <div class="nav-section" id="navMyTeam" style="display:none">
         <div class="nav-title">Your Franchise</div>
         <div class="nav-item user-team-item" data-view="myteam"><span class="nav-icon">★</span><span>My Team</span></div>
+        <div class="nav-item user-team-item" data-view="depthchart"><span class="nav-icon">≡</span><span>Depth Chart</span></div>
         <div class="nav-item user-team-item" data-view="capspace"><span class="nav-icon">$</span><span>Cap & Contracts</span></div>
         <div class="nav-item user-team-item" data-view="staff"><span class="nav-icon">⚭</span><span>Coaching Staff</span></div>
         <div class="nav-item user-team-item" data-view="freeagents"><span class="nav-icon">+</span><span>Free Agents</span></div>
@@ -450,6 +451,7 @@ select { font-family: inherit; }
         <div class="nav-item" data-view="inbox"><span class="nav-icon">✉</span><span>Inbox</span><span id="inboxBadge" class="inbox-badge" style="display:none"></span></div>
         <div class="nav-item" data-view="contract"><span class="nav-icon">$</span><span>Contract</span></div>
         <div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>
+        <div class="nav-item" data-view="depthchart"><span class="nav-icon">≡</span><span>Depth Chart</span></div>
         <div class="nav-item" data-view="development"><span class="nav-icon">↗</span><span>Player Development</span></div>
         <div class="nav-item" data-view="staff"><span class="nav-icon">⚭</span><span>Coaching Staff</span></div>
         <div class="nav-item" data-view="legacy"><span class="nav-icon">♛</span><span>My Legacy</span></div>
@@ -7181,6 +7183,32 @@ let game = {
     return first + ' ' + last;
   },
 
+  // Real rosters carry ONE quality starting QB, not three. After generation, keep each team's best
+  // QB (nudged up a hair) and push the rest firmly into backup tier so nobody stockpiles 80+ QBs.
+  _normalizeQbRooms() {
+    this.state.teams.forEach(team => {
+      const qbs = team.roster.map(id => this.state.players[id]).filter(p => p && p.position === 'QB').sort((a, b) => b.rating - a.rating);
+      qbs.forEach((p, idx) => {
+        if (idx === 0) {
+          const target = Math.max(72, Math.min(96, p.rating + 2)); // starter floor + small bump
+          if (target !== p.rating) {
+            p.abilities = generateAbilities('QB', target);
+            p.rating = calculateOvrFromAbilities('QB', p.abilities);
+            if (p.potential !== undefined) p.potential = Math.max(p.potential, p.rating);
+          }
+        } else {
+          const cap = idx === 1 ? 71 : 66; // QB2 / QB3+ are clearly backups
+          if (p.rating > cap) {
+            const target = cap - Math.floor(Math.random() * 4);
+            p.abilities = generateAbilities('QB', target);
+            p.rating = calculateOvrFromAbilities('QB', p.abilities);
+            if (p.potential !== undefined) p.potential = Math.max(p.rating, Math.min(p.potential, p.rating + 6));
+          }
+        }
+      });
+    });
+  },
+
   generateAllPlayers() {
     this.state.teams.forEach(team => {
       Object.entries(POSITION_COUNTS).forEach(([pos, count]) => {
@@ -7196,6 +7224,7 @@ let game = {
     // Anti-clustering pass: real GMs trade away surplus elite talent at scarce positions.
     // Without this, random rolls can produce 3 elite QBs on one team while other teams have none.
     this._redistributeEliteClusters();
+    this._normalizeQbRooms();
     // Retroactively assign cap-compliant contracts to every team, identical to startup-draft flow.
     this.allocateStartupContracts();
   },
@@ -7292,6 +7321,10 @@ let game = {
       baseRating = 93 + Math.floor(Math.random() * 5); // 93-97
     }
     
+    // QBs run a touch higher than the field — the position carries games, and a competent starter
+    // should grade out a bit above the median skill player. (A small, persistent league-wide nudge.)
+    if (position === 'QB') baseRating = Math.min(94, baseRating + 3);
+
     const abilities = generateAbilities(position, baseRating);
     const rating = calculateOvrFromAbilities(position, abilities);
     const archetype = detectArchetype(position, abilities);
@@ -7516,6 +7549,92 @@ let game = {
     this.finishDraft();
   },
 
+  // Players at a position ordered by the team's MANUAL depth chart when set, otherwise by rating.
+  // Unlisted/new players fall in behind the manual order by rating. `availableRoster` is the
+  // already-filtered (healthy, non-retired) list the sim is working from.
+  getDepthAt(team, position, availableRoster) {
+    const pool = availableRoster.filter(p => p && p.position === position);
+    const dc = team && team.depthChart && team.depthChart[position];
+    if (dc && dc.length) {
+      const order = new Map();
+      dc.forEach((id, i) => order.set(id, i));
+      return pool.slice().sort((a, b) => {
+        const ai = order.has(a.id) ? order.get(a.id) : 900;
+        const bi = order.has(b.id) ? order.get(b.id) : 900;
+        if (ai !== bi) return ai - bi;
+        return b.rating - a.rating;
+      });
+    }
+    return pool.slice().sort((a, b) => b.rating - a.rating);
+  },
+
+  // Reorder a position's depth chart for the user's team. The first edit on a position seeds the
+  // order from the current rating order, then applies the move.
+  _depthOrderFor(team, pos) {
+    const onRoster = new Set(team.roster);
+    let order = (team.depthChart && team.depthChart[pos]) ? team.depthChart[pos].filter(id => onRoster.has(id)) : null;
+    const rated = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired && p.position === pos).sort((a, b) => b.rating - a.rating);
+    if (!order) order = rated.map(p => p.id);
+    else { const have = new Set(order); rated.forEach(p => { if (!have.has(p.id)) order.push(p.id); }); }
+    return order;
+  },
+  moveDepth(pos, playerId, dir) {
+    const teamId = this.getUserTeamId();
+    if (teamId === null || teamId === undefined) return;
+    const team = this.state.teams[teamId];
+    if (!team) return;
+    if (!team.depthChart) team.depthChart = {};
+    const order = this._depthOrderFor(team, pos);
+    const idx = order.indexOf(playerId);
+    const swap = dir === 'up' ? idx - 1 : idx + 1;
+    if (idx < 0 || swap < 0 || swap >= order.length) return;
+    const t = order[idx]; order[idx] = order[swap]; order[swap] = t;
+    team.depthChart[pos] = order;
+    this.render();
+  },
+  resetDepth(pos) {
+    const teamId = this.getUserTeamId();
+    const team = this.state.teams[teamId];
+    if (team && team.depthChart && team.depthChart[pos]) { delete team.depthChart[pos]; this.render(); }
+  },
+  renderDepthChart() {
+    const teamId = this.getUserTeamId();
+    let html = '<div class="page-header"><div class="page-title">Depth Chart</div>';
+    if (teamId === null || teamId === undefined) {
+      html += '<div class="page-subtitle">No team to manage right now.</div></div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+    const team = this.state.teams[teamId];
+    html += '<div class="page-subtitle">' + team.city + ' ' + team.name + ' \u00b7 set your starters and backups. The game sim uses this order \u2014 your chosen starter takes the snaps, carries, and targets.</div></div>';
+    const labels = { QB:'Quarterbacks', RB:'Running Backs', WR:'Wide Receivers', TE:'Tight Ends', OT:'Offensive Tackles', OG:'Guards', C:'Centers', EDGE:'Edge Rushers', DT:'Defensive Tackles', LB:'Linebackers', CB:'Cornerbacks', S:'Safeties', K:'Kickers', P:'Punters' };
+    POSITIONS_FOR_DRAFT.forEach(pos => {
+      const order = this._depthOrderFor(team, pos);
+      if (!order.length) return;
+      const custom = !!(team.depthChart && team.depthChart[pos]);
+      html += '<div class="card" style="margin-bottom:8px"><div class="card-header"><div class="card-title">' + (labels[pos] || pos) + ' <span class="muted" style="font-weight:400">(' + order.length + ')</span></div>' +
+        (custom ? '<div class="card-meta"><span style="cursor:pointer;color:var(--accent)" onclick="game.resetDepth(\'' + pos + '\')">Reset to OVR</span></div>' : '') + '</div>' +
+        '<table><tbody>';
+      order.forEach((id, i) => {
+        const p = this.state.players[id];
+        if (!p) return;
+        const isStarter = i === 0;
+        const injured = p.injury && p.injury.weeksRemaining > 0;
+        const roleLbl = isStarter ? 'ST' : (i === 1 ? '2nd' : i === 2 ? '3rd' : (i + 1) + 'th');
+        html += '<tr' + (isStarter ? ' style="background:var(--surface-2)"' : '') + '>' +
+          '<td style="width:42px;text-align:center"><span style="font-size:10px;font-weight:700;color:' + (isStarter ? 'var(--success)' : 'var(--text-muted)') + '">' + roleLbl + '</span></td>' +
+          '<td><strong style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + p.id + ')">' + p.name + '</strong>' + (injured ? ' <span style="color:var(--danger);font-size:10px">INJ</span>' : '') + ' <span class="muted" style="font-size:11px">age ' + p.age + '</span></td>' +
+          '<td class="text-right"><span class="rating ' + (p.rating >= 85 ? 'great' : p.rating >= 75 ? 'good' : 'avg') + '" style="font-size:11px;padding:1px 6px">' + p.rating + '</span></td>' +
+          '<td class="text-right" style="width:78px;white-space:nowrap">' +
+          (i > 0 ? '<button class="btn btn-sm" style="padding:2px 7px" onclick="game.moveDepth(\'' + pos + '\',' + p.id + ',\'up\')">\u2191</button> ' : '<span style="display:inline-block;width:27px"></span> ') +
+          (i < order.length - 1 ? '<button class="btn btn-sm" style="padding:2px 7px" onclick="game.moveDepth(\'' + pos + '\',' + p.id + ',\'down\')">\u2193</button>' : '<span style="display:inline-block;width:27px"></span>') +
+          '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    });
+    document.getElementById('content').innerHTML = html;
+  },
+
   calculateTeamNeeds(team) {
     // Quality-aware team needs. The old version only counted bodies, so a team with 3 backup-tier QBs
     // had "no QB need" — and a team with 3 elite QBs had the same flat zero. Real GMs assess STARTER
@@ -7541,7 +7660,7 @@ let game = {
     // Position-specific "expected starter OVR" — what a competent starter looks like at this position.
     // Slightly higher for QB (it dictates outcomes) and lower for K/P (lower-impact specialists).
     const expectedStarterOvr = {
-      QB: 78, RB: 75, WR: 76, TE: 74,
+      QB: 80, RB: 75, WR: 76, TE: 74,
       OT: 76, OG: 74, C: 74,
       EDGE: 76, DT: 74, LB: 74, CB: 76, S: 74,
       K: 70, P: 70
@@ -7566,15 +7685,26 @@ let game = {
       // strongly discourage adding more. This is the fix for the QB-stacking issue — teams with a
       // 92 OVR QB get a negative need value, so the AI deprioritizes drafting another QB.
       let stockpilePenalty = 0;
-      if (starter && starterOvr >= 85 && have >= target) stockpilePenalty = -2.0;
-      if (starter && starterOvr >= 90 && have >= target) stockpilePenalty = -3.5;
-      // Very-deep penalty: if we already have 2+ at 85+ at a scarce position, do not draft another.
-      const eliteCount = arr.filter(p => p.rating >= 85).length;
-      if (eliteCount >= 2 && (pos === 'QB' || pos === 'OT' || pos === 'EDGE')) stockpilePenalty -= 3.0;
-      
-      need[pos] = Math.max(-5, depthNeed + qualityNeed + stockpilePenalty);
+      if (pos === 'QB') {
+        // You only START one QB. Once a capable starter is in place, extra QB quality is near-
+        // worthless to the roster — the fix for teams hoarding three 80+ QBs.
+        if (starterOvr >= 76 && have >= 1) stockpilePenalty -= 5.0;
+        if (starterOvr >= 82 && have >= 2) stockpilePenalty -= 4.0;
+      } else {
+        if (starter && starterOvr >= 85 && have >= target) stockpilePenalty = -2.0;
+        if (starter && starterOvr >= 90 && have >= target) stockpilePenalty = -3.5;
+        const eliteCount = arr.filter(p => p.rating >= 85).length;
+        if (eliteCount >= 2 && (pos === 'OT' || pos === 'EDGE')) stockpilePenalty -= 3.0;
+      }
+
+      // Effective depth target — nobody needs three quality QBs, so cap QB's depth pull at 2.
+      const depthTarget = (pos === 'QB') ? Math.min(2, target) : target;
+      const cappedDepthNeed = Math.max(0, depthTarget - have) * 1.0;
+      // PRIORITIZE STARTERS over depth: a hole in the starting lineup (a quality gap) outweighs
+      // adding a backup body. Quality need is weighted up; raw depth need is weighted down.
+      need[pos] = Math.max(-5, qualityNeed * 1.45 + cappedDepthNeed * 0.6 + stockpilePenalty);
     });
-    
+
     return need;
   },
 
@@ -8445,10 +8575,9 @@ let game = {
 
     filtered.forEach((p, idx) => {
       const rc = this.ratingClass(p.rating);
-      // When it's the user's turn, clicking a row drafts the player. Otherwise it opens the player card for inspection.
-      const rowClick = isUserTurn
-        ? 'onclick="game.userPick(' + p.id + ')"'
-        : 'onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer"';
+      // Tapping a prospect always opens their draft profile (college info, consensus grade, your
+      // scout's grade). The explicit DRAFT button still quick-picks when you're on the clock.
+      const rowClick = 'onclick="game.showDraftProspect(' + p.id + ')" style="cursor:pointer"';
       const fillsNeed = needSet.has(p.position);
       html += '<div class="draft-pick-row ' + (isUserTurn ? 'clickable' : '') + '" ' + rowClick + (fillsNeed ? ' style="background:linear-gradient(90deg,var(--accent)11,transparent)"' : '') + '>' +
         '<div class="pick-num">' + (idx + 1) + '</div>' +
@@ -9284,6 +9413,7 @@ let game = {
         html += '<div style="background:' + (won ? '#eaedd8' : '#f5e0dc') + ';border:1px solid var(--border);border-left:3px solid ' + (won ? 'var(--success)' : 'var(--danger)') + ';padding:12px 14px;margin-bottom:14px">' +
           '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Your team · ' + (won ? 'WIN' : 'LOSS') + '</div>' +
           '<div style="font-size:17px;font-weight:700;margin-top:3px">' + userTeam.abbr + ' ' + userScore + ' — ' + oppScore + ' ' + opp.abbr + '</div></div>';
+        if (userGame.playerStats) html += '<div style="margin-bottom:14px">' + this._buildBoxScoreHtml(userGame) + '</div>';
       }
     }
 
@@ -9307,7 +9437,7 @@ let game = {
 
     // ===== SCOREBOARD =====
     if (recap.games && recap.games.length > 0) {
-      html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:6px">Scoreboard</div>';
+      html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:6px">Scoreboard <span style="text-transform:none;letter-spacing:0">· tap a game for its box score</span></div>';
       html += '<table style="font-size:12px"><tbody>';
       const sorted = [...recap.games].sort((a, b) => {
         const aU = a.homeTeam === userTeamId || a.awayTeam === userTeamId;
@@ -9320,7 +9450,7 @@ let game = {
         if (!home || !away) return;
         const homeWon = g.homeScore > g.awayScore;
         const isUser = g.homeTeam === userTeamId || g.awayTeam === userTeamId;
-        html += '<tr' + (isUser ? ' class="user-row"' : '') + '>' +
+        html += '<tr' + (isUser ? ' class="user-row"' : '') + ' style="cursor:pointer" onclick="game.showBoxScore(' + g.week + ',' + g.homeTeam + ',' + g.awayTeam + ',' + (recap.isPlayoff ? 'true' : 'false') + ')">' +
           '<td style="text-align:right;' + (!homeWon ? 'color:var(--text-muted)' : 'font-weight:600') + '">' + away.abbr + '</td>' +
           '<td class="mono-num text-center" style="width:64px">' + g.awayScore + ' – ' + g.homeScore + '</td>' +
           '<td style="' + (homeWon ? 'font-weight:600' : 'color:var(--text-muted)') + '">' + home.abbr + '</td></tr>';
@@ -9331,7 +9461,7 @@ let game = {
     // ===== EXPLICIT DISMISS ===== (so the recap is always closable even when the modal box
     // fills the viewport and there's little overlay margin to click)
     html += '<div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">' +
-      '<button class="btn btn-primary btn-lg" style="width:100%" onclick="closeModal()">Close</button>' +
+      '<button id="recapContinueBtn" class="btn btn-primary btn-lg" style="width:100%" onclick="closeModal()">Close</button>' +
       '</div>';
 
     html += '</div>';
@@ -9865,7 +9995,7 @@ let game = {
     // FRANCHISE QB BONUS — a starting QB at 85+ OVR is a force multiplier. Real NFL: teams with
     // elite QBs maintain competitiveness even through roster turnover (Mahomes, Rodgers prime,
     // Brady eras). The QB elevates everyone around them.
-    const qbs = roster.filter(p => p.position === 'QB').sort((a, b) => b.rating - a.rating);
+    const qbs = this.getDepthAt(team, 'QB', roster);
     let qbBonus = 0;
     if (qbs[0]) {
       if (qbs[0].rating >= 92) qbBonus = 1.8;
@@ -10031,7 +10161,7 @@ let game = {
       // PASSING GAME — QB stats become the team passing totals.
       // Then DISTRIBUTE receptions/yards/TDs across WR/TE/RB so they sum exactly.
       // =========================================================
-      const qbs = roster.filter(p => p.position === 'QB').sort((a, b) => b.rating - a.rating);
+      const qbs = this.getDepthAt(team, 'QB', roster);
       let teamPassYards = 0, teamCompletions = 0, teamPassTDs = 0;
       if (qbs[0]) {
         const qb = qbs[0];
@@ -10083,9 +10213,9 @@ let game = {
       // RECEIVING DISTRIBUTION — split teamPassYards/teamCompletions/teamPassTDs
       // across WR/TE/RB weighted by OVR with breakout-game noise.
       // Real NFL: starters get most targets but #3 WR or RB occasionally has a 100+ yd game.
-      const wrs = roster.filter(p => p.position === 'WR').sort((a, b) => b.rating - a.rating);
-      const tes = roster.filter(p => p.position === 'TE').sort((a, b) => b.rating - a.rating);
-      const rbs = roster.filter(p => p.position === 'RB').sort((a, b) => b.rating - a.rating);
+      const wrs = this.getDepthAt(team, 'WR', roster);
+      const tes = this.getDepthAt(team, 'TE', roster);
+      const rbs = this.getDepthAt(team, 'RB', roster);
       
       // Receiver pool: top 3 WRs, top TE, top 2 RBs (PPR-style outlets)
       const receivers = [
@@ -10242,7 +10372,7 @@ let game = {
       // =========================================================
       // DEFENSE & SPECIAL TEAMS — unchanged (not stat-conserved per request)
       // =========================================================
-      const edges = roster.filter(p => p.position === 'EDGE').sort((a, b) => b.rating - a.rating);
+      const edges = this.getDepthAt(team, 'EDGE', roster);
       // Training boost: passRush adds an extra sack to the top edge rusher
       let bonusSacksLeft = trainBoost.sacksBonus || 0;
       edges.slice(0, 3).forEach((dl, idx) => {
@@ -10255,7 +10385,7 @@ let game = {
         markPlayed(dl);
       });
 
-      const dts = roster.filter(p => p.position === 'DT').sort((a, b) => b.rating - a.rating);
+      const dts = this.getDepthAt(team, 'DT', roster);
       dts.slice(0, 2).forEach(dt => {
         const sacks = Math.random() < (dt.rating / 130) * blitzMod ? Math.floor(Math.random() * 2) : 0;
         const tackles = Math.floor(2 + Math.random() * 5);
@@ -10265,7 +10395,7 @@ let game = {
         markPlayed(dt);
       });
 
-      const lbs = roster.filter(p => p.position === 'LB').sort((a, b) => b.rating - a.rating);
+      const lbs = this.getDepthAt(team, 'LB', roster);
       lbs.slice(0, 3).forEach(lb => {
         const tackles = Math.floor(3 + Math.random() * 8);
         const sacks = Math.random() < 0.25 * blitzMod ? Math.floor(Math.random() * 2) : 0;
@@ -10275,7 +10405,12 @@ let game = {
         markPlayed(lb);
       });
 
-      const dbs = roster.filter(p => p.position === 'CB' || p.position === 'S').sort((a, b) => b.rating - a.rating);
+      const dbs = roster.filter(p => p.position === 'CB' || p.position === 'S').sort((a, b) => {
+        const dc = team.depthChart || {};
+        const ai = (dc[a.position] && dc[a.position].indexOf(a.id) >= 0) ? dc[a.position].indexOf(a.id) : 900;
+        const bi = (dc[b.position] && dc[b.position].indexOf(b.id) >= 0) ? dc[b.position].indexOf(b.id) : 900;
+        return (ai - bi) || (b.rating - a.rating);
+      });
       dbs.slice(0, 4).forEach(db => {
         const tackles = Math.floor(1 + Math.random() * 6);
         const ints = Math.random() < (db.rating / 250) * coverageMod ? 1 : 0;
@@ -10285,7 +10420,7 @@ let game = {
         markPlayed(db);
       });
 
-      const kickers = roster.filter(p => p.position === 'K').sort((a, b) => b.rating - a.rating);
+      const kickers = this.getDepthAt(team, 'K', roster);
       if (kickers[0]) {
         const k = kickers[0];
         // Force FG made to match decomposed target (instead of random)
@@ -10304,7 +10439,7 @@ let game = {
         markPlayed(k);
       }
 
-      const punters = roster.filter(p => p.position === 'P').sort((a, b) => b.rating - a.rating);
+      const punters = this.getDepthAt(team, 'P', roster);
       if (punters[0]) {
         const pu = punters[0];
         const punts = 3 + Math.floor(Math.random() * 5);
@@ -13116,6 +13251,8 @@ let game = {
         // anyone 78+ OVR on a live contract (and any recent award winner) from the roster-cap cut.
         const trimmable = rosterPlayers.filter(x => {
           if (x.p.isUserControlled) return false;
+          // Protect THIS year's draft class — you keep your picks; trim veteran depth to reach 53.
+          if (x.p.draftedYear === this.state.year && x.p.draftedByTeamId === team.id && (x.p.yearsInLeague || 0) === 0) return false;
           const underContract = x.p.contract && (x.p.contract.yearsRemaining || 0) >= 1;
           const recentAward = (x.p.awards || []).some(a => a.year >= this.state.year - 1 && a.type !== 'Pro Bowl');
           if (underContract && (x.p.rating >= 78 || recentAward)) return false;
@@ -13457,6 +13594,7 @@ let game = {
       case 'awards': this.renderAwards(); break;
       case 'pinnedplayers': this.renderPinnedPlayers(); break;
       case 'myteam': this.renderMyTeam(); break;
+      case 'depthchart': this.renderDepthChart(); break;
       case 'capspace': this.renderCapSpace(); break;
       case 'staff': this.renderStaff(); break;
       case 'freeagents': this.renderFreeAgents(); break;
@@ -13776,12 +13914,111 @@ let game = {
     return { overall, offense, defense };
   },
 
+  setMyTeamTab(tab) { this.myTeamTab = tab; this.render(); },
+  // Aggregate a team's players' season stats into team-level offensive + defensive totals.
+  _teamSeasonAggregate(team) {
+    const a = { passYds:0, passTD:0, intThrown:0, comp:0, att:0, rushYds:0, rushTD:0, carries:0, recYds:0, recTD:0, rec:0, sacks:0, intMade:0, tackles:0, ff:0 };
+    (team.roster || []).forEach(id => {
+      const p = this.state.players[id]; if (!p || !p.seasonStats) return;
+      const s = p.seasonStats;
+      a.passYds += s.passingYards||0; a.passTD += s.passingTDs||0; a.intThrown += s.interceptionsThrown||0;
+      a.comp += s.completions||0; a.att += s.attempts||0;
+      a.rushYds += s.rushingYards||0; a.rushTD += s.rushingTDs||0; a.carries += s.carries||0;
+      a.recYds += s.receivingYards||0; a.recTD += s.receivingTDs||0; a.rec += s.receptions||0;
+      a.sacks += s.sacks||0; a.intMade += s.interceptionsMade||0; a.tackles += s.tackles||0; a.ff += s.forcedFumbles||0;
+    });
+    a.totYds = a.passYds + a.rushYds;
+    a.takeaways = a.intMade + a.ff;
+    return a;
+  },
+  _renderTeamStatsTab(team) {
+    const gp = Math.max(1, team.wins + team.losses);
+    const userAgg = this._teamSeasonAggregate(team);
+    const allAggs = this.state.teams.map(t => ({ t, agg: this._teamSeasonAggregate(t) }));
+    const n = this.state.teams.length;
+    const ord = (k) => { const v = k % 100; const s = ['th','st','nd','rd']; return k + (s[(v - 20) % 10] || s[v] || s[0]); };
+    const rankOf = (fn, asc) => {
+      const mine = fn(userAgg, team);
+      const vals = allAggs.map(x => fn(x.agg, x.t));
+      vals.sort((p, q) => asc ? p - q : q - p);
+      return vals.indexOf(mine) + 1;
+    };
+    const rankColor = (r) => r <= n / 4 ? 'var(--success)' : r <= n / 2 ? 'var(--text)' : r <= (3 * n) / 4 ? 'var(--warning)' : 'var(--danger)';
+    const row = (label, val, rank) => '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 14px;border-bottom:1px solid var(--border)">' +
+      '<span style="font-size:12px;color:var(--text-muted)">' + label + '</span>' +
+      '<span style="display:flex;align-items:center;gap:10px"><span style="font-weight:700;font-size:13px">' + val + '</span>' +
+      (rank ? '<span style="font-size:10px;font-weight:700;color:' + rankColor(rank) + ';min-width:34px;text-align:right">' + ord(rank) + '</span>' : '<span style="min-width:34px"></span>') + '</span></div>';
+
+    const compPct = userAgg.att ? (userAgg.comp / userAgg.att * 100).toFixed(1) + '%' : '—';
+    const diff = team.pointsFor - team.pointsAgainst;
+
+    let html = '';
+    // Scoring & record
+    html += '<div class="card" style="margin-bottom:10px"><div class="card-header"><div class="card-title">Scoring</div><div class="card-meta">' + gp + ' games · rank of ' + n + '</div></div>' +
+      row('Points for', team.pointsFor + ' (' + (team.pointsFor / gp).toFixed(1) + '/g)', rankOf((a, t) => t.pointsFor, false)) +
+      row('Points against', team.pointsAgainst + ' (' + (team.pointsAgainst / gp).toFixed(1) + '/g)', rankOf((a, t) => t.pointsAgainst, true)) +
+      row('Point differential', (diff >= 0 ? '+' : '') + diff, rankOf((a, t) => t.pointsFor - t.pointsAgainst, false)) +
+      '</div>';
+    // Offense
+    html += '<div class="card" style="margin-bottom:10px"><div class="card-header"><div class="card-title">Offense</div></div>' +
+      row('Total yards', userAgg.totYds + ' (' + Math.round(userAgg.totYds / gp) + '/g)', rankOf(a => a.totYds, false)) +
+      row('Passing yards', userAgg.passYds + ' (' + Math.round(userAgg.passYds / gp) + '/g)', rankOf(a => a.passYds, false)) +
+      row('Rushing yards', userAgg.rushYds + ' (' + Math.round(userAgg.rushYds / gp) + '/g)', rankOf(a => a.rushYds, false)) +
+      row('Passing TDs', userAgg.passTD, rankOf(a => a.passTD, false)) +
+      row('Rushing TDs', userAgg.rushTD, rankOf(a => a.rushTD, false)) +
+      row('Completion %', compPct, null) +
+      row('Interceptions thrown', userAgg.intThrown, rankOf(a => a.intThrown, true)) +
+      '</div>';
+    // Defense
+    html += '<div class="card" style="margin-bottom:10px"><div class="card-header"><div class="card-title">Defense</div></div>' +
+      row('Sacks', userAgg.sacks, rankOf(a => a.sacks, false)) +
+      row('Interceptions', userAgg.intMade, rankOf(a => a.intMade, false)) +
+      row('Forced fumbles', userAgg.ff, rankOf(a => a.ff, false)) +
+      row('Takeaways', userAgg.takeaways, rankOf(a => a.takeaways, false)) +
+      row('Tackles', userAgg.tackles, null) +
+      '</div>';
+
+    // Leaders
+    const roster = team.roster.map(id => this.state.players[id]).filter(p => p && p.seasonStats);
+    const leaderBlock = (title, statFn, fmt, extraFn) => {
+      const ranked = roster.filter(p => statFn(p) > 0).sort((a, b) => statFn(b) - statFn(a)).slice(0, 5);
+      if (!ranked.length) return '';
+      let h = '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);padding:8px 14px 4px">' + title + '</div>';
+      ranked.forEach((p, i) => {
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 14px' + (i < ranked.length - 1 ? ';border-bottom:1px solid var(--border)' : '') + '">' +
+          '<span style="font-size:12px;cursor:pointer" onclick="game.showPlayer(' + p.id + ')"><strong>' + p.name + '</strong> <span class="muted">' + p.position + '</span></span>' +
+          '<span style="font-size:12px;font-weight:700">' + fmt(p) + (extraFn ? ' <span class="muted" style="font-weight:400;font-size:10px">' + extraFn(p) + '</span>' : '') + '</span></div>';
+      });
+      return h;
+    };
+    html += '<div class="card"><div class="card-header"><div class="card-title">Team leaders</div><div class="card-meta">' + this.state.year + '</div></div>' +
+      leaderBlock('Passing', p => p.seasonStats.passingYards, p => p.seasonStats.passingYards + ' yds', p => p.seasonStats.passingTDs + ' TD / ' + p.seasonStats.interceptionsThrown + ' INT') +
+      leaderBlock('Rushing', p => p.seasonStats.rushingYards, p => p.seasonStats.rushingYards + ' yds', p => p.seasonStats.rushingTDs + ' TD, ' + p.seasonStats.carries + ' att') +
+      leaderBlock('Receiving', p => p.seasonStats.receivingYards, p => p.seasonStats.receivingYards + ' yds', p => p.seasonStats.receptions + ' rec, ' + p.seasonStats.receivingTDs + ' TD') +
+      leaderBlock('Sacks', p => p.seasonStats.sacks, p => p.seasonStats.sacks + ' sacks', null) +
+      leaderBlock('Interceptions', p => p.seasonStats.interceptionsMade, p => p.seasonStats.interceptionsMade + ' INT', null) +
+      leaderBlock('Tackles', p => p.seasonStats.tackles, p => p.seasonStats.tackles + ' tkl', null) +
+      '</div>';
+    return html;
+  },
+
   renderMyTeam() {
     const userTeamId = this.getUserTeamId();
     if (userTeamId === null || userTeamId === undefined) {
       this.currentView = this._homeView(); this.render(); return;
     }
     const team = this.state.teams[userTeamId];
+    const _mtTab = this.myTeamTab || 'overview';
+    const _tabBar = '<div style="display:flex;gap:6px;margin-bottom:14px">' +
+      '<button class="btn btn-sm' + (_mtTab === 'overview' ? ' btn-primary' : '') + '" onclick="game.setMyTeamTab(\'overview\')">Overview</button>' +
+      '<button class="btn btn-sm' + (_mtTab === 'stats' ? ' btn-primary' : '') + '" onclick="game.setMyTeamTab(\'stats\')">Team Stats</button>' +
+      '</div>';
+    if (_mtTab === 'stats') {
+      document.getElementById('content').innerHTML =
+        '<div class="page-header"><div class="page-title">' + team.city + ' ' + team.name + '</div>' +
+        '<div class="page-subtitle">' + this.state.year + ' team statistics · league ranks</div></div>' + _tabBar + this._renderTeamStatsTab(team);
+      return;
+    }
     const games = team.wins + team.losses;
     const pct = games > 0 ? (team.wins / games).toFixed(3) : '.000';
     const cap = getSalaryCap(this.state.year);
@@ -13792,7 +14029,7 @@ let game = {
     let html = '<div class="page-header">' +
       '<div class="page-title">' + team.city + ' ' + team.name + '</div>' +
       '<div class="page-subtitle">' + team.conference + ' ' + team.division + ' · Your franchise · ' + this.state.year + ' season</div>' +
-      '</div>' +
+      '</div>' + _tabBar +
       '<div class="my-team-hero">' +
       '<div class="my-team-hero-left">' +
       '<div class="my-team-color" style="background:' + team.primary + '"></div>' +
@@ -21376,6 +21613,11 @@ let game = {
   showBoxScoreFromGame(g) {
     const home = this.state.teams[g.homeTeam];
     const away = this.state.teams[g.awayTeam];
+    this.showModal(away.abbr + ' @ ' + home.abbr, this._buildBoxScoreHtml(g));
+  },
+  _buildBoxScoreHtml(g) {
+    const home = this.state.teams[g.homeTeam];
+    const away = this.state.teams[g.awayTeam];
     const homeWon = g.homeScore > g.awayScore;
     let html = '<div class="boxscore-header">' +
       '<div class="boxscore-team away" style="cursor:pointer" onclick="game.showTeam(' + away.id + ')"><div class="boxscore-team-name">' + away.city + ' ' + away.name + '</div>' +
@@ -21449,7 +21691,7 @@ let game = {
         });
       }
     });
-    this.showModal(away.abbr + ' @ ' + home.abbr, html);
+    return html;
   },
 
   // STANDINGS
@@ -21973,6 +22215,96 @@ let game = {
     // Append any remaining real seasons not already placed (defensive).
     real.forEach(h => { if (!out.includes(h)) out.push(h); });
     return out;
+  },
+
+  // Map a 40-99 grade to a draft projection + letter.
+  _draftGradeLabel(grade) {
+    if (grade >= 95) return { round: 'Top-5 pick', letter: 'A+' };
+    if (grade >= 90) return { round: 'Top-15 pick', letter: 'A' };
+    if (grade >= 85) return { round: 'Round 1', letter: 'A-' };
+    if (grade >= 80) return { round: 'Round 1\u20132', letter: 'B+' };
+    if (grade >= 75) return { round: 'Round 2\u20133', letter: 'B' };
+    if (grade >= 70) return { round: 'Round 3\u20134', letter: 'B-' };
+    if (grade >= 64) return { round: 'Round 4\u20135', letter: 'C+' };
+    if (grade >= 58) return { round: 'Round 5\u20137', letter: 'C' };
+    return { round: 'UDFA / priority FA', letter: 'D' };
+  },
+  // Your team's SCOUT grade for a prospect — a noisy read on the true grade, cached per team so it's
+  // stable across views. Teams with a better scouting department (team.scouting) read closer to true.
+  _teamScoutGrade(p) {
+    const teamId = this.getUserTeamId();
+    if (teamId === null || teamId === undefined) return null;
+    if (!p._scoutGrades) p._scoutGrades = {};
+    if (p._scoutGrades[teamId] === undefined) {
+      const trueGrade = (p.collegeGrade !== undefined && p.collegeGrade !== null) ? p.collegeGrade : (p.rating || 60);
+      const acc = (this.state.teams[teamId] && this.state.teams[teamId].scouting) || 70; // 0-100 if present
+      const sigma = Math.max(2.5, 6 - (acc - 70) / 15);
+      const tri = (Math.random() + Math.random()) / 2 - 0.5; // bell, -0.5..0.5
+      const noise = tri * 2 * sigma;
+      p._scoutGrades[teamId] = Math.max(40, Math.min(99, Math.round((trueGrade + noise) * 10) / 10));
+    }
+    return p._scoutGrades[teamId];
+  },
+  // Draft-day prospect card: college profile + consensus draft grade + YOUR team's scout grade,
+  // with a Draft button when you're on the clock.
+  showDraftProspect(id) {
+    const p = this.state.players[id];
+    if (!p) return;
+    const school = COLLEGE_SCHOOLS.find(s => s.abbr === p.collegeSchool);
+    const schoolName = school ? school.name : (p.collegeSchool || 'Unknown program');
+    const rc = this.ratingClass(p.rating);
+    const consensus = (p.collegeGrade !== undefined && p.collegeGrade !== null) ? p.collegeGrade : p.rating;
+    const cLabel = this._draftGradeLabel(consensus);
+    const scout = this._teamScoutGrade(p);
+    const sLabel = scout !== null ? this._draftGradeLabel(scout) : null;
+    const userTid = this.getUserTeamId();
+    const cur = this.state.draftOrder && this.state.draftCurrentIdx !== undefined ? this.state.draftOrder[this.state.draftCurrentIdx] : null;
+    const isUserTurn = !!(this.state.draftActive && cur && cur.teamId === userTid);
+    const userTeam = (userTid !== null && userTid !== undefined) ? this.state.teams[userTid] : null;
+    const diff = scout !== null ? Math.round((scout - consensus) * 10) / 10 : 0;
+    const diffColor = diff > 1.5 ? 'var(--success)' : diff < -1.5 ? 'var(--danger)' : 'var(--text-muted)';
+    const diffText = scout === null ? '' : (Math.abs(diff) < 1 ? 'in line with consensus' : (diff > 0 ? 'higher than consensus (+' + diff + ')' : 'lower than consensus (' + diff + ')'));
+
+    let html = '<div style="padding:18px 20px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:60px 1fr;gap:14px;align-items:center">' +
+      '<div class="player-face-small" style="width:60px;height:60px">' + pixelFaceSVG(p.faceSeed) + '</div>' +
+      '<div><div style="font-size:18px;font-weight:700">' + p.name + '</div>' +
+      '<div style="margin-top:4px;display:flex;gap:10px;align-items:center;font-size:12px;flex-wrap:wrap">' +
+      '<span class="position-tag">' + p.position + '</span>' +
+      '<span class="muted">age ' + p.age + (p.archetype ? ' \u00b7 ' + p.archetype : '') + '</span>' +
+      (p.collegeSchool ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showCollegeCard(\'' + p.collegeSchool + '\')">' + schoolName + '</span>' : '') +
+      (p.declaredEarly ? '<span class="muted" style="font-size:11px">declared early</span>' : '') +
+      '</div></div></div>';
+
+    // College prospect profile
+    html += '<div style="padding:14px 20px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:8px">Prospect profile</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Projected OVR</div><div style="font-weight:800;font-size:16px"><span class="rating ' + rc + '">' + p.rating + '</span></div></div>' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Ceiling</div><div style="font-weight:800;font-size:16px">' + (p.potential || p.rating) + '</div></div>' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:8px"><div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Heismans</div><div style="font-weight:800;font-size:16px">' + (p.collegeHeismans || 0) + '</div></div>' +
+      '</div></div>';
+
+    // Grades: consensus draft grade + YOUR scout's grade
+    html += '<div style="padding:0 20px 14px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:8px">Draft grades</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+      '<div style="background:var(--surface-2);border:1px solid var(--border);padding:10px 12px">' +
+      '<div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">Consensus grade</div>' +
+      '<div style="font-weight:800;font-size:18px">' + consensus.toFixed(1) + ' <span style="font-size:12px;color:var(--text-muted)">' + cLabel.letter + '</span></div>' +
+      '<div style="font-size:11px;color:var(--text-muted)">' + cLabel.round + '</div></div>' +
+      '<div style="background:var(--surface-2);border:1px solid ' + (userTeam ? 'var(--accent)' : 'var(--border)') + ';padding:10px 12px">' +
+      '<div style="font-size:9px;text-transform:uppercase;color:var(--text-muted)">' + (userTeam ? userTeam.abbr + ' scout' : 'Your scout') + '</div>' +
+      (scout !== null
+        ? '<div style="font-weight:800;font-size:18px">' + scout.toFixed(1) + ' <span style="font-size:12px;color:var(--text-muted)">' + sLabel.letter + '</span></div>' +
+          '<div style="font-size:11px;color:' + diffColor + '">' + sLabel.round + ' \u00b7 ' + diffText + '</div>'
+        : '<div style="font-size:12px;color:var(--text-muted);margin-top:6px">No team scouting available</div>') +
+      '</div></div></div>';
+
+    if (isUserTurn) {
+      html += '<div style="padding:0 20px 18px"><button class="btn btn-primary btn-lg" style="width:100%" onclick="closeModal();game.userPick(' + p.id + ')">Draft ' + p.name + '</button></div>';
+    }
+
+    this.showModal(p.name + ' \u00b7 Draft profile', html);
   },
 
   showProspectCard(prospectId, replace) {
