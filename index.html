@@ -4125,6 +4125,803 @@ let game = {
     this.render();
   },
 
+  // ===== COLLEGE TRANSFER PORTAL (user player only) =====
+  // The CPU portal (simTransferPortal) moves ~17-23% of all CPU college players every offseason but
+  // NEVER touches the user — "the user's own player never transfers without permission." This is that
+  // permission: the user opens the portal, sees the realistic set of programs that would take them
+  // (gated by prospect grade, depth/playing-time need, and prestige fit, mirroring the recruiting-offer
+  // logic), and picks a destination. Available any time during the college stage (not after declaring,
+  // and not for seniors, who are graduating — same realism rule the CPU portal uses).
+  playerRequestCollegeTransfer() {
+    if (!this.state.career || this.state.career.mode !== 'player') return;
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p || this.state.career.careerStage !== 'college') return;
+
+    const prestigeMap = this.state.collegePrestige || {};
+    const pool = this.state.collegeProspects || [];
+
+    // Current standing: where does the user rank at their position on their current roster?
+    const curSchool = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+    const curName = curSchool ? curSchool.name : p.school;
+    const curPrestige = curSchool ? (prestigeMap[p.school] !== undefined ? prestigeMap[p.school] : curSchool.prestige) : 60;
+    const samePosHere = pool.filter(x => x.school === p.school && x.position === p.position && x.id !== p.id);
+    // Players AHEAD of the user who AREN'T graduating (a senior ahead of you leaves; you'd inherit the job).
+    const aheadStaying = samePosHere.filter(x => x.prospectGrade > p.prospectGrade && x.year !== 'Senior').length;
+    const startingHere = aheadStaying === 0;
+
+    // Score every other program's interest in the user as a transfer.
+    const suitors = [];
+    COLLEGE_SCHOOLS.forEach(school => {
+      if (school.abbr === p.school) return;
+      const prestige = prestigeMap[school.abbr] !== undefined ? prestigeMap[school.abbr] : school.prestige;
+      const samePos = pool.filter(x => x.school === school.abbr && x.position === p.position);
+      samePos.sort((a, b) => b.prospectGrade - a.prospectGrade);
+      const theirBest = samePos[0] ? samePos[0].prospectGrade : 0;
+      // Would the user START there? (out-grade the program's current best at the position)
+      const wouldStart = p.prospectGrade > theirBest + 0.5;
+
+      let interest = 0;
+      interest += Math.max(0, p.prospectGrade - theirBest) * 1.8;   // how much of an upgrade you'd be
+      interest += wouldStart ? 6 : -3;                              // programs covet immediate starters
+      // Prestige fit: a program wants players at/above its own level; tolerates a small reach down for need.
+      const fit = p.prospectGrade - prestige;
+      if (fit >= 0) interest += Math.min(8, fit * 0.8);            // you out-class the program → highly wanted
+      else interest += Math.max(-12, fit * 0.9);                  // you're below the program's bar → cooler
+      interest += (Math.random() - 0.5) * 4;                       // recruiting-board noise
+      // Hard realism gates: blue bloods don't take low-grade portal kids.
+      if (prestige >= 92 && p.prospectGrade < 82) interest -= 25;
+      if (prestige >= 86 && p.prospectGrade < 74) interest -= 14;
+      if (prestige >= 80 && p.prospectGrade < 66) interest -= 8;
+
+      suitors.push({ school, prestige, interest, wouldStart, theirBest });
+    });
+    suitors.sort((a, b) => b.interest - a.interest);
+
+    // Build a varied shortlist: take the strongest 6 interested programs, but make sure at least one
+    // guaranteed-starter option is present so the "playing time" motive is always actionable.
+    let shortlist = suitors.filter(s => s.interest > 1).slice(0, 6);
+    if (!shortlist.some(s => s.wouldStart)) {
+      const starter = suitors.find(s => s.wouldStart && !shortlist.includes(s));
+      if (starter) shortlist = shortlist.slice(0, 5).concat(starter);
+    }
+
+    let html = '<div style="padding:18px">';
+    // Current-situation banner — frames the decision the way the portal really works.
+    html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;line-height:1.5">' +
+      'You\'re a <strong>' + p.year + '</strong> ' + p.position + ' at <strong>' + curName + '</strong> (prestige ' + curPrestige + '). ' +
+      (startingHere
+        ? 'You\'re <span style="color:var(--success)">currently the projected starter</span> at your position.'
+        : '<span style="color:var(--warning)">You\'re behind ' + aheadStaying + ' returning player' + (aheadStaying === 1 ? '' : 's') + '</span> at your position.') +
+      ' Enter the portal and pick a new home, or stay put.</div>';
+
+    if (shortlist.length === 0) {
+      html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">No program is making a real push for you right now. Keep producing — your portal market grows with your prospect grade.</div>' +
+        '<button class="btn btn-primary" style="width:100%" onclick="closeModal()">Stay put for now</button></div>';
+      this.showModal('Transfer portal · ' + this.state.year, html);
+      return;
+    }
+
+    shortlist.forEach(s => {
+      const conf = COLLEGE_CONFERENCES[s.school.conference] ? COLLEGE_CONFERENCES[s.school.conference].name : s.school.conference;
+      // One-line rationale describing what the move gets the player.
+      let reason;
+      if (s.wouldStart && s.prestige > curPrestige + 2) reason = 'Step up in prestige — and you\'d start Day 1';
+      else if (s.wouldStart && s.prestige >= curPrestige - 2) reason = 'Lateral move with a guaranteed starting job';
+      else if (s.wouldStart) reason = 'Guaranteed starting role + more touches';
+      else if (s.prestige > curPrestige + 4) reason = 'Bigger stage — you\'d compete for the job';
+      else reason = 'Sees a strong fit for you';
+      const startBadge = s.wouldStart
+        ? '<span style="font-size:10px;color:var(--success);border:1px solid var(--success);border-radius:3px;padding:1px 5px;margin-left:6px">PROJECTED STARTER</span>'
+        : '<span style="font-size:10px;color:var(--text-muted);border:1px solid var(--border);border-radius:3px;padding:1px 5px;margin-left:6px">COMPETE TO START</span>';
+      const dir = s.prestige > curPrestige + 2 ? '▲' : s.prestige < curPrestige - 2 ? '▼' : '▬';
+      const dirColor = s.prestige > curPrestige + 2 ? 'var(--success)' : s.prestige < curPrestige - 2 ? 'var(--danger)' : 'var(--text-muted)';
+      html += '<div style="border:1px solid var(--border);padding:12px 14px;margin-bottom:10px;display:flex;align-items:center;gap:12px">' +
+        '<span style="width:4px;height:44px;background:' + s.school.primary + ';flex-shrink:0"></span>' +
+        '<div style="flex:1;min-width:0">' +
+        '<div style="font-weight:700;font-size:14px">' + s.school.name + startBadge + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + reason + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + conf + ' · prestige <span style="color:' + dirColor + ';font-family:var(--font-mono)">' + dir + ' ' + s.prestige + '</span></div>' +
+        '</div>' +
+        '<button class="btn btn-sm btn-primary" onclick="game._playerExecuteCollegeTransfer(\'' + s.school.abbr + '\')">Transfer here →</button>' +
+        '</div>';
+    });
+    html += '<button class="btn" style="width:100%;margin-top:4px" onclick="closeModal()">Stay put</button>';
+    html += '</div>';
+    this.showModal('Transfer portal · ' + this.state.year, html);
+  },
+
+  _playerExecuteCollegeTransfer(schoolAbbr) {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    const dest = COLLEGE_SCHOOLS.find(s => s.abbr === schoolAbbr);
+    if (!p || !dest || !this.state.career || this.state.career.careerStage !== 'college') { closeModal(); return; }
+    const oldAbbr = p.school;
+    const oldSchool = COLLEGE_SCHOOLS.find(s => s.abbr === oldAbbr);
+    const oldName = oldSchool ? oldSchool.name : oldAbbr;
+    if (oldAbbr === schoolAbbr) { closeModal(); return; }
+
+    // Make the move. During college the user player is tracked by entityId, and declaredIdentity /
+    // collegeSchool are both derived from p.school at declaration, so updating p.school is sufficient
+    // and stays consistent all the way through the NFL draft.
+    p.school = schoolAbbr;
+    p._transferredThisOffseason = true; // CPU portal already skips the user, but keep the flag honest
+    p.transferHistory = p.transferHistory || [];
+    p.transferHistory.push({ year: this.state.year, classYear: p.year, fromAbbr: oldAbbr, toAbbr: schoolAbbr });
+
+    this.addHeadline({
+      type: 'college',
+      title: p.name + ' transfers to ' + dest.name,
+      body: 'The ' + p.year + ' ' + p.position + ' entered the portal and committed to ' + dest.name + ' after ' + (p.seasonHistory ? p.seasonHistory.length : 0) + ' season' + ((p.seasonHistory && p.seasonHistory.length === 1) ? '' : 's') + ' at ' + oldName + '.'
+    });
+
+    closeModal();
+    this.saveGame();
+    this.currentView = 'mycareer';
+    this.render();
+  },
+
+  // ============================================================
+  // ===== FRONT-OFFICE INFLUENCE (92+ OVR player → GM) =========
+  // ============================================================
+  // A franchise cornerstone (92+ OVR) can ask the GM to make a position a priority. If the GM
+  // honors it, a single hook in calculateTeamNeeds nudges that position's need for the user's
+  // CURRENT team — which flows into the draft (cpuPick), the CPU trade market, and strategic FA
+  // signings. Whether the GM listens depends on the player's standing (OVR over 92, accolades,
+  // tenure, and a stable per-front-office disposition).
+
+  // Returns the active, accepted GM request (or null). Active through the request year and the
+  // following offseason, so it can actually shape a draft cycle.
+  _activeGMRequest() {
+    const car = this.state && this.state.career;
+    if (!car || car.mode !== 'player') return null;
+    const r = car.gmRequest;
+    if (!r || !r.accepted) return null;
+    if (this.state.year > (r.expiresYear || r.year)) return null;
+    return r;
+  },
+
+  // 0-100ish standing with the front office.
+  _gmStanding(p, team) {
+    let s = 0;
+    s += Math.min(28, Math.max(0, p.rating - 92) * 4);          // how far above the 92 floor
+    let acc = 0;
+    (p.awards || []).forEach(a => {
+      if (['MVP', 'OPOY', 'DPOY'].includes(a.type)) acc += 14;
+      else if (a.type === 'All-Pro 1st') acc += 9;
+      else if (a.type === 'All-Pro 2nd') acc += 6;
+      else if (a.type === 'Pro Bowl') acc += 4;
+    });
+    s += Math.min(42, acc);                                     // the résumé that earns you a voice
+    s += Math.min(12, (p.yearsInLeague || 0) * 2);              // loyalty / face-of-franchise
+    // Stable per-front-office disposition: some GMs are more player-driven than others.
+    const seed = team ? Math.abs((team.id * 1103515245 + 12345) >> 8) % 100 : 50;
+    s += (seed - 50) * 0.24;                                    // ±12
+    // Off-field standing: GM favor (press answers, season goals) and leadership move the needle.
+    const m = this.state && this.state.career && this.state.career.meta;
+    if (m) { s += (m.gmFavor || 0); s += Math.min(8, (m.leadership || 0) / 10); }
+    return Math.round(s);
+  },
+
+  POSITION_FULL_NAMES: {
+    QB: 'quarterback', RB: 'running back', WR: 'wide receiver', TE: 'tight end',
+    OT: 'offensive tackle', OG: 'offensive guard', C: 'center',
+    EDGE: 'edge rusher', DT: 'defensive tackle', LB: 'linebacker', CB: 'cornerback', S: 'safety',
+    K: 'kicker', P: 'punter'
+  },
+
+  // Open the position picker. Only meaningful for an active 92+ NFL player on a team.
+  playerRequestGMOpen() {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p || p.team === null || p.team === undefined || p.rating < 92 || p.retired) return;
+    const positions = ['QB', 'RB', 'WR', 'TE', 'OT', 'OG', 'C', 'EDGE', 'DT', 'LB', 'CB', 'S', 'K', 'P'];
+    let html = '<div style="padding:18px">' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Which position do you want the front office to make a priority? They\u2019ll weigh your standing before deciding whether to act on it.</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">';
+    positions.forEach(pos => {
+      html += '<button class="btn" style="padding:10px 6px;font-weight:700" onclick="game.playerSubmitGMRequest(\'' + pos + '\')">' + pos + '</button>';
+    });
+    html += '</div>' +
+      '<button class="btn" style="width:100%;margin-top:12px" onclick="closeModal()">Never mind</button>' +
+      '</div>';
+    this.showModal('Make a request to the GM', html);
+  },
+
+  // The GM responds based on standing. On a yes, the request is recorded and starts influencing
+  // the team's draft / trade / FA behavior immediately.
+  playerSubmitGMRequest(position) {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p || p.team === null || p.team === undefined || p.rating < 92 || p.retired) { closeModal(); return; }
+    const team = this.state.teams[p.team];
+    const standing = this._gmStanding(p, team);
+    const posLong = this.POSITION_FULL_NAMES[position] || position;
+    // Read current roster strength at the position for a contextual aside (computed WITHOUT any
+    // existing request boost so the flavor reflects the real roster).
+    const needs = this.calculateTeamNeeds(team);
+    const posNeed = needs[position] || 0;
+    const needAside = posNeed >= 3
+      ? 'Truth is, we could use the help there.'
+      : posNeed <= -1
+      ? 'We\u2019re already stacked at ' + posLong + ', but I hear you.'
+      : 'It\u2019s a fair spot to look at.';
+
+    let accepted, gmLine, outcomeLabel, outcomeColor;
+    if (standing >= 52) {
+      accepted = true; outcomeLabel = 'Request granted'; outcomeColor = 'var(--success)';
+      gmLine = 'The GM leans back and grins. \u201CYou\u2019re the reason this building has a pulse, ' + p.name.split(' ').slice(-1)[0] + '. Consider it done \u2014 ' + posLong + ' goes near the top of the board this offseason. ' + needAside + ' Now go win us some games.\u201D';
+    } else if (standing >= 34) {
+      accepted = true; outcomeLabel = 'Request granted'; outcomeColor = 'var(--success)';
+      gmLine = 'The GM nods slowly. \u201CYou\u2019ve earned the right to be heard. No promises on how it shakes out, but yeah \u2014 we\u2019ll prioritize ' + posLong + '. ' + needAside + '\u201D';
+    } else if (standing >= 20) {
+      accepted = false; outcomeLabel = 'Politely declined'; outcomeColor = 'var(--warning)';
+      gmLine = 'The GM gives a tight smile. \u201CI hear you, and I appreciate the passion. But I\u2019m not committing the whole plan to one position right now.\u201D (Translation: not happening \u2014 keep stacking accolades.)';
+    } else {
+      accepted = false; outcomeLabel = 'Shot down'; outcomeColor = 'var(--danger)';
+      gmLine = 'The GM barely looks up from his laptop. \u201CYou play, I\u2019ll build the roster. Come back when you\u2019ve got the r\u00e9sum\u00e9 to back up the ask.\u201D';
+    }
+
+    if (accepted) {
+      this.state.career.gmRequest = { position, year: this.state.year, expiresYear: this.state.year + 1, accepted: true, standing };
+      this.saveGame();
+    }
+
+    let html = '<div style="padding:18px">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
+        '<div style="width:40px;height:40px;border-radius:50%;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--text-muted)">GM</div>' +
+        '<div><div style="font-size:13px;font-weight:700">' + (team ? team.city + ' ' + team.name : '') + ' GM</div>' +
+        '<div style="font-size:11px;color:var(--text-muted)">Your standing: ' + standing + '/100</div></div>' +
+      '</div>' +
+      '<div style="font-size:14px;line-height:1.55;font-style:italic;border-left:3px solid var(--border);padding:4px 0 4px 14px;margin-bottom:14px">' + gmLine + '</div>' +
+      '<div style="font-size:12px;font-weight:700;color:' + outcomeColor + ';text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px">' + outcomeLabel + '</div>';
+    if (accepted) {
+      html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">The front office will lean toward <strong>' + posLong + '</strong> in the draft, trade talks, and free agency through the ' + (this.state.year + 1) + ' offseason.</div>';
+    } else {
+      html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">No change to the roster plan. Build your standing with production and hardware, then ask again.</div>';
+    }
+    html += '<button class="btn btn-primary" style="width:100%" onclick="closeModal();game.currentView=\'mycareer\';game.render()">Got it</button></div>';
+    this.showModal('Front office', html, true);
+  },
+
+  // ============================================================
+  // ===== RECRUIT A FRIEND TO YOUR TEAM (free agency) ==========
+  // ============================================================
+  // From the Relationships page, an active player can pitch a teammate-bond to come play with them.
+  // It records a 2-offseason "open pitch" that (a) trims the friend's odds of re-signing elsewhere
+  // and (b) gives a bond-weighted chance for the friend to sign with the user's team when they hit
+  // the open market (resolved in runFreeAgency).
+
+  _isRecruitedFriendOpen(pid) {
+    const car = this.state && this.state.career;
+    if (!car || car.mode !== 'player' || !car.recruitedFriends) return false;
+    const rec = car.recruitedFriends[pid];
+    return !!(rec && this.state.year <= rec.untilYear);
+  },
+
+  _recruitFriendToTeam(playerId) {
+    const up = this.getUserPlayer && this.getUserPlayer();
+    if (!up || up.retired || up.team === null || up.team === undefined) return;
+    const friend = this.state.players[playerId];
+    const team = this.state.teams[up.team];
+    if (!friend || friend.retired || !team || friend.team === up.team) return;
+    if (!this.state.career.recruitedFriends) this.state.career.recruitedFriends = {};
+    const chem = (up._chemistry && up._chemistry[playerId]) ? Math.round(up._chemistry[playerId].score || 0) : 0;
+    this.state.career.recruitedFriends[playerId] = {
+      untilYear: this.state.year + 2, pitchedYear: this.state.year,
+      name: friend.name, pos: friend.position, chem
+    };
+    this.saveGame();
+
+    // Friend's reaction scales with the strength of the bond.
+    const lastName = friend.name.split(' ').slice(-1)[0];
+    let reaction;
+    if (chem >= 65) reaction = '\u201CSay less. You and me, same locker room again? I\u2019m telling my agent to keep your city at the top of the list.\u201D';
+    else if (chem >= 40) reaction = '\u201CI\u2019d run it back with you, no question. If the deal\u2019s there when I\u2019m up, I\u2019m listening hard.\u201D';
+    else if (chem >= 20) reaction = '\u201CAppreciate the call. No promises \u2014 but it\u2019d be good to play together again. I\u2019ll keep it in mind.\u201D';
+    else reaction = '\u201CWe\u2019ll see. Business is business, but I won\u2019t forget you reached out.\u201D';
+
+    const html = '<div style="padding:18px">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
+        '<div style="width:40px;height:40px;flex:none">' + pixelFaceSVG(friend.faceSeed) + '</div>' +
+        '<div><div style="font-size:13px;font-weight:700">' + friend.name + ' · ' + friend.position + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted)">Bond ' + chem + '%</div></div>' +
+      '</div>' +
+      '<div style="font-size:14px;line-height:1.55;font-style:italic;border-left:3px solid var(--accent);padding:4px 0 4px 14px;margin-bottom:14px">' + reaction + '</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">You\u2019ve put in a pitch for ' + lastName + ' to join the <strong>' + team.city + ' ' + team.name + '</strong>. It boosts the odds he signs with you when he hits free agency over the next two offseasons \u2014 the tighter your bond, the better the chance.</div>' +
+      '<button class="btn btn-primary" style="width:100%" onclick="closeModal();game.currentView=\'relationships\';game.render()">Done</button></div>';
+    this.showModal('Recruiting pitch', html);
+  },
+
+  // Resolve any open recruiting pitches: sign eligible friends (currently unsigned FAs) to the
+  // user's CURRENT team with a bond-weighted chance. Called at the top of runFreeAgency, after the
+  // re-sign churn has decided who reached the market.
+  _resolveRecruitedFriendSignings() {
+    const car = this.state.career;
+    if (!car || car.mode !== 'player' || !car.recruitedFriends) return;
+    const up = this.getUserPlayer && this.getUserPlayer();
+    if (!up || up.retired || up.team === null || up.team === undefined) return; // need a team to join
+    const team = this.state.teams[up.team];
+    if (!team) return;
+    const reg = car.recruitedFriends;
+    const cap = getSalaryCap(this.state.year);
+    Object.keys(reg).forEach(pid => {
+      const rec = reg[pid];
+      if (this.state.year > rec.untilYear) { delete reg[pid]; return; }          // window closed
+      const friend = this.state.players[pid];
+      if (!friend || friend.retired) { delete reg[pid]; return; }
+      if (friend.team === team.id) { delete reg[pid]; return; }                   // already here
+      if (friend.team !== null && friend.team !== undefined) return;              // still signed elsewhere; keep window open
+      const chem = (up._chemistry && up._chemistry[pid]) ? Math.round(up._chemistry[pid].score || 0) : (rec.chem || 0);
+      let chance = 0.35 + (chem / 100) * 0.45;                                     // 0.35 .. 0.80 by bond
+      const newDeal = generateContract(friend.position, friend.rating, friend.age, this.state.year, false);
+      const space = cap - teamCapUsed(team, this.state.players);
+      const approxHit = newDeal && newDeal.aav ? newDeal.aav : 3_000_000;
+      if (space < approxHit * 0.5) chance *= 0.5;                                 // tight cap dampens it
+      if (Math.random() < chance) {
+        friend.team = team.id;
+        friend.contract = newDeal;
+        if (!team.roster.includes(friend.id)) team.roster.push(friend.id);
+        this.addHeadline({
+          type: 'transaction',
+          title: friend.name + ' signs with ' + team.city + ' ' + team.name,
+          body: 'Reuniting with ' + up.name + ', the ' + friend.position + ' joins ' + team.city + ' in free agency.'
+        });
+        delete reg[pid];
+      }
+    });
+    try { this.enforceCapCompliance && this.enforceCapCompliance(); } catch (e) { /* defensive */ }
+  },
+
+  // ============================================================
+  // ============ PLAYER-CAREER LIFE & STAKES ===================
+  // ============================================================
+  // A shared "career meta" bag drives several intertwined systems: fan approval, locker-room
+  // leadership/captaincy, off-field brand focus, the press cadence, GM favor, and season goals.
+  // All player-mode only; lazily initialized so old saves upgrade seamlessly.
+  _careerMeta() {
+    if (!this.state || !this.state.career || this.state.career.mode !== 'player') return null;
+    if (!this.state.career.meta) {
+      this.state.career.meta = {
+        fanApproval: 55, leadership: 8, captain: false, gmFavor: 0,
+        gamesPlayed: 0, gamesSincePresser: 0,
+        brandFocus: null, brandFocusYear: null,
+        seasonGoals: null, seasonGoalsYear: null
+      };
+    }
+    return this.state.career.meta;
+  },
+  _clampMeta(m) {
+    if (!m) return;
+    m.fanApproval = Math.max(0, Math.min(100, Math.round(m.fanApproval)));
+    m.leadership = Math.max(0, Math.min(100, Math.round(m.leadership)));
+    m.gmFavor = Math.max(-25, Math.min(25, Math.round(m.gmFavor)));
+  },
+
+  // ---- #7 Captaincy & leadership ----
+  // Captain status is earned: a respected veteran (tenure + rating + leadership). Recomputed on the
+  // fly so it tracks the player's growth. Passive payoff: a small surrounding-cast lift and weight
+  // in contract talks; the badge shows on the profile.
+  _isCaptain(p) {
+    const m = this._careerMeta();
+    if (!m || !p || p.retired) return false;
+    const tenure = p.yearsInLeague || 0;
+    const earned = tenure >= 3 && p.rating >= 82 && m.leadership >= 35;
+    m.captain = !!earned; // cache for the loyalty hook
+    return earned;
+  },
+  _leadershipTier(v) {
+    if (v >= 70) return { label: 'Vocal leader', color: 'var(--success)' };
+    if (v >= 45) return { label: 'Respected', color: 'var(--accent)' };
+    if (v >= 25) return { label: 'Earning trust', color: 'var(--warning)' };
+    return { label: 'Quiet pro', color: 'var(--text-muted)' };
+  },
+
+  // ---- #1 Press conferences (≤ 1 per 4 games played) ----
+  // Called from the post-game popup. Increments the cadence counter and, when due, arms the presser
+  // so the popup's Continue button opens it instead of just closing.
+  _tickPressCadence(perf) {
+    const m = this._careerMeta();
+    if (!m || !perf || perf.didNotPlay) return false;
+    m.gamesPlayed = (m.gamesPlayed || 0) + 1;
+    m.gamesSincePresser = (m.gamesSincePresser || 0) + 1;
+    if (m.gamesSincePresser >= 4) {
+      this._pendingPresser = {
+        win: !!perf.userIsWin,
+        big: this._perfWasBig(perf),
+        bad: this._perfWasBad(perf),
+        oppName: perf.opponentName || perf.opponentAbbr || 'your opponent'
+      };
+      return true;
+    }
+    return false;
+  },
+  _perfWasBig(perf) {
+    const l = (perf.lines || []).join(' ');
+    return /(\b[3-9]\d\d\syd|TD)/.test(l) && perf.userIsWin;
+  },
+  _perfWasBad(perf) {
+    return !perf.userIsWin && (perf.snapPct || 0) > 0;
+  },
+  _openPressConference() {
+    closeModal();
+    const m = this._careerMeta();
+    const ctx = this._pendingPresser || { win: true, big: false, bad: false, oppName: 'your opponent' };
+    this._pendingPresser = null;
+    if (m) m.gamesSincePresser = 0;
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p || !m) return;
+
+    // Build a question + 3 archetypal answers; each shifts fan approval / leadership / chemistry /
+    // GM favor differently. The "right" answer depends on what you value.
+    let q, opts;
+    if (ctx.win && ctx.big) {
+      q = 'You were the story today. The room wants to know — how\'d you do it?';
+      opts = [
+        { label: 'Credit the guys up front', fan: 2, lead: 6, chem: 5, gm: 1, line: 'You point to the line and the play-callers. The locker room hears it loud and clear.' },
+        { label: 'Own the spotlight', fan: 7, lead: -3, chem: -4, gm: 0, line: 'You let the world know who carried the team. Fans eat it up; a few teammates roll their eyes.' },
+        { label: 'Stay locked in, eyes forward', fan: 1, lead: 3, chem: 2, gm: 3, line: 'All business, all process. The front office loves the maturity.' }
+      ];
+    } else if (ctx.bad) {
+      q = 'Tough one out there. What happened?';
+      opts = [
+        { label: 'Take the blame', fan: 4, lead: 7, chem: 6, gm: 2, line: 'You stand up and wear it. Accountability buys you a lot of respect.' },
+        { label: 'Point at the scheme', fan: -2, lead: -5, chem: -7, gm: -6, line: 'You hint the game plan failed you. It travels fast — and not well.' },
+        { label: 'Deflect, turn the page', fan: 0, lead: 1, chem: 1, gm: 1, line: 'Short, professional, on to next week. Nobody learns much.' }
+      ];
+    } else {
+      q = 'Another week in the books. What\'s the message to the fans?';
+      opts = [
+        { label: 'We\'re built for a run', fan: 6, lead: 2, chem: 1, gm: 0, line: 'You sell the belief. The fanbase is fired up.' },
+        { label: 'Praise a teammate', fan: 2, lead: 5, chem: 5, gm: 1, line: 'You shine the light on someone else. Bonds tighten.' },
+        { label: 'Stay humble, grind on', fan: 1, lead: 3, chem: 2, gm: 2, line: 'Even-keeled and steady. The building respects the consistency.' }
+      ];
+    }
+    this._pressOptions = opts;
+    let html = '<div style="padding:18px">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
+      '<div style="width:40px;height:40px;border-radius:50%;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--text-muted)">🎙️</div>' +
+      '<div><div style="font-size:13px;font-weight:700">Post-game press conference</div>' +
+      '<div style="font-size:11px;color:var(--text-muted)">Fan approval ' + Math.round(m.fanApproval) + '% · Leadership ' + Math.round(m.leadership) + '</div></div></div>' +
+      '<div style="font-size:14px;line-height:1.5;font-style:italic;border-left:3px solid var(--border);padding:4px 0 4px 14px;margin-bottom:14px">' + q + '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:8px">';
+    opts.forEach((o, i) => {
+      html += '<button class="btn" style="text-align:left;padding:11px 14px" onclick="game._answerPress(' + i + ')">' + o.label + '</button>';
+    });
+    html += '</div></div>';
+    this.showModal('Media availability', html, true);
+  },
+  _answerPress(i) {
+    const m = this._careerMeta();
+    const opts = this._pressOptions || [];
+    const o = opts[i];
+    this._pressOptions = null;
+    if (!m || !o) { closeModal(); return; }
+    m.fanApproval += o.fan; m.leadership += o.lead; m.gmFavor += o.gm;
+    this._clampMeta(m);
+    // Locker-room chemistry: nudge the user's surrounding bonds a touch.
+    const up = this.getUserPlayer && this.getUserPlayer();
+    if (up && up._chemistry && o.chem) {
+      Object.keys(up._chemistry).forEach(pid => {
+        const c = up._chemistry[pid];
+        if (c) c.score = Math.max(0, Math.min(100, (c.score || 0) + o.chem * 0.15));
+      });
+    }
+    this.saveGame();
+    const fan = o.fan >= 0 ? '+' + o.fan : '' + o.fan;
+    const lead = o.lead >= 0 ? '+' + o.lead : '' + o.lead;
+    let html = '<div style="padding:18px">' +
+      '<div style="font-size:14px;line-height:1.55;margin-bottom:14px">' + o.line + '</div>' +
+      '<div style="display:flex;gap:18px;font-size:12px;margin-bottom:16px">' +
+      '<div><span style="color:var(--text-muted)">Fan approval</span> <strong style="color:' + (o.fan >= 0 ? 'var(--success)' : 'var(--danger)') + '">' + fan + '</strong></div>' +
+      '<div><span style="color:var(--text-muted)">Leadership</span> <strong style="color:' + (o.lead >= 0 ? 'var(--success)' : 'var(--danger)') + '">' + lead + '</strong></div>' +
+      '</div>' +
+      '<button class="btn btn-primary" style="width:100%" onclick="closeModal()">Done</button></div>';
+    this.showModal('Media availability', html, true);
+  },
+
+  // ---- #6 Off-field & brand focus (seasonal) ----
+  BRAND_FOCUSES: {
+    community: { label: 'Community work', blurb: 'Charity and local presence. Builds leadership and goodwill.', icon: '🤝' },
+    brand: { label: 'Brand building', blurb: 'Media, social, and marketing. Lifts your fan profile and endorsement pull.', icon: '📈' },
+    film: { label: 'Film & study', blurb: 'Extra prep in the building. A small edge to your development.', icon: '🎞️' },
+    recovery: { label: 'Body & recovery', blurb: 'Sleep, treatment, load management. Lowers your injury risk over time.', icon: '🧊' }
+  },
+  setBrandFocus(key) {
+    const m = this._careerMeta();
+    if (!m || !this.BRAND_FOCUSES[key]) { closeModal(); return; }
+    m.brandFocus = key; m.brandFocusYear = this.state.year;
+    this.saveGame();
+    if (this.currentView === 'mycareer') this.render();
+    else { this.currentView = 'mycareer'; this.render(); }
+  },
+  // Applied once per season (at season rollover) for the chosen focus.
+  _applyBrandFocusSeasonEffect(p) {
+    const m = this._careerMeta();
+    if (!m || !m.brandFocus) return;
+    if (m.brandFocus === 'community') { m.leadership += 5; m.fanApproval += 3; }
+    else if (m.brandFocus === 'brand') { m.fanApproval += 6; }
+    else if (m.brandFocus === 'film') { /* dev edge handled where ratings advance */ }
+    else if (m.brandFocus === 'recovery') {
+      if (p && p.injuryProneness !== undefined) p.injuryProneness = Math.max(5, p.injuryProneness - 6);
+    }
+    this._clampMeta(m);
+  },
+
+  // ---- #10 Season goals + grading ----
+  _generateSeasonGoals(p) {
+    const m = this._careerMeta();
+    if (!m) return;
+    const r = p.rating || 75;
+    const scale = 0.7 + (r - 70) * 0.018; // better players get loftier targets
+    const goals = [];
+    const mk = (key, label, target, unit) => goals.push({ key, label, target: Math.round(target), unit, met: false });
+    switch (p.position) {
+      case 'QB': mk('passingYards', 'Passing yards', 3200 * scale, 'yds'); mk('passingTDs', 'Passing TDs', 22 * scale, 'TD'); break;
+      case 'RB': mk('rushingYards', 'Rushing yards', 950 * scale, 'yds'); mk('rushingTDs', 'Rushing TDs', 8 * scale, 'TD'); break;
+      case 'WR': case 'TE': mk('receivingYards', 'Receiving yards', (p.position === 'TE' ? 650 : 900) * scale, 'yds'); mk('receivingTDs', 'Receiving TDs', 6 * scale, 'TD'); break;
+      case 'EDGE': case 'DT': mk('sacks', 'Sacks', 7 * scale, 'sacks'); mk('tackles', 'Tackles', 40 * scale, 'tkl'); break;
+      case 'LB': mk('tackles', 'Tackles', 90 * scale, 'tkl'); mk('sacks', 'Sacks', 4 * scale, 'sacks'); break;
+      case 'CB': case 'S': mk('interceptionsMade', 'Interceptions', 3 * scale, 'INT'); mk('tackles', 'Tackles', 55 * scale, 'tkl'); break;
+      default: mk('tackles', 'Production', 20 * scale, ''); break;
+    }
+    // A team goal everyone shares.
+    goals.push({ key: '_playoffs', label: 'Make the playoffs', target: 1, unit: '', met: false, team: true });
+    m.seasonGoals = goals; m.seasonGoalsYear = this.state.year;
+  },
+  // Grade last year's goals against the just-completed season's stat line (latest seasonHistory entry).
+  _gradePriorSeasonGoals(p) {
+    const m = this._careerMeta();
+    if (!m || !m.seasonGoals || m.seasonGoalsYear === null) return;
+    if (m.seasonGoalsYear >= this.state.year) return; // not yet a completed season
+    const snap = (p.seasonHistory || []).slice().reverse().find(h => h.year === m.seasonGoalsYear);
+    const stats = snap ? (snap.stats || {}) : {};
+    let metCount = 0, total = 0;
+    m.seasonGoals.forEach(g => {
+      if (g.team) {
+        // Playoff goal: credit it if the team made a deep run that year — best-effort via champions list.
+        const made = (this.state.champions || []).some(c => c.year === m.seasonGoalsYear) ? true : ((snap && snap.madePlayoffs) || false);
+        g.met = !!made; if (g.met) metCount++; total++;
+        return;
+      }
+      total++;
+      const v = stats[g.key] || 0;
+      g.met = v >= g.target;
+      if (g.met) metCount++;
+    });
+    // Reward / consequence.
+    if (total > 0) {
+      const ratio = metCount / total;
+      if (ratio >= 0.75) { m.fanApproval += 6; m.leadership += 4; m.gmFavor += 4; }
+      else if (ratio >= 0.4) { m.fanApproval += 1; m.gmFavor += 1; }
+      else { m.fanApproval -= 4; m.gmFavor -= 3; }
+      this._clampMeta(m);
+      this._lastGoalsResult = { year: m.seasonGoalsYear, met: metCount, total };
+    }
+  },
+  // Season-rollover hook (player NFL): grade prior goals, apply brand effect, then mint new goals.
+  _playerSeasonRolloverMeta() {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p || this.state.career.careerStage !== 'nfl' || p.retired) return;
+    this._gradePriorSeasonGoals(p);
+    this._applyBrandFocusSeasonEffect(p);
+    this._generateSeasonGoals(p);
+    this.saveGame();
+  },
+
+  // ---- #2 Depth-chart / position status ----
+  _userDepthStatus(p) {
+    if (!p || p.team === null || p.team === undefined) return null;
+    const team = this.state.teams[p.team];
+    if (!team) return null;
+    const samePos = team.roster.map(id => this.state.players[id])
+      .filter(x => x && !x.retired && x.position === p.position)
+      .sort((a, b) => b.rating - a.rating);
+    const idx = samePos.findIndex(x => x.id === p.id);
+    const depth = samePos.length;
+    let role, color;
+    if (idx <= 0) { role = 'Starter'; color = 'var(--success)'; }
+    else if (idx === 1) { role = 'Rotational'; color = 'var(--accent)'; }
+    else if (idx === 2) { role = 'Reserve'; color = 'var(--warning)'; }
+    else { role = 'Buried'; color = 'var(--danger)'; }
+    return { idx, depth, role, color, room: samePos };
+  },
+
+  // ============================================================
+  // ===== #4 CONTRACT PERFORMANCE INCENTIVES ===================
+  // ============================================================
+  // Opt-in during a contract negotiation: trade ~8% of guaranteed base AAV for performance bonuses
+  // worth up to ~20% if you hit them. Bonuses pay out at season's end into career earnings.
+  _buildContractIncentives(p, aav) {
+    const per = Math.round(aav * 0.09 / 50_000) * 50_000; // each bonus ~9% of AAV
+    const inc = [];
+    const proBowl = { key: '_proBowl', label: 'Pro Bowl selection', target: 1, unit: '', bonus: per };
+    switch (p.position) {
+      case 'QB': inc.push({ key: 'passingYards', label: '4,000+ passing yards', target: 4000, unit: 'yds', bonus: per }); inc.push({ key: 'passingTDs', label: '30+ passing TDs', target: 30, unit: 'TD', bonus: per }); break;
+      case 'RB': inc.push({ key: 'rushingYards', label: '1,200+ rushing yards', target: 1200, unit: 'yds', bonus: per }); inc.push({ key: 'rushingTDs', label: '10+ rushing TDs', target: 10, unit: 'TD', bonus: per }); break;
+      case 'WR': case 'TE': inc.push({ key: 'receivingYards', label: (p.position === 'TE' ? '850+' : '1,100+') + ' receiving yards', target: p.position === 'TE' ? 850 : 1100, unit: 'yds', bonus: per }); inc.push({ key: 'receivingTDs', label: '8+ receiving TDs', target: 8, unit: 'TD', bonus: per }); break;
+      case 'EDGE': case 'DT': inc.push({ key: 'sacks', label: '10+ sacks', target: 10, unit: 'sacks', bonus: per }); break;
+      case 'LB': inc.push({ key: 'tackles', label: '120+ tackles', target: 120, unit: 'tkl', bonus: per }); inc.push({ key: 'sacks', label: '6+ sacks', target: 6, unit: 'sacks', bonus: per }); break;
+      case 'CB': case 'S': inc.push({ key: 'interceptionsMade', label: '5+ interceptions', target: 5, unit: 'INT', bonus: per }); break;
+      default: break;
+    }
+    inc.push(proBowl);
+    return inc;
+  },
+  // Evaluate a finished season's incentives, bank the bonuses, return a summary.
+  _payoutContractIncentives(p) {
+    if (!p || !p.contract || !p.contract.incentives || !this.state.career || this.state.career.mode !== 'player') return null;
+    const ss = p.seasonStats || {};
+    const yr = this.state.year;
+    const madeProBowl = (p.awards || []).some(a => a.type === 'Pro Bowl' && a.year === yr);
+    let paid = 0; const hits = [];
+    p.contract.incentives.forEach(it => {
+      let met = false;
+      if (it.key === '_proBowl') met = madeProBowl;
+      else met = (ss[it.key] || 0) >= it.target;
+      if (met) { paid += it.bonus; hits.push(it.label); }
+    });
+    if (paid > 0) {
+      this.state.career.careerEarnings = (this.state.career.careerEarnings || 0) + Math.round(paid * 0.55); // post-tax
+      this._lastIncentivePayout = { year: yr, gross: paid, hits };
+    }
+    return paid;
+  },
+
+  // ============================================================
+  // ===== #8 MENTOR / PROTÉGÉ ARC ==============================
+  // ============================================================
+  // A respected player can take a younger teammate at their position under their wing. The protégé
+  // gets an extra development tick each offseason (reusing the coach dev-focus path) and your bond
+  // grows. One protégé at a time.
+  _isUserProtege(pid) {
+    const car = this.state && this.state.career;
+    return !!(car && car.mode === 'player' && car.protege && car.protege.id === pid);
+  },
+  _eligibleProteges(p) {
+    if (!p || p.team === null || p.team === undefined) return [];
+    const team = this.state.teams[p.team];
+    if (!team) return [];
+    return team.roster.map(id => this.state.players[id])
+      .filter(x => x && !x.retired && x.id !== p.id && x.position === p.position &&
+        (x.yearsInLeague || 0) <= 3 && x.rating < p.rating)
+      .sort((a, b) => (b.potential || b.rating) - (a.potential || a.rating));
+  },
+  setProtege(pid) {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    const young = this.state.players[pid];
+    if (!p || !young) { closeModal(); return; }
+    this.state.career.protege = { id: pid, sinceYear: this.state.year, name: young.name };
+    // Seed a bond.
+    if (!p._chemistry) p._chemistry = {};
+    const c = p._chemistry[pid] || { score: 0, name: young.name, pos: young.position };
+    c.score = Math.max(c.score || 0, 18);
+    p._chemistry[pid] = c;
+    this.saveGame();
+    this.currentView = 'mycareer'; this.render();
+  },
+  clearProtege() {
+    if (this.state.career) this.state.career.protege = null;
+    this.saveGame(); this.currentView = 'mycareer'; this.render();
+  },
+
+  // ============================================================
+  // ===== #9 IN-GAME DECISIONS (SIM vs PLAY) ===================
+  // ============================================================
+  // Before the user's weekly game, they choose to instantly Sim it or Play it. Playing presents two
+  // decision moments whose cumulative effect becomes a performance modifier applied to the user's
+  // own stat line that week (with a little risk and a small injury chance on aggressive choices).
+  _showGameDecisionChoice() {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p) { this._gameChoiceResolved = true; this.simWeek(); return; }
+    const nextWeek = this.state.week + 1;
+    const g = this.state.schedule.find(gg => gg.week === nextWeek && !gg.played && (gg.homeTeam === p.team || gg.awayTeam === p.team));
+    const oppId = g ? (g.homeTeam === p.team ? g.awayTeam : g.homeTeam) : null;
+    const opp = (oppId !== null && oppId !== undefined) ? this.state.teams[oppId] : null;
+    const oppName = opp ? opp.city + ' ' + opp.name : 'your opponent';
+    let html = '<div style="padding:18px">' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Week ' + nextWeek + ' vs <strong>' + oppName + '</strong>. Take the reps yourself, or let it sim?</div>' +
+      '<div style="display:flex;flex-direction:column;gap:10px">' +
+      '<button class="btn btn-primary" style="padding:12px" onclick="game._beginPlayGame()">🎮 Play this game</button>' +
+      '<button class="btn" style="padding:12px" onclick="game._resolveGameChoice(\'sim\')">⏩ Sim this game</button>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--text-muted);margin-top:10px">Playing lets you make a couple of in-game calls that shape your stat line — with a little risk.</div>' +
+      '</div>';
+    this.showModal('Game day · Week ' + nextWeek, html);
+  },
+  _resolveGameChoice(kind) {
+    this._gameChoiceResolved = true;
+    if (kind === 'sim') this._userGameModifier = null;
+    closeModal();
+    this.simWeek();
+  },
+  _beginPlayGame() {
+    this._playGameState = { mod: 1.0, risk: 0, injuryChance: 0, log: [] };
+    this._playGameMoment(0);
+  },
+  _PLAY_MOMENTS: [
+    {
+      q: 'Pregame mindset — how are you attacking this one?',
+      opts: [
+        { label: 'Aggressive — hunt the big play', mod: 0.13, risk: 0.18, inj: 0.05 },
+        { label: 'Balanced — take what they give', mod: 0.05, risk: 0.05, inj: 0.0 },
+        { label: 'Locked in — protect the ball and your body', mod: 0.02, risk: 0.0, inj: -0.03 }
+      ]
+    },
+    {
+      q: 'Fourth quarter, game on the line. The call comes your way.',
+      opts: [
+        { label: 'Put me on your back — I want it', mod: 0.12, risk: 0.20, inj: 0.06 },
+        { label: 'Trust the guys around me', mod: 0.04, risk: 0.04, inj: 0.0, chem: 4 },
+        { label: 'Play it safe, live to fight', mod: -0.01, risk: 0.0, inj: -0.02 }
+      ]
+    }
+  ],
+  _playGameMoment(i) {
+    const moments = this._PLAY_MOMENTS;
+    if (i >= moments.length) { this._finishPlayGame(); return; }
+    this._playMomentIdx = i;
+    const m = moments[i];
+    let html = '<div style="padding:18px">' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Decision ' + (i + 1) + ' of ' + moments.length + '</div>' +
+      '<div style="font-size:15px;font-weight:600;line-height:1.4;margin-bottom:14px">' + m.q + '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:8px">';
+    m.opts.forEach((o, j) => {
+      html += '<button class="btn" style="text-align:left;padding:11px 14px" onclick="game._chooseMoment(' + j + ')">' + o.label + '</button>';
+    });
+    html += '</div></div>';
+    this.showModal('Play the game · Decision ' + (i + 1), html, true);
+  },
+  _chooseMoment(j) {
+    const i = this._playMomentIdx || 0;
+    const o = this._PLAY_MOMENTS[i].opts[j];
+    const st = this._playGameState || { mod: 1.0, risk: 0, injuryChance: 0, log: [] };
+    // Risk roll: a backfire eats most of the upside.
+    let applied = o.mod;
+    let backfired = false;
+    if (o.risk > 0 && Math.random() < o.risk) { applied = -Math.abs(o.mod) * 0.7; backfired = true; }
+    st.mod += applied;
+    st.injuryChance += Math.max(0, o.inj || 0);
+    st.log.push({ label: o.label, backfired, applied });
+    // Locker-room bump for the "trust teammates" branch.
+    if (o.chem) {
+      const up = this.getUserPlayer && this.getUserPlayer();
+      if (up && up._chemistry) Object.keys(up._chemistry).forEach(pid => { const c = up._chemistry[pid]; if (c) c.score = Math.min(100, (c.score || 0) + o.chem * 0.1); });
+    }
+    this._playGameState = st;
+    this._playGameMoment(i + 1);
+  },
+  _finishPlayGame() {
+    const st = this._playGameState || { mod: 1.0, injuryChance: 0, log: [] };
+    this._userGameModifier = Math.max(0.7, Math.min(1.35, st.mod));
+    this._pendingUserGameInjuryChance = Math.min(0.18, st.injuryChance);
+    this._playGameState = null;
+    this._gameChoiceResolved = true;
+    closeModal();
+    this.simWeek();
+  },
+  // Scale the user's just-generated game production by the play modifier, keeping season totals in
+  // sync (we add the same delta to seasonStats). Then maybe apply a minor injury from aggressive play.
+  _applyUserGameModifier(p, gameStats) {
+    const mod = this._userGameModifier;
+    this._userGameModifier = null; // one-shot
+    if (!mod || mod === 1 || !gameStats) return;
+    const fields = ['passingYards', 'passingTDs', 'rushingYards', 'rushingTDs', 'receivingYards', 'receivingTDs', 'receptions', 'sacks', 'tackles', 'interceptionsMade', 'touchdowns'];
+    fields.forEach(f => {
+      if (typeof gameStats[f] === 'number' && gameStats[f] !== 0) {
+        const delta = Math.round(gameStats[f] * (mod - 1));
+        if (delta !== 0) {
+          gameStats[f] = Math.max(0, gameStats[f] + delta);
+          if (p.seasonStats && typeof p.seasonStats[f] === 'number') p.seasonStats[f] = Math.max(0, (p.seasonStats[f] || 0) + delta);
+        }
+      }
+    });
+    // Injury from aggressive play (applied AFTER this week's game, so it costs future weeks).
+    const ic = this._pendingUserGameInjuryChance || 0;
+    this._pendingUserGameInjuryChance = 0;
+    if (ic > 0 && !(p.injury && p.injury.weeksRemaining > 0) && Math.random() < ic) {
+      const weeks = 1 + Math.floor(Math.random() * 2);
+      p.injury = { type: 'tweak', severity: 'minor', weeksOut: weeks, weeksRemaining: weeks };
+      this._playInjuryNote = 'You pushed through contact and tweaked something — ' + weeks + ' week' + (weeks === 1 ? '' : 's') + ' out.';
+    }
+  },
+
   // A celebratory retirement-ceremony popup summarizing the player's enshrinements and final
   // all-time standing. Fires once, right after the user retires.
   _showRetirementCeremony(p, opts) {
@@ -7705,6 +8502,17 @@ let game = {
       need[pos] = Math.max(-5, qualityNeed * 1.45 + cappedDepthNeed * 0.6 + stockpilePenalty);
     });
 
+    // FRONT-OFFICE REQUEST (player career): if the user's 92+ star has an accepted, active request
+    // for the front office to target a position, nudge that position's need up for the user's CURRENT
+    // team only. This flows into the draft (cpuPick), the CPU trade market, and strategic FA signings.
+    const gmReq = this._activeGMRequest && this._activeGMRequest();
+    if (gmReq && gmReq.position && need[gmReq.position] !== undefined) {
+      const up = this.getUserPlayer && this.getUserPlayer();
+      if (up && up.team !== null && up.team !== undefined && team && team.id === up.team) {
+        need[gmReq.position] += 2.2; // "slight" but enough to reorder priorities
+      }
+    }
+
     return need;
   },
 
@@ -9082,8 +9890,22 @@ let game = {
         this.assignSeasonCeilings();
         this._ensureSeasonMandate();
         this._ensureSchemeInstall();
+        // Player career: grade last season's goals, apply the chosen off-field focus, and set this
+        // year's goals. Safe no-op outside player-NFL.
+        try { if (this.state.career && this.state.career.mode === 'player') this._playerSeasonRolloverMeta(); } catch (e) { /* defensive */ }
       } catch (e) {
         if (typeof console !== 'undefined' && console.warn) console.warn('Season-start maintenance skipped a step:', e);
+      }
+    }
+    // #9 IN-GAME DECISIONS (player NFL): before resolving the user's game, let them choose to sim it
+    // or play it (two decision moments → a performance modifier). The choice handlers re-call simWeek.
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'nfl'
+        && this.state.offseasonPhase === null && !this.state.playoffActive && !this._gameChoiceResolved) {
+      const _up = this.getUserPlayer && this.getUserPlayer();
+      const _nextWk = this.state.week + 1;
+      if (_up && !_up.retired && _up.team !== null && _up.team !== undefined && !(_up.injury && _up.injury.weeksRemaining > 0)
+          && _nextWk <= 18 && this.state.schedule.some(g => g.week === _nextWk && !g.played && (g.homeTeam === _up.team || g.awayTeam === _up.team))) {
+        try { this._showGameDecisionChoice(); return; } catch (e) { /* fall through to normal sim */ }
       }
     }
     this.state.week++;
@@ -9106,6 +9928,8 @@ let game = {
     this._coachWeeklyNarrative();
     if (Math.random() < 0.08) this.generateScandal();
     this.state.lastWeekRecap = this.buildWeekRecap(weekGames);
+    // Allow next week's sim/play choice to prompt again.
+    this._gameChoiceResolved = false;
     // Apply user player's weekly training boost (player career only). Done before clearing.
     this.applyPlayerTrainingBoost();
     // Clear weekly training picks now that the games are played. User must re-pick next week.
@@ -9867,6 +10691,11 @@ let game = {
         const gameStats = (g.playerStats && g.playerStats[userPlayer.id]) || null;
         // Did they play? gamesPlayed increments mark; absence of stats means DNP (injured or scratched)
         const didNotPlay = !gameStats || (userPlayer.injury && userPlayer.injury.weeksRemaining > 0);
+        // #9 PLAY-GAME MODIFIER — if the user chose to play this game and made decisions, scale their
+        // production (and inject any aggressive-play injury) before building the popup.
+        if (!didNotPlay && this._userGameModifier) {
+          try { this._applyUserGameModifier(userPlayer, gameStats); } catch (e) { /* defensive */ }
+        }
         // Snap %: rough proxy. NFL starter sees 90%+; backups see less. We don't model snaps directly,
         // so derive a reasonable estimate from the game stats vs team totals.
         const snapPct = didNotPlay ? 0 : this._estimateNflSnapPct(userPlayer, userTeam, gameStats);
@@ -10503,7 +11332,10 @@ let game = {
   // Maps surrounding chemistry to a small effective-rating bump for the user's production (0..+3).
   _userProductionRatingBump(up, team) {
     const f = this._userSurroundingChem(up, team);
-    return Math.round((f / 100) * 3);
+    let bump = Math.round((f / 100) * 3);
+    // A captain lifts the room — a small additional effective-OVR edge.
+    if (this._isCaptain(up)) bump += 1;
+    return Math.min(4, bump);
   },
 
   // Lazily build + cache a persistent college coaching staff for a school (HC + coordinators).
@@ -12407,6 +13239,14 @@ let game = {
         const grossThisYear = (p.contract && p.contract.aav) ? p.contract.aav : 0;
         const POST_TAX = 0.55;
         this.state.career.careerEarnings = (this.state.career.careerEarnings || 0) + Math.round(grossThisYear * POST_TAX);
+        // #4 — pay out any performance incentives hit this season (reads p.seasonStats + this year's awards).
+        try {
+          const inc = this._payoutContractIncentives(p);
+          if (inc > 0 && this._lastIncentivePayout) {
+            this.addHeadline({ type: 'contract', title: p.name + ' cashes in incentives',
+              body: 'Hit ' + this._lastIncentivePayout.hits.length + ' performance bonus' + (this._lastIncentivePayout.hits.length === 1 ? '' : 'es') + ' (' + this._lastIncentivePayout.hits.join(', ') + ') worth ' + formatMoney(this._lastIncentivePayout.gross) + '.' });
+          }
+        } catch (e) { /* defensive */ }
       }
       
       // Accumulate career stats
@@ -12500,8 +13340,12 @@ let game = {
         p.rating = Math.min(p.rating, Math.min(99, (p.potential || p.rating) + 1));
         p.archetype = detectArchetype(p.position, p.abilities);
         // COACH DEVELOPMENT FOCUS — a young player the user is personally developing gets an extra
-        // tick toward his ceiling on top of normal growth (applied within potential caps).
-        if (this._devFocusSet && this._devFocusSet.has(p.id) && p.age < aging.peakStart) {
+        // tick toward his ceiling on top of normal growth (applied within potential caps). The same
+        // path powers the PLAYER-career mentor/protégé arc (#8): a respected player accelerates a
+        // young teammate at their position.
+        const _coachDev = this._devFocusSet && this._devFocusSet.has(p.id);
+        const _protege = this._isUserProtege(p.id);
+        if ((_coachDev || _protege) && p.age < aging.peakStart) {
           const pot = p.potential || p.rating;
           if (p.rating < pot) {
             const r0 = p.rating;
@@ -12512,12 +13356,25 @@ let game = {
             });
             p.rating = Math.min(calculateOvrFromAbilities(p.position, p.abilities), Math.min(99, pot + 1));
             p._devGainThisYear = Math.max(0, p.rating - r0);
-            if (p._devGainThisYear > 0) {
+            if (_coachDev && p._devGainThisYear > 0) {
               this._pushInbox({
                 from: 'Position coaches', kind: 'staff',
                 subject: 'Development: ' + p.name + ' +' + p._devGainThisYear + ' OVR',
                 body: 'Your focus on ' + p.name + ' (' + p.position + ', now ' + p.rating + ' OVR, ceiling ' + (p.potential || p.rating) + ') is paying off \u2014 the extra reps are accelerating his climb toward his ceiling.'
               });
+            }
+            if (_protege) {
+              // Mentor arc: grow the bond and headline the protégé's jump.
+              const up = this.getUserPlayer && this.getUserPlayer();
+              if (up && up._chemistry) {
+                const c = up._chemistry[p.id] || { score: 0, name: p.name, pos: p.position };
+                c.score = Math.min(100, (c.score || 0) + 8);
+                up._chemistry[p.id] = c;
+              }
+              if (p._devGainThisYear > 0) {
+                this.addHeadline({ type: 'player', title: p.name + ' takes a step under ' + ((this.getUserPlayer && this.getUserPlayer() || {}).name || 'his mentor'),
+                  body: 'Your protégé climbs to ' + p.rating + ' OVR (+' + p._devGainThisYear + ') — the mentorship is paying off.' });
+              }
             }
           }
         }
@@ -12572,6 +13429,11 @@ let game = {
               if (p.age >= 33) reSignChance *= 0.92;
               if (p.age >= 36) reSignChance *= 0.78;
               if (p.rating >= 85 || wonBigAward) reSignChance = Math.max(reSignChance, 0.90);
+            }
+            // A friend the user's star has actively recruited is likelier to test the market to go
+            // play with them — trim the incumbent team's re-sign odds while the pitch window is open.
+            if (curTeam && !userManaged && this._isRecruitedFriendOpen && this._isRecruitedFriendOpen(p.id)) {
+              reSignChance *= 0.6;
             }
             if (curTeam && !userManaged && Math.random() < reSignChance) {
               p.contract = generateContract(p.position, p.rating, p.age, this.state.year, false);
@@ -13373,6 +14235,10 @@ let game = {
       });
     }
     
+    // RECRUITED-FRIEND SIGNINGS (player career): resolve any open pitches the user's player made
+    // before the generic market fill, so a recruited friend can land on the user's roster first.
+    try { this._resolveRecruitedFriendSignings(); } catch (e) { /* defensive */ }
+
     // For each team, fill gaps preferring: (a) FA vets if good match, (b) graduate rookies, (c) generated rookies
     this.state.teams.forEach(team => {
       const byPos = {};
@@ -13857,7 +14723,7 @@ let game = {
     if (data.draftClass.length) {
       data.draftClass.forEach(d => {
         html += row(
-          '<strong>' + d.name + '</strong> <span style="color:var(--text-muted)">' + d.pos + '</span>',
+          '<strong style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + d.id + ')">' + d.name + '</strong> <span style="color:var(--text-muted)">' + d.pos + '</span>',
           '<span style="color:var(--text-muted);font-size:11px;min-width:120px;text-align:right">Rd ' + d.round + ' · Pick ' + d.overall + '</span>',
           '<span style="min-width:36px;text-align:right">' + ovrChip(d.ovr) + '</span>'
         );
@@ -13871,7 +14737,7 @@ let game = {
     if (data.additions.length) {
       data.additions.forEach(a => {
         html += row(
-          '<strong>' + a.name + '</strong> <span style="color:var(--text-muted)">' + a.pos + '</span>',
+          '<strong style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + a.id + ')">' + a.name + '</strong> <span style="color:var(--text-muted)">' + a.pos + '</span>',
           '<span style="color:var(--success);font-size:11px;min-width:120px;text-align:right">Signed</span>',
           '<span style="min-width:36px;text-align:right">' + ovrChip(a.ovr) + '</span>'
         );
@@ -13885,7 +14751,7 @@ let game = {
     if (data.departures.length) {
       data.departures.forEach(d => {
         html += row(
-          '<strong>' + d.name + '</strong> <span style="color:var(--text-muted)">' + d.pos + '</span>',
+          '<strong style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + d.id + ')">' + d.name + '</strong> <span style="color:var(--text-muted)">' + d.pos + '</span>',
           '<span style="color:' + d.destColor + ';font-size:11px;min-width:150px;text-align:right">' + d.dest + '</span>',
           '<span style="min-width:36px;text-align:right">' + ovrChip(d.ovr) + '</span>'
         );
@@ -14878,9 +15744,13 @@ let game = {
       let tap = null;
       if (plNfl) { const tid = plNfl.id; tap = 'game.showPlayer(' + (/^\d+$/.test(String(tid)) ? tid : ("'" + tid + "'")) + ')'; }
       else if (plCollege) tap = "game.showProspectCard('" + pid + "')";
+      // Recruiting eligibility: a known, non-retired NFL player who isn't already on the user's team
+      // can be pitched to join in free agency. (College bonds and the user's own teammates can't.)
+      const recruitId = (plNfl && !plNfl.retired && plNfl.team !== userTeam && /^\d+$/.test(String(plNfl.id)))
+        ? plNfl.id : null;
       out.push({
         kind: 'player', id: pid, name, sub: pos, score, status, statusColor,
-        note: noteBits.join(' · '), faceSeed: pl ? pl.faceSeed : null, tap
+        note: noteBits.join(' · '), faceSeed: pl ? pl.faceSeed : null, tap, recruitId
       });
     });
     // ---- Coaches ----
@@ -14975,6 +15845,19 @@ let game = {
         html += '<div class="card"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted)">' +
           'Signing bonus ' + formatMoney(c.signingBonus || 0) + ', prorated over ' + (c.bonusProrationYears || 1) + ' year' + ((c.bonusProrationYears || 1) === 1 ? '' : 's') + '. ' +
           'Deal runs through the ' + expiresAfter + ' season.</div></div>';
+        // #4 — performance incentives baked into the deal.
+        if (Array.isArray(c.incentives) && c.incentives.length) {
+          html += '<div class="card"><div class="card-header"><div class="card-title">Performance incentives</div>' +
+            '<div class="card-meta">Paid at season\u2019s end if hit</div></div><table><thead><tr><th>Target</th><th class="text-right">Bonus</th></tr></thead><tbody>';
+          c.incentives.forEach(it => {
+            html += '<tr><td>' + it.label + '</td><td class="text-right mono-num">' + formatMoney(it.bonus) + '</td></tr>';
+          });
+          html += '</tbody></table></div>';
+          if (this._lastIncentivePayout && this._lastIncentivePayout.year === this.state.year - 1) {
+            html += '<div class="card" style="border-left:3px solid var(--success)"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted)">' +
+              'Last season you cashed <strong style="color:var(--success)">' + formatMoney(this._lastIncentivePayout.gross) + '</strong> in incentives (' + this._lastIncentivePayout.hits.join(', ') + ').</div></div>';
+          }
+        }
       }
     } else if (car && car.mode === 'coach') {
       const coach = this.getUserCoach();
@@ -15078,6 +15961,15 @@ let game = {
     }
 
     html += '<style>.rel-row{transition:background 0.12s}.rel-row.tappable{cursor:pointer}.rel-row.tappable:hover{background:var(--surface-2)}.rel-row.tappable:active{background:var(--border)}</style>';
+    // Recruiting context: only an active NFL player on a team can pitch friends to join them.
+    const upRec = this.getUserPlayer();
+    const canRecruit = !!(upRec && !upRec.retired && upRec.team !== null && upRec.team !== undefined &&
+      this.state.career.careerStage === 'nfl');
+    const userTeamObj = canRecruit ? this.state.teams[upRec.team] : null;
+    const recruitedReg = (this.state.career && this.state.career.recruitedFriends) || {};
+    if (canRecruit && userTeamObj) {
+      html += '<div style="font-size:11px;color:var(--text-muted);padding:0 16px 8px">As a member of the ' + userTeamObj.city + ' ' + userTeamObj.name + ', you can pitch a teammate-bond to join you in free agency — it boosts the odds they sign with you over the next two offseasons.</div>';
+    }
     html += '<div class="card"><div class="card-header"><div class="card-title">Closest bonds</div>' +
       '<div class="card-meta">' + list.length + ' relationship' + (list.length === 1 ? '' : 's') + '</div></div>' +
       '<div style="padding:8px 0">';
@@ -15094,6 +15986,16 @@ let game = {
       const tappable = !!r.tap;
       const onclick = tappable ? ' onclick="' + r.tap + '"' : '';
       const chevron = tappable ? '<span style="flex:none;color:var(--text-dim);font-size:16px;margin-left:2px">›</span>' : '';
+      // Recruiting control (NFL player friend, not on your team, you're active with a team).
+      let recruitCtrl = '';
+      if (canRecruit && userTeamObj && r.recruitId !== null && r.recruitId !== undefined) {
+        const open = recruitedReg[r.recruitId] && this.state.year <= recruitedReg[r.recruitId].untilYear;
+        if (open) {
+          recruitCtrl = '<div style="margin-top:6px"><span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--accent);border:1px solid var(--accent);border-radius:3px;padding:2px 7px">Recruiting · open through ' + recruitedReg[r.recruitId].untilYear + '</span></div>';
+        } else {
+          recruitCtrl = '<div style="margin-top:6px"><button class="btn btn-sm" style="font-size:11px;padding:4px 10px" onclick="event.stopPropagation();game._recruitFriendToTeam(' + r.recruitId + ')">Recruit to ' + userTeamObj.abbr + ' →</button></div>';
+        }
+      }
       html += '<div class="rel-row' + (tappable ? ' tappable' : '') + '" style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border)"' + onclick + '>' +
         face +
         '<div style="flex:1;min-width:0">' +
@@ -15106,6 +16008,7 @@ let game = {
             '<span style="color:var(--text-muted)">' + r.sub + (r.sub ? ' · ' : '') + r.note + '</span>' +
             '<span style="color:' + r.statusColor + ';font-weight:600;white-space:nowrap">' + r.status + '</span>' +
           '</div>' +
+          recruitCtrl +
         '</div>' +
         chevron +
         '</div>';
@@ -15271,6 +16174,25 @@ let game = {
         (p.year === 'Junior' && p.prospectGrade >= 85
           ? '<div style="font-size:12px;color:var(--success);margin-top:4px">Eligible to declare early next offseason</div>'
           : '') +
+        ((p.transferHistory && p.transferHistory.length > 0)
+          ? '<div style="font-size:12px;color:var(--text-muted);margin-top:6px">Portal: ' +
+            p.transferHistory.map(t => {
+              const f = COLLEGE_SCHOOLS.find(s => s.abbr === t.fromAbbr);
+              const d = COLLEGE_SCHOOLS.find(s => s.abbr === t.toAbbr);
+              return (f ? f.abbr : t.fromAbbr) + ' → ' + (d ? d.abbr : t.toAbbr) + ' (' + t.year + ')';
+            }).join(', ') + '</div>'
+          : '') +
+        '</div></div>';
+    }
+
+    // ===== TRANSFER PORTAL (active college player, not a graduating senior) =====
+    // Mirrors the NFL "Request a trade" flow. Seniors are excluded — they're about to graduate, the
+    // same realism rule the CPU portal uses.
+    if (stage === 'college' && p.year !== 'Senior') {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Transfer portal</div></div>' +
+        '<div style="padding:14px 16px">' +
+        '<div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">Want a fresh start — more playing time, a bigger program, or a better fit? Enter the portal and we\'ll show the schools recruiting you. You choose whether to commit.</div>' +
+        '<button class="btn" onclick="game.playerRequestCollegeTransfer()">Enter the transfer portal →</button>' +
         '</div></div>';
     }
 
@@ -15555,6 +16477,157 @@ let game = {
 
   // Subtle legacy widget for the player career page: current GOAT standing + the single nearest
   // milestone to chase. Intentionally compact — one line of standing, one line of "what's next".
+  // Cards for the player-life systems (#2 depth status, #7 captaincy/leadership, #6 brand, #10 goals).
+  _renderPlayerLifeCards(p, team) {
+    const m = this._careerMeta();
+    if (!m) return '';
+    let html = '';
+
+    // ── #2 Depth / position status ──
+    const ds = this._userDepthStatus(p);
+    if (ds) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">Depth chart status</div>' +
+        '<div class="card-meta">' + p.position + ' · ' + ds.depth + ' on roster</div></div>' +
+        '<div style="padding:14px 16px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px">' +
+        '<div><div style="font-size:18px;font-weight:800;color:' + ds.color + '">' + ds.role + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted)">You\'re #' + (ds.idx + 1) + ' at ' + p.position + ' by overall rating</div></div>' +
+        '</div>';
+      // The position room (top few by OVR), with the user highlighted.
+      html += '<div style="display:flex;flex-direction:column;gap:4px">';
+      ds.room.slice(0, 5).forEach((x, i) => {
+        const me = x.id === p.id;
+        html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 8px' + (me ? ';background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent)' : '') + '">' +
+          '<span' + (me ? ' style="font-weight:700;color:var(--accent)"' : (x.id === p.id ? '' : ' style="cursor:pointer;text-decoration:underline"')) + (me ? '' : ' onclick="game.showPlayer(' + x.id + ')"') + '>' + (i + 1) + '. ' + x.name + (me ? ' (you)' : '') + '</span>' +
+          '<span class="mono-num" style="color:var(--text-muted)">' + x.rating + ' OVR</span></div>';
+      });
+      html += '</div></div></div>';
+    }
+
+    // ── #7 Captaincy & leadership ──
+    const tier = this._leadershipTier(m.leadership);
+    const cap = this._isCaptain(p);
+    html += '<div class="card" style="border-left:3px solid ' + tier.color + '"><div class="card-header"><div class="card-title">Leadership</div>' +
+      (cap ? '<div class="card-meta" style="color:var(--accent);font-weight:700">TEAM CAPTAIN</div>' : '') + '</div>' +
+      '<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px">' +
+      '<div><div style="font-size:16px;font-weight:700">' + tier.label + '</div>' +
+      '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' +
+      (cap ? 'You wear the C — a small lift to the whole locker room and weight in contract talks.'
+           : 'Reach 35 leadership (and 82+ OVR, 3+ seasons) to earn the captaincy. Build it in press conferences and community work.') + '</div></div>' +
+      '<div style="text-align:right"><div style="font-size:10px;text-transform:uppercase;color:var(--text-muted)">Leadership</div><div style="font-size:24px;font-weight:800;color:' + tier.color + '">' + Math.round(m.leadership) + '</div></div>' +
+      '</div></div>';
+
+    // ── #6 Off-field & brand focus ──
+    html += '<div class="card"><div class="card-header"><div class="card-title">Off-field focus</div>' +
+      '<div class="card-meta">Fan approval ' + Math.round(m.fanApproval) + '%</div></div>' +
+      '<div style="padding:14px 16px">' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">How you spend your time away from the field. One focus per season — it pays off at season\'s end.</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">';
+    Object.entries(this.BRAND_FOCUSES).forEach(([key, b]) => {
+      const sel = m.brandFocus === key;
+      html += '<div onclick="game.setBrandFocus(\'' + key + '\')" style="cursor:pointer;border:1px solid ' + (sel ? 'var(--accent)' : 'var(--border)') + ';background:' + (sel ? 'var(--surface-2)' : 'transparent') + ';padding:10px 12px">' +
+        '<div style="font-size:13px;font-weight:700">' + b.icon + ' ' + b.label + (sel ? ' ✓' : '') + '</div>' +
+        '<div style="font-size:10px;color:var(--text-muted);margin-top:3px;line-height:1.4">' + b.blurb + '</div></div>';
+    });
+    html += '</div></div></div>';
+
+    // ── #10 Season goals ──
+    if (m.seasonGoals && m.seasonGoalsYear === this.state.year) {
+      const ss = p.seasonStats || {};
+      html += '<div class="card"><div class="card-header"><div class="card-title">Season goals · ' + this.state.year + '</div>' +
+        '<div class="card-meta">Set by the front office</div></div><div style="padding:12px 16px">';
+      m.seasonGoals.forEach(g => {
+        if (g.team) {
+          html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid var(--border)">' +
+            '<span>' + g.label + '</span><span style="color:var(--text-muted)">In progress</span></div>';
+          return;
+        }
+        const v = ss[g.key] || 0;
+        const pct = Math.max(0, Math.min(100, Math.round((v / Math.max(1, g.target)) * 100)));
+        const done = v >= g.target;
+        html += '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
+          '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">' +
+          '<span>' + g.label + (done ? ' <span style="color:var(--success);font-weight:700">✓</span>' : '') + '</span>' +
+          '<span class="mono-num" style="color:var(--text-muted)">' + (typeof v === 'number' ? Math.round(v).toLocaleString() : v) + ' / ' + g.target.toLocaleString() + ' ' + g.unit + '</span></div>' +
+          '<div style="height:5px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden"><div style="height:100%;width:' + pct + '%;background:' + (done ? 'var(--success)' : 'var(--accent)') + '"></div></div></div>';
+      });
+      html += '</div></div>';
+    }
+    // Last season's report card, if we just graded one.
+    if (this._lastGoalsResult && this._lastGoalsResult.year === this.state.year - 1) {
+      const r = this._lastGoalsResult;
+      html += '<div class="card" style="border-left:3px solid var(--text-muted)"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted)">' +
+        'Last season you hit <strong style="color:var(--text)">' + r.met + ' of ' + r.total + '</strong> goals.</div></div>';
+    }
+
+    // ── #8 Mentor / protégé ──
+    // Eligible only once you're an established vet (rating + tenure) — you mentor your position group.
+    if (p.rating >= 80 && (p.yearsInLeague || 0) >= 3) {
+      const car = this.state.career;
+      const prot = car.protege ? this.state.players[car.protege.id] : null;
+      html += '<div class="card"><div class="card-header"><div class="card-title">Mentorship</div></div><div style="padding:14px 16px">';
+      if (prot && !prot.retired && prot.team === p.team) {
+        const since = car.protege.sinceYear;
+        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
+          '<div style="width:38px;height:38px;flex:none">' + pixelFaceSVG(prot.faceSeed) + '</div>' +
+          '<div><div style="font-size:14px;font-weight:700">' + prot.name + ' · ' + prot.position + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted)">' + prot.rating + ' OVR · ceiling ' + (prot.potential || prot.rating) + ' · since ' + since + '</div></div></div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">You\'re accelerating ' + prot.name.split(' ').slice(-1)[0] + '\'s development each offseason, and your bond grows with it.</div>' +
+          '<button class="btn btn-sm" onclick="game.clearProtege()">End mentorship</button>';
+      } else {
+        if (prot && (prot.retired || prot.team !== p.team)) { /* stale; allow re-pick */ }
+        const elig = this._eligibleProteges(p).slice(0, 5);
+        if (elig.length === 0) {
+          html += '<div style="font-size:12px;color:var(--text-muted)">No young ' + p.position + 's on the roster to take under your wing right now.</div>';
+        } else {
+          html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Take a young teammate at your position under your wing — they\'ll develop faster and your bond will grow.</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px">';
+          elig.forEach(y => {
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--border);padding:8px 10px">' +
+              '<div><div style="font-size:13px;font-weight:600">' + y.name + '</div>' +
+              '<div style="font-size:10px;color:var(--text-muted)">' + y.rating + ' OVR · ceiling ' + (y.potential || y.rating) + ' · ' + (y.yearsInLeague || 0) + ' yr</div></div>' +
+              '<button class="btn btn-sm btn-primary" onclick="game.setProtege(' + y.id + ')">Mentor →</button></div>';
+          });
+          html += '</div>';
+        }
+      }
+      html += '</div></div>';
+    }
+
+    return html;
+  },
+
+  // Rough Hall-of-Fame probability (0-99) from accolades, production, longevity, and peak.
+  _estimateHofProbability(p) {
+    if (!p) return null;
+    const cs = p.careerStats || {};
+    const yrs = p.yearsInLeague || 0;
+    let score = 0;
+    (p.awards || []).forEach(a => {
+      const t = a.type || '';
+      if (t === 'MVP') score += 30;
+      else if (t === 'OPOY' || t === 'DPOY') score += 16;
+      else if (t === 'All-Pro 1st') score += 12;
+      else if (t === 'All-Pro 2nd') score += 6;
+      else if (t === 'OROY' || t === 'DROY') score += 5;
+      else if (t === 'Pro Bowl') score += 3;
+    });
+    // Production gates (primary stat lines).
+    score += Math.min(28, (cs.passingYards || 0) / 1800);
+    score += Math.min(24, (cs.rushingYards || 0) / 600);
+    score += Math.min(24, (cs.receivingYards || 0) / 600);
+    score += Math.min(18, (cs.touchdowns || 0) / 6);
+    score += Math.min(18, (cs.sacks || 0) / 6);
+    score += Math.min(16, (cs.interceptionsMade || 0) / 4);
+    // Longevity + peak.
+    score += Math.min(12, yrs * 1.2);
+    score += Math.max(0, (p.peakOvr || p.rating || 70) - 88) * 1.5;
+    // The 8-year eligibility floor caps early-career probability.
+    let pct = Math.max(0, Math.min(99, Math.round(score)));
+    if (yrs < 8) pct = Math.round(pct * (0.35 + (yrs / 8) * 0.65));
+    return pct;
+  },
+
   _renderLegacyWidget(p) {
     if (!p) return '';
     const score = this._playerLegacyScore(p);
@@ -15582,6 +16655,17 @@ let game = {
         const pct = Math.max(0, Math.min(100, Math.round(milestone.pct)));
         html += '<div style="margin-top:6px;height:5px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden">' +
           '<div style="height:100%;width:' + pct + '%;background:var(--accent)"></div></div>';
+      }
+    }
+    // HOF probability ladder — a live read on the player's Hall-of-Fame trajectory.
+    if (!p.hofInducted) {
+      const hofPct = this._estimateHofProbability(p);
+      if (hofPct !== null) {
+        const hc = hofPct >= 70 ? 'var(--success)' : hofPct >= 40 ? 'var(--accent)' : hofPct >= 15 ? 'var(--warning)' : 'var(--text-muted)';
+        html += '<div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">' +
+          '<span style="font-size:11px;color:var(--text-muted)">Hall of Fame probability</span>' +
+          '<span style="font-size:13px;font-weight:800;color:' + hc + '">' + hofPct + '%</span></div>' +
+          '<div style="margin-top:4px;height:5px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden"><div style="height:100%;width:' + hofPct + '%;background:' + hc + '"></div></div>';
       }
     }
     html += '</div></div>';
@@ -15681,7 +16765,9 @@ let game = {
     html += '<div class="my-team-hero">' +
       '<div class="my-team-hero-left">' +
       '<div class="player-face-large" style="width:88px;height:88px">' + pixelFaceSVG(p.faceSeed) + '</div>' +
-      '<div><div class="my-team-name">' + p.name + '</div>' +
+      '<div><div class="my-team-name">' + p.name +
+      ((stage === 'nfl' && this._isCaptain(p)) ? ' <span title="Team captain" style="font-size:12px;font-weight:800;background:var(--accent);color:#fff;border-radius:3px;padding:1px 6px;vertical-align:middle">C</span>' : '') +
+      '</div>' +
       '<div class="my-team-meta">#' + p.jerseyNumber + ' · ' + p.position + ' · Age ' + p.age + ' · ' +
       (team ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</span>' : 'Free Agent') + '</div>' +
       '<div style="margin-top:8px"><span class="rating ' + rc + '" style="font-size:14px;padding:4px 10px">OVR ' + p.rating + '</span></div></div></div>' +
@@ -15695,6 +16781,10 @@ let game = {
     // "one more sim" pull without being loud.
     html += this._renderLegacyWidget(p);
     html += this._renderCollegeHonorsCard();
+    // Player-life cards: depth status, leadership/captaincy, off-field brand, season goals.
+    if (stage === 'nfl' && !p.retired && team) {
+      html += this._renderPlayerLifeCards(p, team);
+    }
     
     // Injury banner — prominent if user player is currently hurt
     if (p.injury && p.injury.weeksRemaining > 0 && !p.retired) {
@@ -15728,6 +16818,27 @@ let game = {
         '<div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">Want a change of scenery? Ask your agent to gauge the market. We\'ll bring back a short list of teams with a real fit — you choose whether to force a move.</div>' +
         '<button class="btn" onclick="game.playerRequestTrade()">Request a trade →</button>' +
         '</div></div>';
+    }
+
+    // ===== MAKE A REQUEST TO THE GM (franchise cornerstone: 92+ OVR) =====
+    // A true difference-maker has the front office's ear. Ask them to prioritize a position and
+    // it nudges the team's draft, trades, and free agency — if they honor it.
+    if (stage === 'nfl' && !p.retired && team) {
+      if (p.rating >= 92) {
+        const active = this._activeGMRequest();
+        html += '<div class="card" style="border-left:3px solid var(--accent)"><div class="card-header"><div class="card-title">Make a request to the GM</div>' +
+          '<div class="card-meta">Cornerstone privilege · 92+ OVR</div></div>' +
+          '<div style="padding:14px 16px">';
+        if (active && active.position) {
+          const posLong = this.POSITION_FULL_NAMES[active.position] || active.position;
+          html += '<div style="font-size:13px;margin-bottom:10px">The front office is prioritizing <strong>' + active.position + '</strong> (' + posLong + ') through the ' + (active.expiresYear || active.year) + ' offseason — shaping the draft board, trade targets, and free-agent pursuits.</div>' +
+            '<button class="btn" onclick="game.playerRequestGMOpen()">Change your request →</button>';
+        } else {
+          html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">You\'ve earned a voice in the building. Ask the GM to make a position a priority — if they agree, it leans the draft, trades, and free agency that way. Whether they listen depends on your standing.</div>' +
+            '<button class="btn" onclick="game.playerRequestGMOpen()">Make a request to the GM →</button>';
+        }
+        html += '</div></div>';
+      }
     }
 
     // ===== VOLUNTARY RETIREMENT (active) =====
@@ -21270,12 +22381,15 @@ let game = {
     
     // AP poll snapshot
     if (this.state.apPoll && this.state.apPoll.length > 0) {
-      html += '<div class="card"><div class="card-header"><div class="card-title">Current AP Top 25</div></div>' +
+      const userRanked = this.state.apPoll.slice(0, 25).find(t => t.abbr === userSchool);
+      html += '<div class="card"><div class="card-header"><div class="card-title">Current AP Top 25</div>' +
+        (userRanked ? '<div class="card-meta" style="color:var(--accent)">You\'re #' + userRanked.rank + '</div>' : '') +
+        '</div>' +
         '<div style="padding:12px 16px;display:grid;grid-template-columns:repeat(5,1fr);gap:8px;font-size:12px">';
       this.state.apPoll.slice(0, 25).forEach(t => {
         const isUser = t.abbr === userSchool;
-        html += '<div onclick="game.showCollegeCard(\'' + t.abbr + '\')" style="cursor:pointer;display:flex;justify-content:space-between;padding:4px 6px' + (isUser ? ';background:var(--surface-2);font-weight:600' : '') + '">' +
-          '<span><span class="muted">#' + t.rank + '</span> ' + t.abbr + '</span>' +
+        html += '<div onclick="game.showCollegeCard(\'' + t.abbr + '\')" style="cursor:pointer;display:flex;justify-content:space-between;padding:4px 6px' + (isUser ? ';background:var(--surface-2);font-weight:700;box-shadow:inset 3px 0 0 var(--accent)' : '') + '">' +
+          '<span><span class="muted">#' + t.rank + '</span> <span' + (isUser ? ' style="color:var(--accent)"' : '') + '>' + t.abbr + '</span></span>' +
           '<span class="mono-num muted">' + t.record + '</span>' +
           '</div>';
       });
@@ -25752,10 +26866,26 @@ let game = {
         .slice(0, 25);
     }
     
+    // The user's college team (player career mode only) — used to highlight their row if ranked.
+    const userPlayer = this.getUserPlayer ? this.getUserPlayer() : null;
+    const userSchool = (this.state.career && this.state.career.mode === 'player' && userPlayer) ? userPlayer.school : null;
+    const userRankIdx = userSchool ? top25.findIndex(r => r.abbr === userSchool) : -1;
+
     let html = '<div class="page-header">' +
       '<div class="page-title">AP Top 25</div>' +
       '<div class="page-subtitle">' + subtitle + ' · ' + COLLEGE_SCHOOLS.length + ' programs tracked</div></div>';
-    
+
+    // If the user's team is ranked, surface a small banner up top so it's obvious at a glance.
+    if (userRankIdx >= 0) {
+      const um = COLLEGE_SCHOOLS.find(s => s.abbr === userSchool);
+      html += '<div class="card" style="border-left:3px solid var(--accent);margin-bottom:14px">' +
+        '<div style="padding:12px 16px;display:flex;align-items:center;gap:12px">' +
+        '<div style="width:4px;height:34px;background:' + (um ? um.primary : 'var(--accent)') + '"></div>' +
+        '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Your team is ranked</div>' +
+        '<div style="font-size:15px;font-weight:700;margin-top:2px">#' + (userRankIdx + 1) + ' ' + (um ? um.name : userSchool) + ' · ' + (top25[userRankIdx].record || '') + '</div>' +
+        '</div></div></div>';
+    }
+
     html += '<div class="card">' +
       '<table><thead><tr>' +
       '<th>RK</th><th>School</th><th class="text-center">CONF</th><th class="text-center">RECORD</th><th class="text-right">PRESTIGE</th>' +
@@ -25766,12 +26896,15 @@ let game = {
       const conf = schoolMeta ? COLLEGE_CONFERENCES[schoolMeta.conference].name : '—';
       const primary = schoolMeta ? schoolMeta.primary : '#888';
       const rankCls = i < 4 ? 'rating elite' : i < 10 ? 'rating great' : i < 25 ? 'rating good' : '';
-      html += '<tr onclick="game.showCollegeCard(\'' + rank.abbr + '\')" style="cursor:pointer">' +
+      const isUser = userSchool && rank.abbr === userSchool;
+      const rowStyle = 'cursor:pointer' + (isUser ? ';background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent)' : '');
+      html += '<tr onclick="game.showCollegeCard(\'' + rank.abbr + '\')" style="' + rowStyle + '">' +
         '<td class="mono-num"><span class="' + rankCls + '">' + (i + 1) + '</span></td>' +
         '<td><div style="display:flex;align-items:center;gap:8px">' +
           '<div style="width:4px;height:24px;background:' + primary + '"></div>' +
           '<div><strong>' + (schoolMeta ? schoolMeta.name : rank.name) + '</strong> ' +
-          '<span class="muted" style="font-size:11px">' + rank.abbr + '</span></div>' +
+          '<span class="muted" style="font-size:11px">' + rank.abbr + '</span>' +
+          (isUser ? ' <span style="font-size:10px;font-weight:700;color:var(--accent)">YOU</span>' : '') + '</div>' +
           '</div></td>' +
         '<td class="text-center" style="font-size:11px;color:var(--text-muted)">' + conf + '</td>' +
         '<td class="text-center mono-num">' + rank.record + '</td>' +
@@ -26666,6 +27799,9 @@ let game = {
     // Recent team record — winning teams hold on to stars
     const winPct = team.wins / Math.max(1, team.wins + team.losses);
     if (winPct >= 0.60) loyalty += 0.05;
+    // Captaincy / locker-room leadership — a team fights harder to keep a respected captain.
+    const _m = this.state && this.state.career && this.state.career.meta;
+    if (_m) { if (_m.captain) loyalty += 0.10; loyalty += Math.min(0.08, (_m.leadership || 0) / 1000); }
     return Math.max(0, Math.min(1, loyalty));
   },
   
@@ -26744,6 +27880,13 @@ let game = {
     try { this.showContractNegotiationLanding(); } catch (e) { /* defensive */ }
   },
   
+  _toggleIncentives() {
+    const neg = this.state.career && this.state.career.pendingContractNegotiation;
+    if (!neg) { closeModal(); return; }
+    neg.incentivesOptIn = !neg.incentivesOptIn;
+    this.showContractNegotiationLanding();
+  },
+
   // STEP 1: Landing — 3 paths
   showContractNegotiationLanding() {
     const neg = this.state.career.pendingContractNegotiation;
@@ -26766,6 +27909,14 @@ let game = {
     body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px;text-align:center">' +
       '<div style="font-size:10px;letter-spacing:0.6px;font-weight:600;color:var(--text-muted)">MARKET ESTIMATE</div>' +
       '<div style="font-size:18px;font-weight:700;margin-top:4px">' + formatMoney(neg.marketAAV) + '/yr · ' + neg.marketYears + ' years</div>' +
+      '</div>';
+
+    // PERFORMANCE INCENTIVES toggle (#4) — trade ~8% of guaranteed base for bonuses worth more if hit.
+    const incOn = !!neg.incentivesOptIn;
+    body += '<div onclick="game._toggleIncentives()" style="background:var(--surface);padding:12px 16px;margin-bottom:14px;border-left:4px solid ' + (incOn ? 'var(--success)' : 'var(--border)') + ';cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px">' +
+      '<div><div style="font-weight:700;font-size:13px">Performance incentives ' + (incOn ? '· ON' : '· OFF') + '</div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-top:3px">Shave ~8% off your base AAV in exchange for performance bonuses that pay out at season\'s end if you hit them. High floor vs high ceiling.</div></div>' +
+      '<div style="font-size:11px;font-weight:700;color:' + (incOn ? 'var(--success)' : 'var(--text-muted)') + ';white-space:nowrap">' + (incOn ? '✓ Built in' : 'Tap to add') + '</div>' +
       '</div>';
     
     // OPTION 1: Sign with current team
@@ -26962,7 +28113,13 @@ let game = {
     
     // Build a proper contract object using generateContract shape
     const years = acceptedOffer.years;
-    const aav = acceptedOffer.aav;
+    let aav = acceptedOffer.aav;
+    // #4 PERFORMANCE INCENTIVES — if opted in, trade ~8% of base AAV for season-end bonuses.
+    let incentives = null;
+    if (neg.incentivesOptIn) {
+      aav = Math.round(aav * 0.92 / 100_000) * 100_000;
+      incentives = this._buildContractIncentives(player, acceptedOffer.aav);
+    }
     const totalValue = aav * years;
     const bonusPct = 0.32;
     const signingBonus = Math.round(totalValue * bonusPct / 100_000) * 100_000;
@@ -26976,7 +28133,8 @@ let game = {
     player.contract = {
       years, yearsRemaining: years, aav, totalValue, signingBonus,
       bonusProrationYears: Math.min(5, years),
-      baseSalaries, signedYear: this.state.year, signedAtRating: player.rating
+      baseSalaries, signedYear: this.state.year, signedAtRating: player.rating,
+      incentives: incentives, incentivized: !!incentives
     };
     
     // Headline
@@ -27552,9 +28710,32 @@ let game = {
       if (standingsBlock) body += standingsBlock;
     }
     
+    // ── RIVALRY GAME (#5) — flag when the user just faced their career rival's team ──────────
+    if (perf && !perf._isCollege && this.state.career && this.state.career.rivalPlayerId !== undefined && this.state.career.rivalPlayerId !== null) {
+      const rival = this.state.players[this.state.career.rivalPlayerId];
+      if (rival && !rival.retired && rival.team !== null && rival.team !== undefined &&
+          (rival.team === perf._oppTeamId || (perf.opponentName && this.state.teams[rival.team] &&
+            (this.state.teams[rival.team].city + ' ' + this.state.teams[rival.team].name) === perf.opponentName))) {
+        const beat = perf.userIsWin;
+        body = '<div style="background:var(--surface-2);padding:10px 14px;margin-bottom:12px;border-left:4px solid var(--accent)">' +
+          '<div style="font-size:10px;letter-spacing:0.8px;font-weight:700;color:var(--accent)">RIVALRY GAME</div>' +
+          '<div style="font-size:13px;margin-top:2px">You faced your career rival <strong>' + rival.name + '</strong> today — ' +
+          (beat ? 'and got the better of him. The bragging rights are yours this week.' : 'and he got the last laugh. You\'ll get another shot.') + '</div></div>' + body;
+      }
+    }
+
+    // ── PRESS CONFERENCE (#1) — fire at most once every 4 games played. When armed, the Continue
+    //    button opens the presser instead of just closing. ───────────────────────────────────────
+    // Aggressive-play injury note (#9), if one was just incurred.
+    if (this._playInjuryNote) {
+      body += '<div style="background:var(--surface);padding:12px 14px;margin-bottom:12px;border-left:3px solid var(--danger);font-size:12px;color:var(--danger)">' + this._playInjuryNote + '</div>';
+      this._playInjuryNote = null;
+    }
+    const pressArmed = (!perf._isCollege) ? this._tickPressCadence(perf) : false;
+    const continueAction = pressArmed ? 'game._openPressConference()' : 'closeModal()';
     // Footer — Continue button (the Enter key also triggers this).
     body += '<div style="text-align:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
-      '<button id="recapContinueBtn" onclick="closeModal()" class="btn btn-primary">Continue →</button>' +
+      '<button id="recapContinueBtn" onclick="' + continueAction + '" class="btn btn-primary">' + (pressArmed ? 'Meet the press →' : 'Continue →') + '</button>' +
       '</div>';
     
     this.showModal(userPlayer.name + ' · Week ' + (perf.week || '?') + ' performance', body);
