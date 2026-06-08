@@ -1851,6 +1851,7 @@ let game = {
         if (modalOpen) {
           const cont = document.getElementById('recapContinueBtn');
           if (cont) { e.preventDefault(); closeModal(); }
+          else if (this._awaitingGameChoice) { e.preventDefault(); this._resolveGameChoice('sim'); }
           return;
         }
         const simBtn = document.getElementById('simBtn');
@@ -4823,15 +4824,20 @@ let game = {
       '</div>' +
       '<div style="font-size:11px;color:var(--text-muted);margin-top:10px">Playing lets you make a couple of in-game calls that shape your stat line — with a little risk.</div>' +
       '</div>';
+    // Lets the global Enter handler resolve this prompt as "Sim this game" (preserving the old
+    // tap-Enter-to-advance flow now that a Play option exists).
+    this._awaitingGameChoice = true;
     this.showModal('Game day · Week ' + nextWeek, html);
   },
   _resolveGameChoice(kind) {
+    this._awaitingGameChoice = false;
     this._gameChoiceResolved = true;
     if (kind === 'sim') this._userGameModifier = null;
     closeModal();
     this.simWeek();
   },
   _beginPlayGame() {
+    this._awaitingGameChoice = false;
     this._playGameState = { mod: 1.0, risk: 0, injuryChance: 0, log: [] };
     this._playGameMoment(0);
   },
@@ -8252,10 +8258,41 @@ let game = {
     this.renderDraft();
   },
 
+  // Where the user's prospect is "expected" to come off the board, by final grade. Mirrors the
+  // midpoints of the projection bands shown on the college career page. Used only to gauge how far
+  // the user has slid — never as a hard guarantee.
+  _userExpectedOverall(grade) {
+    if (grade >= 95) return 3;    // Top 5
+    if (grade >= 90) return 10;   // Top 15
+    if (grade >= 85) return 24;   // Round 1
+    if (grade >= 78) return 45;   // Rounds 1-2
+    if (grade >= 72) return 75;   // Rounds 2-3
+    if (grade >= 65) return 120;  // Rounds 3-5
+    if (grade >= 58) return 175;  // Rounds 5-7
+    return 224;
+  },
+
   cpuPick(teamId) {
     if (!this.state.draftPool || this.state.draftPool.length === 0) return;
     const team = this.state.teams[teamId];
     if (!team) return;
+    // USER SLIDE RESISTANCE (player career only) — there's no hard floor: a prospect can still slip a
+    // bit past where their grade projects, which keeps the draft honest. But the further the USER's own
+    // prospect falls past their expected slot, the more likely the team on the clock steps in and takes
+    // them — a soft, rising hazard, so deep R1-grade→R6 slides become vanishingly unlikely while small
+    // slides still happen. This touches ONLY the user's player; CPU prospects slide freely, preserving
+    // the late-round gem finds that make dynasty/coach drafting fun.
+    if (this.state.draftIsAnnual && this.state.career && this.state.career.mode === 'player') {
+      const up = this.state.draftPool.find(p => p.isUserControlled);
+      if (up) {
+        const expected = this._userExpectedOverall(up.collegeGrade || up.prospectGrade || 0);
+        const over = (this.state.draftCurrentIdx + 1) - expected;
+        if (over > 0) {
+          const stopChance = Math.min(0.92, over * 0.04);
+          if (Math.random() < stopChance) { this.applyPick(teamId, up); return; }
+        }
+      }
+    }
     const need = this.calculateTeamNeeds(team);
     const isAnnual = this.state.draftIsAnnual;
     
@@ -8833,6 +8870,9 @@ let game = {
         fromProspectId: prospect.id
       };
       this.state.players.push(newPlayer);
+      // Carry the user flag through conversion so the draft celebration fires and the draft floor
+      // can locate the user's prospect on the board.
+      if (prospect.isUserControlled) newPlayer.isUserControlled = true;
       this.updateCollegeHOF(prospect, newPlayer.id);
       draftPool.push(newPlayer);
     });
@@ -26677,7 +26717,7 @@ let game = {
     // Tiny grade nudge — sum across all completed interviews affects prospectGrade by ±2 total
     const totalCompleted = userPlayer.teamInterviews.filter(i => i.completed);
     const avgInterest = totalCompleted.reduce((s, i) => s + i.finalInterest, 0) / Math.max(1, totalCompleted.length);
-    const gradeBump = ((avgInterest - 50) / 50) * 1.5; // ±1.5 max
+    const gradeBump = ((avgInterest - 50) / 50) * 3; // ±3 max — acing your interviews meaningfully lifts stock
     if (userPlayer._interviewBump !== undefined) {
       userPlayer.prospectGrade -= userPlayer._interviewBump; // undo previous bump
     }
@@ -29763,6 +29803,8 @@ function closeModal() {
     return;
   }
   document.getElementById('modal').classList.remove('show');
+  // A dismissed game-day prompt should no longer respond to Enter.
+  if (typeof game !== 'undefined') game._awaitingGameChoice = false;
   // Clear modal history so next open starts fresh
   if (typeof game !== 'undefined') game._modalHistory = [];
   // If a weekly recap was just dismissed, chain into any forced agent popups (NIL offers /
