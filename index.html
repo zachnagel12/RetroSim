@@ -3528,21 +3528,38 @@ let game = {
   },
   _generateRecruitOffers(grade, stars, position, period) {
     const byPrestige = COLLEGE_SCHOOLS.slice().sort((a, b) => b.prestige - a.prestige);
+    // ELIGIBILITY LADDER (schools sorted by prestige, highest first). Star tier sets how elite a
+    // program can be before it's out of reach: 5★ unlock everyone, 4★ all but the top 8, etc.
     const excludeTopN = stars >= 5 ? 0 : stars === 4 ? 8 : stars === 3 ? 20 : stars === 2 ? 42 : stars === 1 ? 68 : 88;
     const eligible = byPrestige.filter((s, i) => i >= excludeTopN);
-    const scored = eligible.map(s => {
-      const fit = grade - s.prestige;
-      let interest = 52 + fit * 1.5 + (Math.random() - 0.5) * 16 + period * 3;
-      interest = Math.max(20, Math.min(99, interest));
-      return { abbr: s.abbr, prestige: s.prestige, interest: Math.round(interest) };
-    });
-    scored.sort((a, b) => b.interest - a.interest);
     const count = stars >= 5 ? 12 : stars === 4 ? 10 : stars === 3 ? 8 : stars === 2 ? 6 : stars === 1 ? 4 : 2;
-    const list = scored.slice(0, count);
-    list.forEach(o => {
-      o.walkOn = (stars === 0);
-      o.pitch = this._recruitPitch(o.prestige, grade, position);
+
+    // WHO OFFERS — select by PRESTIGE (best schools first), not by interest, so the board lines up
+    // with the star rating: a 5★ board is dominated by blue bloods, a 4★ by strong programs, and so
+    // on down the ladder. A little jitter varies the exact set between recruits without ever letting
+    // a mid-tier program leapfrog an elite school that a high-star recruit should be hearing from.
+    const chosen = eligible
+      .map(s => ({ s, key: s.prestige + (Math.random() - 0.5) * 6 }))
+      .sort((a, b) => b.key - a.key)
+      .slice(0, count)
+      .map(r => r.s);
+
+    // INTEREST — how badly each program wants this recruit. Elite recruits draw strong interest
+    // everywhere (the star bonus), and programs where they'd start right away push even harder.
+    const list = chosen.map(s => {
+      const fit = grade - s.prestige; // positive = recruit projects above the program's level
+      let interest = 58 + stars * 4 + fit * 1.1 + period * 3 + (Math.random() - 0.5) * 10;
+      interest = Math.max(35, Math.min(99, interest));
+      return {
+        abbr: s.abbr,
+        prestige: s.prestige,
+        interest: Math.round(interest),
+        walkOn: (stars === 0),
+        pitch: this._recruitPitch(s.prestige, grade, position)
+      };
     });
+    // Best (most prestigious) offers sit at the top of the board.
+    list.sort((a, b) => b.prestige - a.prestige);
     return list;
   },
   advanceHSRecruiting() {
@@ -3565,7 +3582,7 @@ let game = {
           body: (COLLEGE_SCHOOLS.find(s => s.abbr === add.abbr) || {}).name + ' enters the mix after a strong senior season.' });
       }
     }
-    r.offers.sort((a, b) => b.interest - a.interest);
+    r.offers.sort((a, b) => b.prestige - a.prestige);
     this.saveGame();
     this.render();
   },
