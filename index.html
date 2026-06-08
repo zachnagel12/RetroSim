@@ -2338,7 +2338,7 @@ let game = {
     
     document.getElementById('content').innerHTML = '<div class="welcome" style="max-width:680px">' +
       '<h1 class="welcome-title">Create your prospect</h1>' +
-      '<p class="welcome-subtitle">Stage 2 · build your recruit, then pick a school from your offers</p>' +
+      '<p class="welcome-subtitle">Stage 2 · build your recruit, then play your senior season</p>' +
       '<div style="background:var(--surface);border:1px solid var(--border);padding:20px;text-align:left;margin-top:16px">' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Your name</label>' +
       '<input id="playerNameInput" type="text" value="' + suggestedName + '" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)" onchange="game._playerCreationSuggestedName=this.value"></div>' +
@@ -2348,7 +2348,6 @@ let game = {
       '<div><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">State</label>' +
       '<input id="playerStateInput" type="text" value="' + (this._playerCreationState || '') + '" placeholder="e.g. CA" maxlength="14" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)" onchange="game._playerCreationState=this.value"></div>' +
       '</div>' +
-      '<div style="font-size:11px;color:var(--text-muted);margin:-8px 0 14px;line-height:1.5">You\u2019ll suit up for <strong>{your city} High</strong> as a senior team captain. Leave blank to have one picked for you.</div>' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Position</label>' +
       '<select id="playerPositionInput" onchange="game._selectPlayerPosition(this.value)" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' + posOpts + '</select></div>' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Playing style</label>' +
@@ -3541,9 +3540,8 @@ let game = {
     };
     this.state.career.hsTeammates = null; // cleared from any prior playthrough
     this.currentView = 'hsrecruit';
-    this.addHeadline({ type: 'college', title: name + ' takes over at ' + teamName,
-      body: (st > 0 ? st + '\u2605 ' : 'Unranked ') + position + ' and team captain opens his senior year. ' +
-        offerQueue.length + ' program' + (offerQueue.length === 1 ? '' : 's') + ' already circling. Projected grade: ' + g.toFixed(1) + '.' });
+    this.addHeadline({ type: 'college', title: name + ' set to start at ' + teamName,
+      body: (st > 0 ? st + '\u2605 ' : 'Unranked ') + position + ', team captain. Projected grade ' + g.toFixed(1) + '.' });
   },
 
   // Build a 10-game senior schedule of {City} High opponents (distinct from the user's town).
@@ -3771,9 +3769,16 @@ let game = {
     // The user is a blue-chip — wins most of the time, often in a blowout.
     const winChance = 0.74 + Math.min(0.18, r.stars * 0.035);
     const won = Math.random() < winChance;
+    // Build realistic-magnitude scores, then snap each to a valid football total (no 1s, 2s, 4s, 5s).
+    const winBase = 28 + Math.floor(Math.random() * 25);  // 28-52
+    const loseBase = Math.floor(Math.random() * 25);       // 0-24
     let sf, sa;
-    if (won) { sf = 28 + Math.floor(Math.random() * 28); sa = Math.max(0, Math.floor(Math.random() * 21)); if (sa >= sf) sa = sf - 7; }
-    else { sa = 24 + Math.floor(Math.random() * 17); sf = Math.max(0, sa - (3 + Math.floor(Math.random() * 11))); }
+    if (won) { sf = this.roundToValidScore(winBase); sa = this.roundToValidScore(loseBase); }
+    else { sa = this.roundToValidScore(winBase); sf = this.roundToValidScore(loseBase); }
+    // Guarantee the right side wins and there's no tie.
+    if (won && sf <= sa) sf = this.roundToValidScore(sa + 7);
+    if (!won && sa <= sf) sa = this.roundToValidScore(sf + 7);
+    if (sf === sa) { if (won) sf = this.roundToValidScore(sf + 3); else sa = this.roundToValidScore(sa + 3); }
     if (game) { game.played = true; game.won = won; game.sf = sf; game.sa = sa; }
     if (won) r.record.w++; else r.record.l++;
 
@@ -4224,14 +4229,14 @@ let game = {
       '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">OUTLOOK</div><div style="font-size:12px;font-weight:600;margin-top:6px">' + projText(r.grade) + '</div></div>' +
       '</div>' +
       '<div style="padding:0 16px 14px"><div style="background:var(--bg);border:1px solid var(--border);padding:10px 12px;font-size:12px;line-height:1.5">' +
-      '<span style="color:var(--accent);font-weight:700">\u00A9 Team captain.</span> You wear the C for ' + r.teamName + ' \u2014 the unquestioned leader of this team. ' +
-      (weeksDone > 0 ? 'Season line so far: <strong>' + this._hsSeasonStatLine(r.seasonStats, r.position) + '</strong>.' : 'Sim your first game to get the season rolling.') +
+      '<span style="color:var(--accent);font-weight:700">\u00A9 Captain \u00b7 ' + r.teamName + '</span>' +
+      (weeksDone > 0 ? '  Season line: <strong>' + this._hsSeasonStatLine(r.seasonStats, r.position) + '</strong>.' : '  Sim your first game to get started.') +
       '</div></div></div>';
 
     if (signingDay) {
-      html += '<div class="card" style="border-left:3px solid var(--warning)"><div style="padding:12px 16px;font-size:12px;color:var(--warning);font-weight:600;line-height:1.5">National Signing Day \u2014 your senior season is in the books at ' + r.record.w + '\u2013' + r.record.l + '. Choose where to sign below.</div></div>';
+      html += '<div class="card" style="border-left:3px solid var(--warning)"><div style="padding:12px 16px;font-size:12px;color:var(--warning);font-weight:600;line-height:1.5">Signing Day \u2014 your senior season finished ' + r.record.w + '\u2013' + r.record.l + '. Pick where you sign below.</div></div>';
     } else {
-      html += '<div class="card"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted);line-height:1.5">Press <strong>Sim</strong> (or Enter) to play your next game. Offers will roll in through the season as popups \u2014 you commit on <strong>Signing Day</strong>, once all 10 games are played.</div></div>';
+      html += '<div class="card"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted);line-height:1.5">Press <strong>Sim</strong> to play your next game. Offers come in during the season; you sign on <strong>Signing Day</strong> after week 10.</div></div>';
     }
 
     // Schedule
