@@ -1945,6 +1945,8 @@ let game = {
         } else {
           tag.textContent = userPlayer.name + ' · Player';
         }
+      } else if (stage === 'highschool' && this.state.career.hsRecruit) {
+        tag.textContent = this.state.career.hsRecruit.name + ' · HS Senior recruit';
       } else {
         tag.textContent = 'Player Career';
       }
@@ -1982,6 +1984,10 @@ let game = {
             '<div class="nav-item" data-view="training"><span class="nav-icon">⏱</span><span>Training</span></div>' +
             '<div class="nav-item" data-view="myteam"><span class="nav-icon">▦</span><span>My Team</span></div>' +
             '<div class="nav-item" data-view="agencies"><span class="nav-icon">✎</span><span>Agencies</span></div>';
+        } else if (stage === 'highschool') {
+          playerCareerNav.innerHTML =
+            '<div class="nav-title">Your Career</div>' +
+            '<div class="nav-item" data-view="hsrecruit"><span class="nav-icon">★</span><span>Recruitment</span></div>';
         } else {
           playerCareerNav.innerHTML =
             '<div class="nav-title">Your Career</div>' +
@@ -2409,12 +2415,12 @@ let game = {
       }
     }
     
-    // Stash the pending recruit info; the offer page will use it when the user picks a school.
-    // The archetype the user picked at creation determines which abilities will be boosted
-    // when they transition to the NFL.
+    // Stash the recruit and start the career IN-GAME as a high-school senior — the recruitment
+    // offer board is now a playable stage (commit happens in-game, after fielding/advancing offers).
     const archetype = this._playerCreationArchetype;
-    this.pendingRecruit = { name, position, stars, grade, archetype, offers: offers.map(s => s.abbr) };
-    this.renderOffersPage();
+    this.playerCareerParams = { name, position, grade, stars, archetype, school: null };
+    this.pendingMode = 'default';
+    this.startLeague(null);
   },
   
   // Render the offer-list page. User clicks a school card to commit.
@@ -2567,7 +2573,8 @@ let game = {
     
     // Player career mode: install the user's prospect into the college pool at their chosen school.
     if (this.pendingCareerMode === 'player' && this.playerCareerParams) {
-      this.installUserPlayer(this.playerCareerParams);
+      if (this.playerCareerParams.school) this.installUserPlayer(this.playerCareerParams);
+      else this.installUserHSRecruit(this.playerCareerParams); // new default: start as a HS senior recruit
       this.playerCareerParams = null;
     }
     
@@ -3482,6 +3489,458 @@ let game = {
       title: name + ' enrolls at ' + schoolName,
       body: starTag + 'Freshman ' + position + ' begins their college career. Initial scout grade: ' + prospect.prospectGrade.toFixed(1) + '.'
     });
+    // Forced decision before the very first college season: redshirt or play right away.
+    this.state.career.pendingRedshirtChoice = true;
+  },
+
+  // ============================================================
+  // ===== HIGH-SCHOOL SENIOR STAGE + RECRUITMENT (#1, #7) ======
+  // ============================================================
+  // The user begins in-game as a HS senior recruit. They field offers (each pitching something
+  // different), can advance their recruiting timeline as offers evolve, then commit and enroll.
+  installUserHSRecruit({ name, position, grade, stars, archetype }) {
+    this.state.career.entityType = 'player';
+    this.state.career.careerStage = 'highschool';
+    const g = Math.round(grade * 10) / 10;
+    const st = (stars !== undefined && stars !== null) ? stars : 0;
+    this.state.career.hsRecruit = {
+      name, position, archetype: archetype || null, grade: g, stars: st,
+      period: 0, committedSchool: null,
+      offers: this._generateRecruitOffers(g, st, position, 0)
+    };
+    this.currentView = 'hsrecruit';
+    this.addHeadline({ type: 'college', title: name + ' enters their senior year of high school',
+      body: (st > 0 ? st + '\u2605 ' : 'Walk-on ') + position + ' weighing ' + this.state.career.hsRecruit.offers.length + ' offer' + (this.state.career.hsRecruit.offers.length === 1 ? '' : 's') + '. Initial grade: ' + g.toFixed(1) + '.' });
+  },
+
+  _recruitPitch(prestige, grade, position) {
+    const gap = grade - prestige;
+    let role;
+    if (gap >= 4) role = 'You\u2019d start from day one and be the face of the program.';
+    else if (gap >= -4) role = 'Compete for early playing time in a strong program.';
+    else role = 'Develop behind a deep roster on a national contender.';
+    let flavor;
+    if (prestige >= 90) flavor = 'Elite NIL collective and a real path to the Playoff.';
+    else if (prestige >= 80) flavor = 'A proven pro pipeline at ' + position + '.';
+    else if (prestige >= 70) flavor = 'Develop and win in a competitive conference.';
+    else flavor = 'Be the cornerstone of a rising program.';
+    return role + ' ' + flavor;
+  },
+  _generateRecruitOffers(grade, stars, position, period) {
+    const byPrestige = COLLEGE_SCHOOLS.slice().sort((a, b) => b.prestige - a.prestige);
+    const excludeTopN = stars >= 5 ? 0 : stars === 4 ? 8 : stars === 3 ? 20 : stars === 2 ? 42 : stars === 1 ? 68 : 88;
+    const eligible = byPrestige.filter((s, i) => i >= excludeTopN);
+    const scored = eligible.map(s => {
+      const fit = grade - s.prestige;
+      let interest = 52 + fit * 1.5 + (Math.random() - 0.5) * 16 + period * 3;
+      interest = Math.max(20, Math.min(99, interest));
+      return { abbr: s.abbr, prestige: s.prestige, interest: Math.round(interest) };
+    });
+    scored.sort((a, b) => b.interest - a.interest);
+    const count = stars >= 5 ? 12 : stars === 4 ? 10 : stars === 3 ? 8 : stars === 2 ? 6 : stars === 1 ? 4 : 2;
+    const list = scored.slice(0, count);
+    list.forEach(o => {
+      o.walkOn = (stars === 0);
+      o.pitch = this._recruitPitch(o.prestige, grade, position);
+    });
+    return list;
+  },
+  advanceHSRecruiting() {
+    const r = this.state.career && this.state.career.hsRecruit;
+    if (!r || r.committedSchool) return;
+    if (r.period >= 4) { this.render(); return; } // signing day — must commit
+    r.period++;
+    // A strong senior year nudges the grade and warms every program; a new suitor may emerge.
+    r.grade = Math.round(Math.min(99, Math.max(40, r.grade + (Math.random() * 1.8 - 0.3))) * 10) / 10;
+    r.offers.forEach(o => { o.interest = Math.min(99, o.interest + Math.round(2 + Math.random() * 6)); o.pitch = this._recruitPitch(o.prestige, r.grade, r.position); });
+    // Chance a higher-tier program (not already offering) jumps in as the user's stock rises.
+    if (Math.random() < 0.7) {
+      const have = new Set(r.offers.map(o => o.abbr));
+      const fresh = this._generateRecruitOffers(r.grade, r.stars, r.position, r.period)
+        .filter(o => !have.has(o.abbr));
+      if (fresh.length) {
+        const add = fresh[0];
+        r.offers.push(add);
+        this.addHeadline({ type: 'college', title: r.name + ' picks up a new offer',
+          body: (COLLEGE_SCHOOLS.find(s => s.abbr === add.abbr) || {}).name + ' enters the mix after a strong senior season.' });
+      }
+    }
+    r.offers.sort((a, b) => b.interest - a.interest);
+    this.saveGame();
+    this.render();
+  },
+  commitToSchoolInGame(abbr) {
+    const r = this.state.career && this.state.career.hsRecruit;
+    if (!r) return;
+    const offer = r.offers.find(o => o.abbr === abbr);
+    if (!offer) return;
+    const wasWalkOn = r.stars === 0;
+    // Enroll as a college freshman (this sets careerStage='college' + the redshirt prompt).
+    this.installUserPlayer({ name: r.name, position: r.position, school: abbr, grade: r.grade, stars: r.stars, archetype: r.archetype });
+    const up = this.getUserPlayer && this.getUserPlayer();
+    if (up && wasWalkOn) { up.walkOn = true; up.recruitStars = 0; }
+    this.state.career.hsRecruit = null;
+    this.currentView = 'mycareer';
+    this.saveGame();
+    this.render();
+  },
+
+  // ============================================================
+  // ===== FALL CAMP POSITION BATTLE (#2) + TRAINING (#3) =======
+  // ============================================================
+  // Best returning competitor at the user's position & school (graduating seniors don't count).
+  _campCompetition(p) {
+    const pool = (this.state.collegeProspects || []).filter(x => x.school === p.school && x.position === p.position && x.id !== p.id && x.year !== 'Senior');
+    return pool.length ? Math.max.apply(null, pool.map(x => x.prospectGrade)) : 0;
+  },
+  showPreseasonCollegePopup() {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p) return;
+    if (!this._preseasonDraft) this._preseasonDraft = { approach: null, focus: null };
+    const d = this._preseasonDraft;
+    const schoolMeta = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+    const schoolName = schoolMeta ? schoolMeta.name : p.school;
+    const comp = this._campCompetition(p);
+    const gap = p.prospectGrade - comp;
+    const outlook = gap >= 3 ? 'You\u2019re the clear favorite for the job.' : gap >= -2 ? 'It\u2019s a real competition — the job is up for grabs.' : 'You\u2019re the underdog in this room.';
+    const btn = (sel, val, label) => '<button class="btn ' + (d[sel] === val ? 'btn-primary' : '') + '" style="flex:1;min-width:0" onclick="game._setPreseasonChoice(\'' + sel + '\',\'' + val + '\')">' + label + '</button>';
+    let body = '<div style="background:linear-gradient(135deg,var(--accent),var(--accent-dim,#444));color:#fff;padding:18px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">FALL CAMP · ' + this.state.year + '</div>' +
+      '<div style="font-size:19px;font-weight:800;margin-top:6px">' + schoolName + ' \u00b7 ' + p.year + ' ' + p.position + '</div>' +
+      '</div>';
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:12px">' +
+      '<div style="font-weight:700;font-size:13px;margin-bottom:4px">Position battle</div>' +
+      '<div class="muted" style="font-size:12px;line-height:1.5;margin-bottom:10px">' + outlook + ' How do you attack camp?</div>' +
+      '<div style="display:flex;gap:8px">' + btn('approach', 'compete', 'Compete for the job') + btn('approach', 'system', 'Master the playbook') + '</div>' +
+      '<div class="muted" style="font-size:10px;margin-top:6px">Competing maximizes your shot at starting; mastering the playbook trades a little of that for development.</div>' +
+      '</div>';
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-weight:700;font-size:13px;margin-bottom:4px">Training focus</div>' +
+      '<div class="muted" style="font-size:12px;line-height:1.5;margin-bottom:10px">Where do you put your offseason work? It steers how your grade climbs this year.</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' + btn('focus', 'explosiveness', 'Explosiveness') + btn('focus', 'strength', 'Strength') + btn('focus', 'technique', 'Technique') + btn('focus', 'film', 'Film study') + '</div>' +
+      '</div>';
+    const ready = d.approach && d.focus;
+    body += '<button class="btn btn-success" style="width:100%" ' + (ready ? '' : 'disabled') + ' onclick="game.resolvePreseasonCollege()">' + (ready ? 'Start the season' : 'Pick an approach and a focus') + '</button>';
+    this.showModal('Fall camp \u00b7 ' + this.state.year, body);
+  },
+  _setPreseasonChoice(sel, val) {
+    if (!this._preseasonDraft) this._preseasonDraft = { approach: null, focus: null };
+    this._preseasonDraft[sel] = val;
+    this.showPreseasonCollegePopup();
+  },
+  resolvePreseasonCollege() {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    const d = this._preseasonDraft || {};
+    if (!p || !d.approach || !d.focus) return;
+    // Resolve the position battle.
+    const comp = this._campCompetition(p);
+    const gap = p.prospectGrade - comp;
+    let starterChance = 0.5 + gap * 0.06 + (d.approach === 'compete' ? 0.18 : -0.05);
+    starterChance = Math.max(0.05, Math.min(0.96, starterChance));
+    const roll = Math.random();
+    let status;
+    if (gap >= 4) status = 'starter';
+    else if (roll < starterChance) status = 'starter';
+    else if (roll < starterChance + 0.34) status = 'rotational';
+    else status = 'reserve';
+    this.state.career.campStatus = status;
+    this.state.career.campYear = this.state.year;
+    this.state.career.trainingFocus = d.focus;
+    this._preseasonDraft = null;
+    // #10 CAPTAINCY — upperclassmen who lead their position room get voted captain.
+    let captainNote = '';
+    if (this._collegeCaptainEligible(p)) {
+      if (!this.state.career.collegeCaptain) {
+        captainNote = 'Your teammates voted you a team captain.';
+        this.addHeadline({ type: 'college', title: p.name + ' named a team captain', body: 'Voted a captain by teammates heading into the season.' });
+      }
+      this.state.career.collegeCaptain = true;
+    } else {
+      this.state.career.collegeCaptain = false;
+    }
+    // #7 WALK-ON → SCHOLARSHIP: a walk-on who earns a real role gets put on scholarship.
+    let scholarshipNote = '';
+    if ((p.walkOn || p.recruitStars === 0) && !this.state.career.scholarshipEarned && (status === 'starter' || status === 'rotational')) {
+      p.walkOn = false; p.recruitStars = Math.max(1, p.recruitStars || 0);
+      this.state.career.scholarshipEarned = true;
+      scholarshipNote = 'You walked on — and you\u2019ve earned it. The staff just put you on a full scholarship.';
+      this.addHeadline({ type: 'college', title: p.name + ' earns a scholarship', body: 'The former walk-on played their way onto scholarship after winning a role in fall camp.' });
+    }
+    closeModal();
+    // Outcome popup.
+    const roleLabel = status === 'starter' ? 'STARTER' : status === 'rotational' ? 'ROTATIONAL' : 'RESERVE';
+    const roleColor = status === 'starter' ? 'var(--success)' : status === 'rotational' ? 'var(--accent)' : 'var(--text-muted)';
+    let ob = '<div style="background:var(--surface);padding:20px;text-align:center;border-left:4px solid ' + roleColor + '">' +
+      '<div style="font-size:11px;color:var(--text-muted);letter-spacing:1px;font-weight:600">CAMP RESULT</div>' +
+      '<div style="font-size:24px;font-weight:800;margin-top:6px;color:' + roleColor + '">' + roleLabel + '</div>' +
+      '<div class="muted" style="font-size:12px;margin-top:6px">' + (status === 'starter' ? 'You won the job. The offense runs through you this fall.' : status === 'rotational' ? 'You\u2019re in the rotation — earn more with production.' : 'You\u2019re behind on the depth chart. Keep grinding.') + '</div>' +
+      (scholarshipNote ? '<div style="font-size:12px;color:var(--success);font-weight:600;margin-top:10px">\uD83C\uDF93 ' + scholarshipNote + '</div>' : '') +
+      (captainNote ? '<div style="font-size:12px;color:var(--accent);font-weight:600;margin-top:8px">\u00A9 ' + captainNote + '</div>' : '') +
+      '</div>' +
+      '<button class="btn btn-success" style="width:100%;margin-top:14px" onclick="closeModal()">Let\u2019s play</button>';
+    this.showModal('Fall camp result', ob);
+    this.saveGame();
+    this.render();
+  },
+  _trainingFocusDelta() {
+    const f = this.state.career && this.state.career.trainingFocus;
+    if (!f) return 0;
+    // Film study is steadier (handled as a flat bump too); all focuses give a real developmental edge.
+    return 1.3;
+  },
+
+  // #9 — after a college game the user chose to play, roll any aggressive-play injury and clear the
+  // one-shot modifier (the production scaling itself is folded into generateUserGameStatLine).
+  _applyUserCollegeGameModifier(perf) {
+    const ic = this._pendingUserGameInjuryChance || 0;
+    this._userGameModifier = null;
+    this._pendingUserGameInjuryChance = 0;
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (p && ic > 0 && !(p.injury && p.injury.weeksRemaining > 0) && Math.random() < ic) {
+      const weeks = 1 + Math.floor(Math.random() * 2);
+      p.injury = { type: 'tweak', severity: 'minor', weeksOut: weeks, weeksRemaining: weeks };
+      this._playInjuryNote = 'You pushed through contact and tweaked something — ' + weeks + ' week' + (weeks === 1 ? '' : 's') + ' out.';
+    }
+  },
+
+  // ===== #4 LIVE DRAFT-STOCK TRACKER =====
+  _draftProjLabel(g) {
+    if (g >= 95) return 'Top 5 pick'; if (g >= 90) return 'Top 15 pick'; if (g >= 85) return 'Round 1';
+    if (g >= 78) return 'Rounds 1-2'; if (g >= 72) return 'Rounds 2-3'; if (g >= 65) return 'Rounds 3-5';
+    if (g >= 58) return 'Rounds 5-7'; return 'Undrafted projection';
+  },
+  _draftStockCard(p) {
+    const g = p.prospectGrade;
+    const proj = this._draftProjLabel(g);
+    const hist = (p.seasonHistory || []).filter(h => !h.redshirt);
+    const prev = hist.length ? hist[hist.length - 1].prospectGrade : null;
+    let trend = '', trendColor = 'var(--text-muted)';
+    if (prev !== null && prev !== undefined) {
+      const d = g - prev;
+      if (d >= 1) { trend = '\u25B2 rising (+' + d.toFixed(1) + ' since last season)'; trendColor = 'var(--success)'; }
+      else if (d <= -1) { trend = '\u25BC slipping (' + d.toFixed(1) + ' since last season)'; trendColor = 'var(--danger)'; }
+      else { trend = '\u25AC holding steady'; trendColor = 'var(--text-muted)'; }
+    }
+    let blurb;
+    const hs = p._heismanStats;
+    if (hs && hs.games > 0) {
+      const ypg = ((hs.passYds || 0) + (hs.rushYds || 0) + (hs.recYds || 0)) / hs.games;
+      if (g >= 88) blurb = 'Scouts see a blue-chip, franchise-caliber prospect. Keep the tape clean and the ceiling is the top of the board.';
+      else if (ypg >= 90 || g >= 78) blurb = 'A productive, ascending prospect. Strong tape against quality opponents keeps the climb going.';
+      else if (g >= 65) blurb = 'On the Day 3 radar. A standout season \u2014 or a big postseason \u2014 could move you up boards.';
+      else blurb = 'Off the board for now. Production and a strong pre-draft process are the path up.';
+    } else {
+      blurb = 'The board resets each fall. Produce on Saturdays and the projection follows.';
+    }
+    return '<div class="card"><div class="card-header"><div class="card-title">Draft stock</div><div class="card-meta">Updated live</div></div>' +
+      '<div style="padding:16px">' +
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">' +
+      '<div style="font-size:20px;font-weight:800">' + proj + '</div>' +
+      '<div style="font-size:12px;font-weight:600;color:' + trendColor + '">' + trend + '</div></div>' +
+      '<div class="muted" style="font-size:12px;line-height:1.55">' + blurb + '</div>' +
+      '</div></div>';
+  },
+
+  // ===== #6 COLLEGE NIL MARKETPLACE =====
+  _maybeOfferCollegeNIL(p, stats, oppLabel) {
+    if (!this.state.career || this.state.career.mode !== 'player') return;
+    if (this.state.career.pendingNilOffer) return;
+    const gamesPlayed = (p._heismanStats && p._heismanStats.games) || 0;
+    const lastWk = this.state.career._lastNilGame || -99;
+    if (gamesPlayed - lastWk < 3) return;
+    const big = (p.position === 'QB') ? (stats.passingYards >= 300 || stats.passingTDs >= 3)
+      : (p.position === 'RB') ? ((stats.rushingYards + stats.receivingYards) >= 130 || (stats.rushingTDs + stats.receivingTDs) >= 2)
+      : (p.position === 'WR' || p.position === 'TE') ? (stats.receivingYards >= 120 || stats.receivingTDs >= 2)
+      : ((stats.tackles >= 10) || stats.sacks >= 2 || stats.interceptionsMade >= 1);
+    if (!big) return;
+    const schoolMeta = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+    const prestige = schoolMeta ? (this.state.collegePrestige && this.state.collegePrestige[p.school] !== undefined ? this.state.collegePrestige[p.school] : schoolMeta.prestige) : 70;
+    const base = 5000 + (prestige - 60) * 1800 + Math.max(0, p.prospectGrade - 70) * 2600;
+    const amount = Math.max(2500, Math.round((base * (0.7 + Math.random() * 0.8)) / 500) * 500);
+    const brands = ['a local dealership', 'a regional sportswear label', 'an energy-drink brand', 'a wireless carrier', 'a burger chain', 'a trading-card company', 'a campus apparel collective'];
+    const brand = brands[Math.floor(Math.random() * brands.length)];
+    this.state.career._lastNilGame = gamesPlayed;
+    this.state.career.pendingNilOffer = { brand, amount, vsLabel: oppLabel || '', year: this.state.year };
+  },
+  showCollegeNilOfferPopup() {
+    const o = this.state.career && this.state.career.pendingNilOffer;
+    if (!o) return;
+    let body = '<div style="background:linear-gradient(135deg,var(--success),var(--success));color:#fff;padding:18px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.9">NIL OFFER</div>' +
+      '<div style="font-size:22px;font-weight:800;margin-top:6px">' + formatMoney(o.amount) + '</div></div>';
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px;font-size:13px;line-height:1.55">' +
+      'After your performance' + (o.vsLabel ? ' against ' + o.vsLabel : '') + ', <strong>' + o.brand + '</strong> wants a name, image &amp; likeness deal worth <strong>' + formatMoney(o.amount) + '</strong>. It banks toward your career earnings.</div>';
+    body += '<div style="display:flex;gap:8px">' +
+      '<button class="btn" style="flex:1" onclick="game.resolveCollegeNil(false)">Pass</button>' +
+      '<button class="btn btn-success" style="flex:1" onclick="game.resolveCollegeNil(true)">Sign the deal</button>' +
+      '</div>';
+    this.showModal('NIL deal on the table', body);
+  },
+  resolveCollegeNil(accept) {
+    const o = this.state.career && this.state.career.pendingNilOffer;
+    if (!o) { closeModal(); return; }
+    if (accept) {
+      if (!this.state.career.nilDeals) this.state.career.nilDeals = [];
+      this.state.career.nilDeals.push({ brand: o.brand, amount: o.amount, year: o.year });
+      this.state.career.nilEarnings = (this.state.career.nilEarnings || 0) + o.amount;
+      this.state.career.careerEarnings = (this.state.career.careerEarnings || 0) + Math.round(o.amount * 0.9);
+      const up = this.getUserPlayer();
+      this.addHeadline({ type: 'college', title: (up ? up.name : 'You') + ' signs an NIL deal', body: 'Inks a ' + formatMoney(o.amount) + ' NIL agreement with ' + o.brand + '.' });
+    }
+    this.state.career.pendingNilOffer = null;
+    closeModal();
+    this.saveGame();
+    this.render();
+  },
+  _collegeNilCard() {
+    const c = this.state.career;
+    const deals = (c && c.nilDeals) || [];
+    if (!deals.length && !(c && c.nilEarnings)) return '';
+    let html = '<div class="card"><div class="card-header"><div class="card-title">NIL portfolio</div>' +
+      '<div class="card-meta">' + formatMoney(c.nilEarnings || 0) + ' lifetime</div></div><div style="padding:8px 0">';
+    deals.slice(-6).reverse().forEach(d => {
+      html += '<div style="padding:8px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;font-size:12px">' +
+        '<span>' + d.year + ' \u00b7 ' + d.brand + '</span><span class="mono-num" style="color:var(--success)">' + formatMoney(d.amount) + '</span></div>';
+    });
+    html += '</div></div>';
+    return html;
+  },
+
+  // ===== #5 COACHING CAROUSEL & SCHEME FIT =====
+  _maybeCoachingCarousel(p) {
+    if (!p || !this.state.career) return;
+    if (Math.random() > 0.22) return;
+    const schoolMeta = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+    const schoolName = schoolMeta ? schoolMeta.name : p.school;
+    const fired = Math.random() < 0.5;
+    const roll = Math.random();
+    const fit = roll < 0.30 ? 'great' : roll < 0.72 ? 'neutral' : 'poor';
+    this.state.career.pendingCoachingEvent = { schoolName, fired, fit };
+  },
+  showCoachingCarouselPopup() {
+    const e = this.state.career && this.state.career.pendingCoachingEvent;
+    if (!e) return;
+    const fitText = e.fit === 'great' ? 'Their scheme is a perfect fit for your game \u2014 expect an extra developmental boost this year.'
+      : e.fit === 'poor' ? 'Their scheme doesn\u2019t suit your strengths \u2014 it may slow your development this year.'
+      : 'It\u2019s a neutral fit for your skill set.';
+    const fitColor = e.fit === 'great' ? 'var(--success)' : e.fit === 'poor' ? 'var(--danger)' : 'var(--text-muted)';
+    let body = '<div style="background:var(--surface);padding:18px;text-align:center;margin-bottom:14px;border-left:4px solid var(--warning)">' +
+      '<div style="font-size:11px;letter-spacing:1px;color:var(--text-muted);font-weight:600">COACHING CHANGE</div>' +
+      '<div style="font-size:17px;font-weight:800;margin-top:6px">' + e.schoolName + ' ' + (e.fired ? 'fires its head coach' : 'loses its head coach') + '</div>' +
+      '<div class="muted" style="font-size:12px;margin-top:4px">' + (e.fired ? 'A disappointing run ends the staff\u2019s tenure.' : 'A bigger program poached your head coach.') + '</div>' +
+      '</div>';
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px;font-size:13px;line-height:1.55;border-left:3px solid ' + fitColor + '">A new staff arrives with a new scheme. ' + fitText + '</div>';
+    body += '<div style="display:flex;gap:8px">' +
+      '<button class="btn" style="flex:1" onclick="game.resolveCoachingCarousel(\'transfer\')">Enter the portal</button>' +
+      '<button class="btn btn-success" style="flex:1" onclick="game.resolveCoachingCarousel(\'stay\')">Stay and adapt</button>' +
+      '</div>';
+    this.showModal('Coaching carousel', body);
+  },
+  resolveCoachingCarousel(kind) {
+    const e = this.state.career && this.state.career.pendingCoachingEvent;
+    if (!e) { closeModal(); return; }
+    this.state.career.schemeFit = e.fit === 'great' ? 1.4 : e.fit === 'poor' ? -1.6 : 0;
+    this.state.career.schemeFitLabel = e.fit;
+    this.state.career.pendingCoachingEvent = null;
+    if (kind === 'transfer') {
+      this.playerRequestCollegeTransfer();
+    } else {
+      closeModal();
+      this.saveGame();
+      this.render();
+    }
+  },
+  _schemeFitDelta() {
+    return (this.state.career && this.state.career.schemeFit) || 0;
+  },
+
+  // ===== #10 COLLEGE CAPTAINCY & LEADERSHIP =====
+  _collegeCaptainEligible(p) {
+    if (!p || (p.year !== 'Junior' && p.year !== 'Senior')) return false;
+    const room = (this.state.collegeProspects || []).filter(x => x.school === p.school && x.position === p.position);
+    const better = room.filter(x => x.id !== p.id && x.prospectGrade > p.prospectGrade).length;
+    return p.prospectGrade >= 72 && better === 0;
+  },
+  _collegeCaptainCard() {
+    if (!this.state.career || !this.state.career.collegeCaptain) return '';
+    return '<div class="card" style="border-left:3px solid var(--accent)"><div style="padding:12px 16px;font-size:12px">' +
+      '<strong style="color:var(--accent)">Team captain.</strong> You wear the C this season \u2014 a voice in the locker room. Your leadership lifts those around you (and follows you to the pros).</div></div>';
+  },
+
+  // ===== #8 BOWL / PLAYOFF OPT-OUT =====
+  showBowlOptOutPopup() {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p) return;
+    let body = '<div style="background:var(--surface);padding:18px;text-align:center;margin-bottom:14px;border-left:4px solid var(--accent)">' +
+      '<div style="font-size:11px;letter-spacing:1px;color:var(--text-muted);font-weight:600">POSTSEASON DECISION</div>' +
+      '<div style="font-size:17px;font-weight:800;margin-top:6px">Play the postseason, or protect your stock?</div></div>';
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px;font-size:13px;line-height:1.55">' +
+      'You\u2019re draft-bound. Playing the bowl/playoff means more tape and a shot at a signature, stock-moving moment \u2014 but also injury risk. Plenty of prospects sit out to protect their draft position.</div>';
+    body += '<div style="display:flex;gap:8px">' +
+      '<button class="btn" style="flex:1" onclick="game.resolveBowlOptOut(true)">Sit out (protect stock)</button>' +
+      '<button class="btn btn-success" style="flex:1" onclick="game.resolveBowlOptOut(false)">Play the postseason</button>' +
+      '</div>';
+    this.showModal('Postseason decision', body);
+  },
+  resolveBowlOptOut(optOut) {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (p && optOut) {
+      p.bowlOptOut = true;
+      this.addHeadline({ type: 'college', title: p.name + ' will sit out the postseason', body: 'Opts out of the bowl/playoff to protect their draft stock.' });
+    }
+    if (this.state.career) this.state.career.bowlOptOutDecided = this.state.year;
+    closeModal();
+    this.saveGame();
+    this.render();
+  },
+
+  // The high-school recruitment hub — the main view while careerStage === 'highschool'.
+  renderHSRecruitmentHub() {
+    const r = this.state.career && this.state.career.hsRecruit;
+    if (!r) { this.currentView = 'mycareer'; document.getElementById('content').innerHTML = ''; return; }
+    const periods = ['Summer camps', 'Senior season (early)', 'Senior season (late)', 'All-Star game', 'National Signing Day'];
+    const periodName = periods[Math.min(r.period, periods.length - 1)];
+    const signingDay = r.period >= periods.length - 1;
+    const starLabel = '\u2605'.repeat(r.stars) + '<span style="opacity:0.3">' + '\u2605'.repeat(5 - r.stars) + '</span>';
+    const projText = (g) => g >= 90 ? 'Top 15 pick ceiling' : g >= 85 ? 'Round 1 ceiling' : g >= 78 ? 'Day 2 ceiling' : g >= 68 ? 'Day 3 ceiling' : 'Developmental prospect';
+
+    let html = '<div class="page-header"><div class="page-title">Recruitment \u00b7 ' + r.name + '</div>' +
+      '<div class="page-subtitle">' + r.position + ' \u00b7 <span style="color:#d4a017;letter-spacing:2px">' + starLabel + '</span> \u00b7 senior year of high school</div></div>';
+
+    // Status strip
+    html += '<div class="card"><div style="padding:14px 16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;text-align:center">' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">RECRUITING PERIOD</div><div style="font-size:15px;font-weight:700;margin-top:4px">' + periodName + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">PROSPECT GRADE</div><div style="font-size:20px;font-weight:700;margin-top:2px">' + r.grade.toFixed(1) + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">OUTLOOK</div><div style="font-size:13px;font-weight:600;margin-top:5px">' + projText(r.grade) + '</div></div>' +
+      '</div></div>';
+
+    if (signingDay) {
+      html += '<div class="card" style="border-left:3px solid var(--warning)"><div style="padding:12px 16px;font-size:12px;color:var(--warning);font-weight:600">It\u2019s National Signing Day. Choose where to sign.</div></div>';
+    } else {
+      html += '<div class="card"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted);line-height:1.5">Commit whenever you\u2019re ready, or use <strong>Advance recruiting</strong> to keep playing out your senior year — your stock can rise and new offers can come in before Signing Day.</div></div>';
+    }
+
+    // Offers
+    html += '<div class="card"><div class="card-header"><div class="card-title">Scholarship offers</div><div class="card-meta">' + r.offers.length + ' program' + (r.offers.length === 1 ? '' : 's') + ' \u00b7 click to commit</div></div><div style="padding:8px 0">';
+    r.offers.forEach(o => {
+      const school = COLLEGE_SCHOOLS.find(s => s.abbr === o.abbr);
+      if (!school) return;
+      const conf = COLLEGE_CONFERENCES[school.conference] ? COLLEGE_CONFERENCES[school.conference].name : school.conference;
+      const intColor = o.interest >= 80 ? 'var(--success)' : o.interest >= 55 ? 'var(--accent)' : 'var(--text-muted)';
+      html += '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">' +
+        '<div style="width:4px;height:46px;background:' + school.primary + ';flex:none"></div>' +
+        '<div style="flex:1;min-width:0">' +
+        '<div style="font-weight:700;font-size:14px">' + school.name + (o.walkOn ? ' <span style="font-size:10px;color:var(--text-muted);border:1px solid var(--border);padding:1px 5px;border-radius:3px">WALK-ON</span>' : '') + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + conf + ' \u00b7 prestige ' + school.prestige + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.4">' + o.pitch + '</div>' +
+        '<div style="font-size:10px;margin-top:5px;color:' + intColor + ';font-weight:600">INTEREST ' + o.interest + '%</div>' +
+        '</div>' +
+        '<button class="btn btn-sm btn-primary" style="flex:none" onclick="game.commitToSchoolInGame(\'' + o.abbr + '\')">Commit \u2192</button>' +
+        '</div>';
+    });
+    html += '</div></div>';
+
+    document.getElementById('content').innerHTML = html;
   },
 
   // Each year of college, capture the user's season stat line + grade evolution + awards.
@@ -3493,7 +3952,13 @@ let game = {
     const p = this.getUserPlayer();
     if (!p || !this.state.career || this.state.career.careerStage !== 'college') return;
     if (!p.seasonHistory) p.seasonHistory = [];
-    
+    // REDSHIRT season — record a no-stats redshirt year and clear the weekly accumulator.
+    if (p.redshirting) {
+      p.seasonHistory.push({ games: 0, year: this.state.year, classYear: 'Redshirt ' + p.year, prospectGrade: p.prospectGrade, redshirt: true });
+      p._heismanStats = null;
+      p._currentSeasonGameLog = [];
+      return;
+    }
     // Pull from the real accumulated weekly stats. Fall back to zeros if for some reason
     // the player didn't accumulate any (shouldn't happen, but defensive).
     const hs = p._heismanStats || {};
@@ -4811,23 +5276,33 @@ let game = {
   _showGameDecisionChoice() {
     const p = this.getUserPlayer && this.getUserPlayer();
     if (!p) { this._gameChoiceResolved = true; this.simWeek(); return; }
-    const nextWeek = this.state.week + 1;
-    const g = this.state.schedule.find(gg => gg.week === nextWeek && !gg.played && (gg.homeTeam === p.team || gg.awayTeam === p.team));
-    const oppId = g ? (g.homeTeam === p.team ? g.awayTeam : g.homeTeam) : null;
-    const opp = (oppId !== null && oppId !== undefined) ? this.state.teams[oppId] : null;
-    const oppName = opp ? opp.city + ' ' + opp.name : 'your opponent';
+    const isCollege = this.state.career && this.state.career.careerStage === 'college';
+    let oppName, label;
+    if (isCollege) {
+      const nextWk = (this.state.collegeWeek || 0) + 1;
+      const g = (this.state.collegeSchedule || []).find(gg => gg.week === nextWk && !gg.played && (gg.home === p.school || gg.away === p.school));
+      const oppAbbr = g ? (g.home === p.school ? g.away : g.home) : null;
+      const opp = oppAbbr ? COLLEGE_SCHOOLS.find(s => s.abbr === oppAbbr) : null;
+      oppName = opp ? opp.name : 'your opponent';
+      label = 'College Week ' + nextWk;
+    } else {
+      const nextWeek = this.state.week + 1;
+      const g = this.state.schedule.find(gg => gg.week === nextWeek && !gg.played && (gg.homeTeam === p.team || gg.awayTeam === p.team));
+      const oppId = g ? (g.homeTeam === p.team ? g.awayTeam : g.homeTeam) : null;
+      const opp = (oppId !== null && oppId !== undefined) ? this.state.teams[oppId] : null;
+      oppName = opp ? opp.city + ' ' + opp.name : 'your opponent';
+      label = 'Week ' + nextWeek;
+    }
     let html = '<div style="padding:18px">' +
-      '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Week ' + nextWeek + ' vs <strong>' + oppName + '</strong>. Take the reps yourself, or let it sim?</div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">' + label + ' vs <strong>' + oppName + '</strong>. Take the reps yourself, or let it sim?</div>' +
       '<div style="display:flex;flex-direction:column;gap:10px">' +
       '<button class="btn btn-primary" style="padding:12px" onclick="game._beginPlayGame()">🎮 Play this game</button>' +
       '<button class="btn" style="padding:12px" onclick="game._resolveGameChoice(\'sim\')">⏩ Sim this game</button>' +
       '</div>' +
       '<div style="font-size:11px;color:var(--text-muted);margin-top:10px">Playing lets you make a couple of in-game calls that shape your stat line — with a little risk.</div>' +
       '</div>';
-    // Lets the global Enter handler resolve this prompt as "Sim this game" (preserving the old
-    // tap-Enter-to-advance flow now that a Play option exists).
     this._awaitingGameChoice = true;
-    this.showModal('Game day · Week ' + nextWeek, html);
+    this.showModal('Game day · ' + label, html);
   },
   _resolveGameChoice(kind) {
     this._awaitingGameChoice = false;
@@ -5700,7 +6175,8 @@ let game = {
     let floorMod = 0;
     if (current < 55) floorMod = -0.3;
     
-    const expectedDelta = baseAvg + posMod + ceilingMod + floorMod;
+    const expectedDelta = baseAvg + posMod + ceilingMod + floorMod
+      + ((p.isUserControlled && this.state.career) ? (this._trainingFocusDelta() + this._schemeFitDelta()) : 0); // #3 training focus + #5 scheme fit
     
     // Roll a normally-distributed delta. ~10% chance of regression, ~12% chance of breakout.
     const roll = Math.random();
@@ -6296,8 +6772,9 @@ let game = {
       // "pending choice" flag and the user will see a popup prompting them to declare or
       // come back for senior year. The actual graduate-or-stay decision happens when they
       // pick. For now we just mark them as needing-a-choice and skip the auto-roll.
-      if (p.isUserControlled && p.prospectGrade >= 75) {
-        // Mark for user prompt — actual graduation handled in resolveUserDeclarationChoice()
+      if (p.isUserControlled) {
+        // Mark for user prompt — actual graduation handled in resolveUserDeclarationChoice().
+        // Fires for EVERY user junior now (Declare / Stay / Transfer), not just high grades.
         if (!this.state.career) this.state.career = {};
         this.state.career.pendingDeclarationChoice = {
           prospectId: p.id,
@@ -6330,17 +6807,41 @@ let game = {
     sophomores.forEach(p => {
       p.year = 'Junior';
       p.prospectGrade = this.applyCollegeProgression(p, 'Sophomore', 'Junior');
+      // Forced offseason Stay/Transfer choice for the user (transfer portal is open).
+      if (p.isUserControlled) {
+        this.state.career.pendingCollegeOffseasonChoice = { classYear: 'Sophomore', prospectId: p.id, prospectGrade: p.prospectGrade };
+      }
     });
     
     // Freshmen → Sophomores
     freshmen.forEach(p => {
+      // REDSHIRT — a redshirting user sits out their first season: preserve eligibility by staying a
+      // Freshman, gain a year of development, then play as a (redshirt) Freshman next year.
+      if (p.isUserControlled && p.redshirting) {
+        p.prospectGrade = this.applyCollegeProgression(p, 'Freshman', 'Sophomore'); // a year of practice development...
+        p.year = 'Freshman'; // ...but eligibility-wise still a Freshman
+        p.redshirting = false;
+        p.redshirtedFreshman = true;
+        this.addHeadline({ type: 'college', title: p.name + ' completes a redshirt season',
+          body: 'Sat out the year to develop and preserve eligibility. Returns as a redshirt freshman with a full slate of years ahead. Grade now ' + p.prospectGrade.toFixed(1) + '.' });
+        this.state.career.pendingCollegeOffseasonChoice = { classYear: 'Freshman', prospectId: p.id, prospectGrade: p.prospectGrade };
+        return;
+      }
       p.year = 'Sophomore';
       p.prospectGrade = this.applyCollegeProgression(p, 'Freshman', 'Sophomore');
+      if (p.isUserControlled) {
+        this.state.career.pendingCollegeOffseasonChoice = { classYear: 'Freshman', prospectId: p.id, prospectGrade: p.prospectGrade };
+      }
     });
     
     // Remove graduates from college pool
     const gradIds = new Set(graduates.map(g => g.id));
     this.state.collegeProspects = this.state.collegeProspects.filter(p => !gradIds.has(p.id));
+    // #5 COACHING CAROUSEL — chance the user's college staff changes this offseason (player still enrolled).
+    const _userStill = (this.state.career && this.state.career.mode === 'player') ? this.getUserPlayer && this.getUserPlayer() : null;
+    if (_userStill && this.state.career.careerStage === 'college' && !gradIds.has(_userStill.id)) {
+      try { this._maybeCoachingCarousel(_userStill); } catch (e) { /* defensive */ }
+    }
     
     // ===== TRANSFER PORTAL =====
     // Real CFB: each offseason, hundreds of players transfer schools via the portal.
@@ -7282,6 +7783,13 @@ let game = {
     // Regular season game sim (weeks 1-12)
     const games = this.state.collegeSchedule.filter(g => g.week === week && !g.played);
     games.forEach(g => this.simCollegeGame(g));
+    // #8 — at the end of the regular season, a draft-bound senior decides whether to play the postseason.
+    if (week === 12 && this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'college') {
+      const _up = this.getUserPlayer && this.getUserPlayer();
+      if (_up && _up.year === 'Senior' && _up.prospectGrade >= 78 && !_up.bowlOptOut && this.state.career.bowlOptOutDecided !== this.state.year) {
+        this.state.career.pendingBowlOptOut = true;
+      }
+    }
     // Recompute the AP poll based on accumulated records
     this.recomputeAPPoll();
     return games;
@@ -7331,7 +7839,18 @@ let game = {
       const userTeamScore = userIsHome ? homeScore : awayScore;
       const oppScore = userIsHome ? awayScore : homeScore;
       const userIsWin = userTeamScore > oppScore;
-      const perf = this.generateUserGameStatLine(userPlayer, userTeamScore, oppScore, userIsWin);
+      let perf = this.generateUserGameStatLine(userPlayer, userTeamScore, oppScore, userIsWin);
+      const _postseason = (this.state.collegeWeek || 0) >= 13;
+      // REDSHIRT — sit out the season entirely. BOWL OPT-OUT (#8) — a draft-bound player can sit the
+      // postseason to protect their stock; they DNP weeks 13-16.
+      if (userPlayer.redshirting) {
+        perf = { didNotPlay: true, redshirt: true, snaps: 0, snapPct: 0, role: 'Redshirt', raw: {}, lines: [] };
+      } else if (userPlayer.bowlOptOut && _postseason) {
+        perf = { didNotPlay: true, optOut: true, snaps: 0, snapPct: 0, role: 'Opted out', raw: {}, lines: [] };
+      } else if (this._userGameModifier) {
+        // #9 sim-vs-play modifier — scale the user's college production for a game they chose to play.
+        try { this._applyUserCollegeGameModifier(perf); } catch (e) { /* defensive */ }
+      }
       g.userPerformance = {
         ...perf,
         userIsHome,
@@ -7373,8 +7892,9 @@ let game = {
         snapPct: perf.snapPct || 0,
         raw: perf.raw || {}
       });
-      // Queue the popup. simWeek will check this flag after college sim finishes.
-      this._pendingUserGamePopup = { gameRef: g };
+      // Queue the popup. simWeek will check this flag after college sim finishes. (Skipped while
+      // redshirting — no need for a weekly "did not play" popup all season.)
+      if (!userPlayer.redshirting) this._pendingUserGamePopup = { gameRef: g };
       // RELATIONSHIPS — build the user's college bonds (teammates + school staff) from this game.
       if (perf.raw && !perf.didNotPlay) {
         const r = perf.raw;
@@ -7412,6 +7932,21 @@ let game = {
           oppScore: oppScore,
           isCollege: true
         });
+        // #8 HIGH-STAKES GAMES — postseason (CFP/bowl) performances swing prospect grade right away,
+        // far more than a regular Saturday. Scouts are watching.
+        if (_postseason) {
+          const big = (userPlayer.position === 'QB') ? ((collegeStats.passingYards >= 280) || collegeStats.passingTDs >= 3)
+            : (userPlayer.position === 'RB') ? ((collegeStats.rushingYards + collegeStats.receivingYards) >= 120 || (collegeStats.rushingTDs + collegeStats.receivingTDs) >= 2)
+            : (userPlayer.position === 'WR' || userPlayer.position === 'TE') ? (collegeStats.receivingYards >= 110 || collegeStats.receivingTDs >= 2)
+            : ((collegeStats.tackles >= 9) || collegeStats.sacks >= 2 || collegeStats.interceptionsMade >= 1);
+          const dud = (userPlayer.position === 'QB') ? (collegeStats.interceptionsThrown >= 2 && collegeStats.passingTDs === 0)
+            : (collegeStats.passingYards + collegeStats.rushingYards + collegeStats.receivingYards + collegeStats.tackles * 8) < 40;
+          let swing = big ? (1.0 + Math.random() * 1.4) : dud ? -(0.6 + Math.random() * 1.2) : (Math.random() * 0.6 - 0.2);
+          userPlayer.prospectGrade = Math.max(40, Math.min(99.9, Math.round((userPlayer.prospectGrade + swing) * 10) / 10));
+          if (big) this.addHeadline({ type: 'college', title: userPlayer.name + ' shines on the big stage', body: 'A standout postseason performance has scouts buzzing. Stock up.' });
+        }
+        // #6 COLLEGE NIL — a strong showing can draw a brand deal (rate-limited so it isn't spammy).
+        try { this._maybeOfferCollegeNIL(userPlayer, collegeStats, oppLabel); } catch (e) { /* defensive */ }
       }
     }
     
@@ -7656,6 +8191,14 @@ let game = {
     else if (depthIdx === 1) snapPct = 28 + Math.floor(Math.random() * 25); // 28-52% — backup/rotation
     else if (depthIdx === 2) snapPct = 8 + Math.floor(Math.random() * 18); // 8-25% — deep backup
     else snapPct = Math.random() < 0.4 ? Math.floor(Math.random() * 8) : 0; // 0-7% or DNP
+    // #2 FALL CAMP — the role won in camp this year overrides raw depth, so winning the job (or
+    // losing it) actually drives playing time for the season.
+    if (p.isUserControlled && this.state.career && this.state.career.campStatus && this.state.career.campYear === this.state.year) {
+      const cs = this.state.career.campStatus;
+      if (cs === 'starter') snapPct = 86 + Math.floor(Math.random() * 12);
+      else if (cs === 'rotational') snapPct = 32 + Math.floor(Math.random() * 26);
+      else snapPct = 6 + Math.floor(Math.random() * 16);
+    }
     
     // If snap % is 0 and player is buried deep, didNotPlay
     if (snapPct === 0 && depthIdx >= 3) {
@@ -7677,6 +8220,11 @@ let game = {
     let usage = gradeFactor * snapFactor * (0.7 + teamScoreFactor * 0.5);
     // Surrounding-cast chemistry lifts production slightly (same idea as the NFL bump).
     usage *= this._userCollegeProdMult(p);
+    // #9 sim-vs-play: if the user chose to PLAY this game, fold their decision modifier into the whole
+    // stat line so the displayed line and accumulated totals stay consistent. (Cleared after the game.)
+    if (p.isUserControlled && this._userGameModifier && this._userGameModifier !== 1) {
+      usage *= this._userGameModifier;
+    }
     
     // Approximate snap count
     const totalSnaps = 65 + Math.floor(Math.random() * 15);
@@ -9837,6 +10385,11 @@ let game = {
 
   simWeek() {
     if (!this.state || this.state.draftActive) return;
+    // HIGH-SCHOOL STAGE — the sim button advances the recruiting timeline instead of the league.
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'highschool') {
+      this.advanceHSRecruiting();
+      return;
+    }
     
     // Block sim/offseason advancement if user is over either cap.
     // User must cut players or fire coaches to come into compliance first.
@@ -9946,6 +10499,16 @@ let game = {
       if (_up && !_up.retired && _up.team !== null && _up.team !== undefined && !(_up.injury && _up.injury.weeksRemaining > 0)
           && _nextWk <= 18 && this.state.schedule.some(g => g.week === _nextWk && !g.played && (g.homeTeam === _up.team || g.awayTeam === _up.team))) {
         try { this._showGameDecisionChoice(); return; } catch (e) { /* fall through to normal sim */ }
+      }
+    }
+    // #9 IN-GAME DECISIONS (player COLLEGE): same sim-vs-play choice for regular-season college games.
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'college'
+        && !this._gameChoiceResolved) {
+      const _up = this.getUserPlayer && this.getUserPlayer();
+      const _cwk = (this.state.collegeWeek || 0) + 1;
+      if (_up && !_up.redshirting && !_up.bowlOptOut && _cwk <= 12 && this.state.collegeSchedule &&
+          this.state.collegeSchedule.some(g => g.week === _cwk && !g.played && (g.home === _up.school || g.away === _up.school))) {
+        try { this._showGameDecisionChoice(); return; } catch (e) { /* fall through */ }
       }
     }
     this.state.week++;
@@ -11468,7 +12031,9 @@ let game = {
     else if (tmN === 0) surround = coachAvg;
     else if (coachN === 0) surround = tmAvg;
     else surround = tmAvg * 0.65 + coachAvg * 0.35;
-    return 1 + (surround / 100) * 0.05;
+    let _mult = 1 + (surround / 100) * 0.05;
+    if (up.isUserControlled && this.state.career && this.state.career.collegeCaptain) _mult += 0.03; // #10 captaincy
+    return _mult;
   },
 
   // Position-based injury risk multiplier. NFL data: RBs and CBs lead, QB/K/P trail.
@@ -14428,6 +14993,8 @@ let game = {
     // transition so the user can still manually flip tabs and have it stick.
     const stage = this.state.career && this.state.career.careerStage;
     const mode = this.state.career && this.state.career.mode;
+    // High-school stage: the recruitment hub is the only screen.
+    if (mode === 'player' && stage === 'highschool') this.currentView = 'hsrecruit';
     const expectedDefault = (mode === 'player' && stage === 'college') ? 'college' : 'nfl';
     if (this._lastStageDefault !== expectedDefault) {
       this.navTab = expectedDefault;
@@ -14480,7 +15047,10 @@ let game = {
       eraBadge.textContent = this.state.year + ' Season';
     }
     let btnText = 'Simulate Week →';
-    if (this.state.offseasonPhase === 'fa') btnText = 'Proceed to Draft →';
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'highschool') {
+      const r = this.state.career.hsRecruit;
+      btnText = (r && r.period >= 4) ? 'Signing Day — commit above' : 'Advance recruiting →';
+    } else if (this.state.offseasonPhase === 'fa') btnText = 'Proceed to Draft →';
     else if (this.state.playoffActive) btnText = 'Sim ' + weekDisplay + ' →';
     else if (this.state.week >= 18) btnText = 'Start Playoffs →';
     document.getElementById('simBtn').textContent = btnText;
@@ -14520,6 +15090,7 @@ let game = {
       case 'combine': this.renderCombine(); break;
       case 'trades': this.renderTrades(); break;
       case 'mycareer': this.renderMyCareer(); break;
+      case 'hsrecruit': this.renderHSRecruitmentHub(); break;
       case 'training': this.renderPlayerTraining(); break;
       case 'relationships': this.renderRelationships(); break;
       case 'contract': this.renderContract(); break;
@@ -14589,6 +15160,40 @@ let game = {
     if (this.state && this.state.career && this.state.career.pendingDeclarationChoice && !this._declChoiceShown) {
       this._declChoiceShown = true;
       try { this.showDeclarationChoicePopup(); } catch (e) { /* defensive */ }
+    }
+    // Redshirt choice — forced popup before the user's first college season. Re-shows until resolved.
+    if (this.state && this.state.career && this.state.career.pendingRedshirtChoice &&
+        !document.getElementById('modal').classList.contains('show')) {
+      try { this.showRedshirtChoicePopup(); } catch (e) { /* defensive */ }
+    }
+    // Offseason Stay/Transfer — forced popup after a Freshman/Sophomore season (portal is open).
+    // Re-shows until resolved. (Juniors use the declaration popup above, which includes Transfer.)
+    if (this.state && this.state.career && this.state.career.pendingCollegeOffseasonChoice &&
+        !this.state.career.pendingDeclarationChoice &&
+        !document.getElementById('modal').classList.contains('show')) {
+      try { this.showCollegeOffseasonChoicePopup(); } catch (e) { /* defensive */ }
+    }
+    // #2/#3 Fall camp + training focus — forced preseason popup once per college season, after any
+    // offseason/redshirt choices are resolved. Skipped while redshirting (you're not competing).
+    if (this.state && this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'college'
+        && this.state.career.campYear !== this.state.year
+        && !this.state.career.pendingRedshirtChoice && !this.state.career.pendingDeclarationChoice
+        && !this.state.career.pendingCollegeOffseasonChoice
+        && !document.getElementById('modal').classList.contains('show')) {
+      const _up = this.getUserPlayer && this.getUserPlayer();
+      if (_up && !_up.retired && !_up.redshirting) {
+        try { this.showPreseasonCollegePopup(); } catch (e) { /* defensive */ }
+      } else if (_up && _up.redshirting) {
+        this.state.career.campYear = this.state.year; // don't prompt camp during a redshirt year
+      }
+    }
+    // #5 Coaching carousel · #6 NIL offer · #8 bowl opt-out — forced college popups, one at a time.
+    if (this.state && this.state.career && this.state.career.mode === 'player'
+        && !document.getElementById('modal').classList.contains('show')) {
+      const c = this.state.career;
+      if (c.pendingCoachingEvent) { try { this.showCoachingCarouselPopup(); } catch (e) {} }
+      else if (c.pendingNilOffer) { try { this.showCollegeNilOfferPopup(); } catch (e) {} }
+      else if (c.pendingBowlOptOut) { c.pendingBowlOptOut = false; try { this.showBowlOptOutPopup(); } catch (e) {} }
     }
     // Draft night celebration — fires when the user's player is selected. Stays open until
     // they dismiss. Includes confetti emojis, team welcome, and a draft-position breakdown.
@@ -16239,6 +16844,10 @@ let game = {
     // Representation + NIL (college players can sign agents and land NIL deals)
     html += this._renderPlayerRepCard();
     html += this._renderPlayerNilCard();
+    // #4 draft-stock tracker · #10 captaincy · #6 college NIL portfolio
+    html += this._draftStockCard(p);
+    html += this._collegeCaptainCard();
+    html += this._collegeNilCard();
     
     // Season-by-season college stat lines
     if (p.seasonHistory && p.seasonHistory.length > 0) {
@@ -27280,8 +27889,26 @@ let game = {
       '<div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:10px">Play one more college season. Most juniors who return see modest gains, but the wrong injury or a down year can hurt your stock. Senior leadership and another year of tape matter to NFL teams.</div>' +
       '<button class="btn" style="width:100%" onclick="game.resolveUserDeclarationChoice(false)">Return for senior year</button>' +
       '</div>';
-    
+
+    // OPTION C: Transfer for senior year (portal is open in the offseason)
+    body += '<div style="background:var(--surface);padding:16px;margin-bottom:12px">' +
+      '<div style="font-weight:700;font-size:14px;margin-bottom:8px;color:var(--warning)">Option C: Transfer for senior year</div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:10px">Return for your senior season, but somewhere new. Enter the transfer portal and pick a program that fits — a bigger stage, a guaranteed starting job, or a better path to a ring.</div>' +
+      '<button class="btn" style="width:100%" onclick="game.resolveDeclarationTransfer()">Enter the transfer portal →</button>' +
+      '</div>';
+
     this.showModal('Decision time · End of Junior year', body);
+  },
+
+  // Junior chooses to transfer instead of declaring/staying: they keep their senior eligibility (the
+  // senior bump already applied in advanceCollegeSeason) and open the portal to pick a new school.
+  resolveDeclarationTransfer() {
+    if (this.state.career) {
+      this.state.career.pendingDeclarationChoice = null;
+      this.state.career.pendingCollegeOffseasonChoice = null;
+    }
+    this._declChoiceShown = false;
+    this.playerRequestCollegeTransfer();
   },
   
   // Handle the user's declaration choice — declare or return for senior year.
@@ -27336,6 +27963,102 @@ let game = {
     }
     this.render();
     this.saveGame();
+  },
+
+  // ============================================================
+  // ===== REDSHIRT DECISION (forced, before first season) ======
+  // ============================================================
+  showRedshirtChoicePopup() {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p || !this.state.career || !this.state.career.pendingRedshirtChoice) { return; }
+    const schoolMeta = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+    const schoolName = schoolMeta ? schoolMeta.name : p.school;
+    let body = '<div style="background:linear-gradient(135deg,var(--accent),var(--accent-dim,#444));color:#fff;padding:20px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">FRESHMAN YEAR · ' + schoolName.toUpperCase() + '</div>' +
+      '<div style="font-size:20px;font-weight:800;margin-top:8px">Redshirt this season?</div>' +
+      '</div>';
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px;font-size:12px;color:var(--text-muted);line-height:1.55">' +
+      'A redshirt year lets you sit out this season to develop in practice without spending a year of eligibility. ' +
+      'You won\'t play games this fall, but you\'ll come back as a <strong>redshirt freshman</strong> with a full slate of seasons ahead — and an extra year to climb the draft boards. Or you can take the field right now.</div>';
+    // OPTION A: Redshirt
+    body += '<div style="background:var(--surface);padding:16px;margin-bottom:10px;border-left:4px solid var(--accent)">' +
+      '<div style="font-weight:700;font-size:14px;margin-bottom:6px;color:var(--accent)">Redshirt — develop and preserve a year</div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:10px">Sit out this season. Gain a year of development. Keep all your eligibility (you can play up to a redshirt-senior year).</div>' +
+      '<button class="btn btn-primary" style="width:100%" onclick="game.resolveRedshirtChoice(true)">Redshirt this season</button>' +
+      '</div>';
+    // OPTION B: Play
+    body += '<div style="background:var(--surface);padding:16px;margin-bottom:10px">' +
+      '<div style="font-weight:700;font-size:14px;margin-bottom:6px">Play right away</div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:10px">Compete for a role as a true freshman. Earlier reps, earlier tape — but no redshirt year to fall back on.</div>' +
+      '<button class="btn" style="width:100%" onclick="game.resolveRedshirtChoice(false)">Take the field as a true freshman</button>' +
+      '</div>';
+    this.showModal('Redshirt decision · ' + this.state.year, body);
+  },
+  resolveRedshirtChoice(redshirt) {
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p) { closeModal(); return; }
+    if (redshirt) {
+      p.redshirting = true;
+      p.redshirtYear = this.state.year;
+      this.addHeadline({ type: 'college', title: p.name + ' will redshirt as a freshman',
+        body: 'Sitting out this season to develop and preserve a year of eligibility.' });
+    }
+    if (this.state.career) this.state.career.pendingRedshirtChoice = false;
+    closeModal();
+    this.saveGame();
+    this.render();
+  },
+
+  // ============================================================
+  // ===== OFFSEASON STAY / TRANSFER (Freshman & Sophomore) =====
+  // ============================================================
+  showCollegeOffseasonChoicePopup() {
+    const choice = this.state.career && this.state.career.pendingCollegeOffseasonChoice;
+    if (!choice) return;
+    const p = this.getUserPlayer && this.getUserPlayer();
+    if (!p) return;
+    const schoolMeta = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
+    const schoolName = schoolMeta ? schoolMeta.name : p.school;
+    // Where do they stand at their position on the current roster?
+    const pool = this.state.collegeProspects || [];
+    const aheadStaying = pool.filter(x => x.school === p.school && x.position === p.position && x.id !== p.id &&
+      x.prospectGrade > p.prospectGrade && x.year !== 'Senior').length;
+    const startingHere = aheadStaying === 0;
+    const justPlayed = choice.classYear; // 'Freshman' or 'Sophomore'
+    let body = '<div style="background:linear-gradient(135deg,var(--accent),var(--accent-dim,#444));color:#fff;padding:20px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">OFFSEASON · ' + this.state.year + '</div>' +
+      '<div style="font-size:20px;font-weight:800;margin-top:8px">The transfer portal is open</div>' +
+      '<div style="font-size:12px;opacity:0.9;margin-top:4px">Your ' + justPlayed.toLowerCase() + ' season is in the books</div>' +
+      '</div>';
+    body += '<div style="background:var(--surface);padding:14px 16px;margin-bottom:14px;font-size:12px;color:var(--text-muted);line-height:1.55">' +
+      'You\'re at <strong>' + schoolName + '</strong>. ' +
+      (startingHere
+        ? 'You\'re the <span style="color:var(--success)">projected starter</span> at your position heading into next season.'
+        : '<span style="color:var(--warning)">You\'re behind ' + aheadStaying + ' returning player' + (aheadStaying === 1 ? '' : 's') + '</span> at your position.') +
+      ' Stay and keep building here, or enter the portal and find a new home.</div>';
+    // OPTION A: Stay
+    body += '<div style="background:var(--surface);padding:16px;margin-bottom:10px;border-left:4px solid var(--success)">' +
+      '<div style="font-weight:700;font-size:14px;margin-bottom:6px;color:var(--success)">Stay at ' + schoolName + '</div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:10px">Run it back. Familiar system, your relationships, and continuity in your development.</div>' +
+      '<button class="btn btn-success" style="width:100%" onclick="game.resolveCollegeOffseasonChoice(\'stay\')">Stay and keep building</button>' +
+      '</div>';
+    // OPTION B: Transfer
+    body += '<div style="background:var(--surface);padding:16px;margin-bottom:10px;border-left:4px solid var(--warning)">' +
+      '<div style="font-weight:700;font-size:14px;margin-bottom:6px;color:var(--warning)">Enter the transfer portal</div>' +
+      '<div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:10px">Find a program that fits — a bigger stage, a guaranteed role, or a better path to playing time.</div>' +
+      '<button class="btn" style="width:100%" onclick="game.resolveCollegeOffseasonChoice(\'transfer\')">Enter the transfer portal →</button>' +
+      '</div>';
+    this.showModal((justPlayed === 'Freshman' ? 'After your freshman season' : 'After your sophomore season'), body);
+  },
+  resolveCollegeOffseasonChoice(kind) {
+    if (this.state.career) this.state.career.pendingCollegeOffseasonChoice = null;
+    if (kind === 'transfer') {
+      this.playerRequestCollegeTransfer(); // opens the portal modal; "Stay put" there is also fine
+    } else {
+      closeModal();
+      this.saveGame();
+      this.render();
+    }
   },
 
   // FORCED PRE-DRAFT FLOW — dispatches to the right popup based on user's current step.
