@@ -42,6 +42,11 @@ header { background: var(--surface); border-bottom: 1px solid var(--border); pad
 .era-tag { background: var(--surface-2); border: 1px solid var(--border); padding: 4px 10px; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 .user-team-tag { background: var(--text); color: white; padding: 4px 10px; font-size: 11px; font-weight: 500; }
 .header-actions { display: flex; gap: 8px; }
+.sim-options-wrap { position: relative; }
+.sim-options-menu { position: absolute; top: calc(100% + 6px); right: 0; background: var(--surface); border: 1px solid var(--border-strong); box-shadow: 0 6px 24px rgba(0,0,0,0.18); z-index: 200; min-width: 200px; padding: 4px; }
+.sim-opt { display: block; width: 100%; text-align: left; background: transparent; color: var(--text); border: none; padding: 10px 12px; font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.sim-opt:hover { background: var(--surface-2); }
+.sim-opt + .sim-opt { border-top: 1px solid var(--border); }
 main { display: grid; grid-template-columns: 200px 1fr 320px; overflow: hidden; }
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 16px 0; overflow-y: auto; }
 .nav-section { margin-bottom: 20px; }
@@ -432,6 +437,13 @@ select { font-family: inherit; }
     <div class="header-actions">
       <button class="btn" onclick="game.saveGame(); var s = game.lastSaveStatus(); if (s.error === 'STORAGE_FULL') { alert('Save failed: browser storage is full. Try deleting other save slots or clearing browser data.'); } else if (s.error) { alert('Save failed. See console for details.'); } else { alert('Saved to slot ' + (game.activeSlot || 1) + '. (' + Math.round(s.sizeBytes/1024) + 'KB)'); }">Save</button>
       <button class="btn" onclick="if(confirm('Return to slot picker? Unsaved changes will be lost — click Save first if you want to keep progress.')){game.showSlotPicker();}">Slots</button>
+      <div class="sim-options-wrap" id="simOptionsWrap" style="display:none">
+        <button class="btn" onclick="game.toggleSimOptions()" id="simOptionsBtn" title="Multi-week sim options">Sim Options ▾</button>
+        <div class="sim-options-menu" id="simOptionsMenu" style="display:none">
+          <button class="sim-opt" onclick="game.simUntilMidseason()">Sim until midseason</button>
+          <button class="sim-opt" onclick="game.simRegularSeason()">Sim regular season</button>
+        </div>
+      </div>
       <button class="btn btn-primary" onclick="game.simWeek()" id="simBtn" style="display:none">Simulate Week →</button>
     </div>
   </header>
@@ -1385,9 +1397,11 @@ const REAL_HISTORY = {
 const MODERN_GAME_RATE = 1.0;
 
 function getSalaryCap(year) {
-  // 2026 base ~$300M (real NFL 2025 was $279.2M, 2026 projected ~$300M+), +6.5%/yr
+  // 2026 base ~$300M (real NFL 2025 was $279.2M, 2026 projected ~$300M+). The cap grows ~7.5%/yr —
+  // a touch faster than contracts escalate — so the league's spending power compounds year over year
+  // and big deals don't progressively overwhelm the cap or make rosters top-heavy deep into a save.
   const yearsFrom2026 = year - 2026;
-  return Math.round(300_000_000 * Math.pow(1.065, yearsFrom2026));
+  return Math.round(300_000_000 * Math.pow(1.075, yearsFrom2026));
 }
 
 function formatMoney(n) {
@@ -1647,7 +1661,7 @@ function generateContract(position, rating, age, year, isRookie) {
   const signingBonus = Math.round(totalValue * bonusPct / 100_000) * 100_000;
   const remaining = totalValue - signingBonus;
   const weights = [];
-  for (let i = 0; i < years; i++) weights.push(1 + i * 0.08);
+  for (let i = 0; i < years; i++) weights.push(1 + i * 0.04);
   const totalWeight = weights.reduce((s,w) => s+w, 0);
   const baseSalaries = weights.map(w => Math.round(remaining * w / totalWeight / 50_000) * 50_000);
   for (let i = 0; i < baseSalaries.length; i++) if (baseSalaries[i] < 800_000) baseSalaries[i] = 800_000;
@@ -1812,6 +1826,14 @@ let game = {
   },
 
   bindEvents() {
+    // Close the Sim Options dropdown when clicking anywhere outside it.
+    document.addEventListener('click', (e) => {
+      const wrap = document.getElementById('simOptionsWrap');
+      const menu = document.getElementById('simOptionsMenu');
+      if (!wrap || !menu || menu.style.display === 'none') return;
+      if (e.target.closest && e.target.closest('#simOptionsWrap')) return; // click inside — leave it
+      menu.style.display = 'none';
+    });
     // Use event delegation on the sidebar so clicks work even after the player-career nav
     // re-renders its inner HTML. A single listener at the sidebar level catches `.nav-item`
     // clicks regardless of when those items entered the DOM — solves the "tap doesn't navigate"
@@ -1987,7 +2009,8 @@ let game = {
         } else if (stage === 'highschool') {
           playerCareerNav.innerHTML =
             '<div class="nav-title">Your Career</div>' +
-            '<div class="nav-item" data-view="hsrecruit"><span class="nav-icon">★</span><span>Recruitment</span></div>';
+            '<div class="nav-item" data-view="hsrecruit"><span class="nav-icon">★</span><span>Recruitment</span></div>' +
+            '<div class="nav-item" data-view="relationships"><span class="nav-icon">♥</span><span>Relationships</span></div>';
         } else {
           playerCareerNav.innerHTML =
             '<div class="nav-title">Your Career</div>' +
@@ -3536,7 +3559,16 @@ let game = {
       offers: [],          // delivered so far
       offerQueue,          // not yet delivered
       committedSchool: null,
-      signingDay: false
+      signingDay: false,
+      // Bonds the user builds with HS teammates + the head coach over the senior season. Grows
+      // every game (regular season AND state playoffs) and shows on the Relationships tab.
+      teammateChem: {},
+      headCoach: { name: this.generateName(this.state.year), faceSeed: Math.floor(Math.random() * 1000000), chem: 0, gp: 0 },
+      // DREAM SCHOOL — the user may target one program; their interest climbs ~1%/week (max +10%).
+      targetSchool: null,
+      targetBoost: 0,
+      // STATE PLAYOFFS — built after the 10-game regular season (see _initHSPlayoffs).
+      playoffs: null
     };
     this.state.career.hsTeammates = null; // cleared from any prior playthrough
     this.currentView = 'hsrecruit';
@@ -3759,43 +3791,34 @@ let game = {
   },
 
   // Play one week of the user's senior high-school season: a (usually dominant) game, stat
-  // accumulation, any new scholarship offers, and a forced weekly recap popup. Signing Day caps it.
+  // accumulation, any new scholarship offers, and a forced weekly recap popup. After the 10-game
+  // regular season the team enters the STATE PLAYOFFS; Signing Day caps everything once that run ends.
   playHSWeek() {
     const r = this.state.career && this.state.career.hsRecruit;
     if (!r || r.committedSchool) { this.render(); return; }
     if (r.signingDay) { this.render(); return; } // season over — must commit on Signing Day
 
+    // STATE PLAYOFFS — once the regular season is done, the Sim button plays playoff games instead.
+    if (r.playoffs && r.playoffs.active) { this._playHSPlayoffGame(); return; }
+
+    // ---- REGULAR-SEASON GAME ----
     const game = r.schedule[r.week];
     // The user is a blue-chip — wins most of the time, often in a blowout.
     const winChance = 0.74 + Math.min(0.18, r.stars * 0.035);
     const won = Math.random() < winChance;
-    // Build realistic-magnitude scores, then snap each to a valid football total (no 1s, 2s, 4s, 5s).
-    const winBase = 28 + Math.floor(Math.random() * 25);  // 28-52
-    const loseBase = Math.floor(Math.random() * 25);       // 0-24
-    let sf, sa;
-    if (won) { sf = this.roundToValidScore(winBase); sa = this.roundToValidScore(loseBase); }
-    else { sa = this.roundToValidScore(winBase); sf = this.roundToValidScore(loseBase); }
-    // Guarantee the right side wins and there's no tie.
-    if (won && sf <= sa) sf = this.roundToValidScore(sa + 7);
-    if (!won && sa <= sf) sa = this.roundToValidScore(sf + 7);
-    if (sf === sa) { if (won) sf = this.roundToValidScore(sf + 3); else sa = this.roundToValidScore(sa + 3); }
+    const { sf, sa } = this._hsGameScore(won, false);
     if (game) { game.played = true; game.won = won; game.sf = sf; game.sa = sa; }
     if (won) r.record.w++; else r.record.l++;
 
     // Dominant individual line.
     const line = this._genHSGameStatline(r.position, r.stars);
     this._accumulateHSStats(r.seasonStats, line);
-
-    // A teammate occasionally has a big night too (flavor; favors the college-bound ones).
-    let mateNote = '';
-    if (Math.random() < 0.5 && r.teammates.length) {
-      const standouts = r.teammates.filter(m => m.madeCollege);
-      const pool = standouts.length && Math.random() < 0.7 ? standouts : r.teammates;
-      const m = pool[Math.floor(Math.random() * pool.length)];
-      mateNote = m.name + ' (' + m.position + ') flashed again — the kind of tape college scouts notice.';
-    }
+    const mateNote = this._hsMateNote(r);
 
     r.week++;
+
+    // Bonds with teammates + the head coach grow this week, and the dream-school boost ticks up.
+    this._hsBumpChem(r, won);
 
     // Offers arriving this week.
     const fresh = this._deliverHSOffers(r, false);
@@ -3804,11 +3827,20 @@ let game = {
       this.addHeadline({ type: 'college', title: r.name + ' picks up an offer from ' + (sc ? sc.name : o.abbr),
         body: (sc ? sc.name : o.abbr) + ' extends a scholarship offer after a big week ' + r.week + '.' });
     });
+    // Tick the targeted school's interest (+1% this week, capped at +10% total) and re-apply.
+    this._hsTickTarget(r);
 
-    const seasonOver = r.week >= r.totalWeeks;
-    if (seasonOver) {
-      r.signingDay = true;
-      this._deliverHSOffers(r, true); // flush every remaining offer so the full board is live on Signing Day
+    // End of the 10-game regular season → seed into the state playoffs (no Signing Day yet).
+    const regSeasonOver = r.week >= r.totalWeeks;
+    let phaseNote = '';
+    if (regSeasonOver) {
+      this._deliverHSOffers(r, true); // flush the full board so recruiting is set for the postseason
+      this._hsApplyTargetBoost(r);
+      this._initHSPlayoffs(r);
+      const po = r.playoffs;
+      phaseNote = '<div style="margin-top:14px;padding:10px 12px;border-left:3px solid var(--accent);background:var(--bg)">' +
+        '<div style="font-size:12px;font-weight:700;color:var(--accent)">Regular season complete \u2014 ' + r.record.w + '\u2013' + r.record.l + ' \u00b7 you\u2019re in the State Playoffs</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5">Seeded <strong>#' + po.seed + '</strong>. Win four rounds to take home the state title. Press <strong>Sim</strong> to play the ' + po.rounds[0].name + '.</div></div>';
     }
 
     this.saveGame();
@@ -3816,17 +3848,188 @@ let game = {
 
     // ---- forced weekly popup ----
     const oppName = game ? game.opp : 'their rival';
+    let body = this._buildHSRecapBody({ weekLabel: 'Week ' + r.week, oppName, won, sf, sa, line, mateNote, fresh });
+    body += phaseNote;
+    body += '<div style="margin-top:16px;text-align:right"><button id="recapContinueBtn" class="btn btn-primary" onclick="closeModal()">Continue \u2192</button></div></div>';
+    this.showModal('Week ' + r.week + ' \u00b7 ' + (won ? 'Win' : 'Loss'), body);
+  },
+
+  // Play one STATE PLAYOFF game. Win → advance; lose → eliminated (season over → Signing Day);
+  // win the State Championship → champions (→ Signing Day). Bonds + dream-school boost still tick,
+  // and the result is recapped through the same weekly popup so a playoff week never reads as a bye.
+  _playHSPlayoffGame() {
+    const r = this.state.career && this.state.career.hsRecruit;
+    if (!r || !r.playoffs || !r.playoffs.active) { this.render(); return; }
+    const po = r.playoffs;
+    const round = po.rounds[po.roundIdx];
+    if (!round) { po.active = false; r.signingDay = true; this.render(); return; }
+
+    // Win odds: still a strong team, but it tightens each round and is nudged by playoff seed.
+    const winChance = Math.max(0.40, 0.70 + Math.min(0.12, r.stars * 0.025) - po.roundIdx * 0.06 + (po.seedBonus || 0));
+    const won = Math.random() < winChance;
+    const { sf, sa } = this._hsGameScore(won, true);
+    round.played = true; round.won = won; round.sf = sf; round.sa = sa;
+    if (won) r.record.w++; else r.record.l++;
+
+    const line = this._genHSGameStatline(r.position, r.stars);
+    this._accumulateHSStats(r.seasonStats, line);
+    const mateNote = this._hsMateNote(r);
+
+    // Bonds + dream-school interest keep building through the playoff run.
+    this._hsBumpChem(r, won);
+    this._hsTickTarget(r);
+
+    let phaseNote = '';
+    if (!won) {
+      // Eliminated — the run ends here.
+      po.active = false; po.eliminated = true; po.eliminatedRound = round.name;
+      r.signingDay = true;
+      this._deliverHSOffers(r, true);
+      this._hsApplyTargetBoost(r);
+      this.addHeadline({ type: 'college', title: r.teamName + ' fall in the ' + round.name,
+        body: r.name + '\u2019s senior season ends ' + r.record.w + '\u2013' + r.record.l + '. On to Signing Day.' });
+      phaseNote = '<div style="margin-top:14px;padding:10px 12px;border-left:3px solid var(--warning);background:var(--bg)">' +
+        '<div style="font-size:12px;font-weight:700;color:var(--warning)">Eliminated in the ' + round.name + ' \u2014 final record ' + r.record.w + '\u2013' + r.record.l + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5">A great senior year. It\u2019s now National Signing Day \u2014 head to <strong>Recruitment</strong> to choose where you\u2019ll sign.</div></div>';
+    } else if (po.roundIdx >= po.rounds.length - 1) {
+      // Won the final → STATE CHAMPIONS.
+      po.active = false; po.champion = true;
+      r.signingDay = true;
+      this._deliverHSOffers(r, true);
+      this._hsApplyTargetBoost(r);
+      this.addHeadline({ type: 'champ', title: r.teamName + ' win the STATE CHAMPIONSHIP',
+        body: r.name + ' caps a ' + r.record.w + '\u2013' + r.record.l + ' senior season with a state title. A legend goes out on top.' });
+      phaseNote = '<div style="margin-top:14px;padding:12px 14px;border-left:3px solid var(--success);background:var(--bg)">' +
+        '<div style="font-size:13px;font-weight:800;color:var(--success)">\uD83C\uDFC6 STATE CHAMPIONS \u2014 ' + r.record.w + '\u2013' + r.record.l + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5">' + r.name + ' brings home the state title. The legend is set \u2014 now it\u2019s National Signing Day. Head to <strong>Recruitment</strong> to choose where you\u2019ll sign.</div></div>';
+    } else {
+      // Advance to the next round.
+      po.roundIdx++;
+      const next = po.rounds[po.roundIdx];
+      phaseNote = '<div style="margin-top:14px;padding:10px 12px;border-left:3px solid var(--accent);background:var(--bg)">' +
+        '<div style="font-size:12px;font-weight:700;color:var(--accent)">Advance to the ' + next.name + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5">Next up: <strong>' + next.opp + '</strong>. Press <strong>Sim</strong> to play on.</div></div>';
+    }
+
+    this.saveGame();
+    this.render();
+
+    let body = this._buildHSRecapBody({ weekLabel: round.name, oppName: round.opp, won, sf, sa, line, mateNote, fresh: [] });
+    body += phaseNote;
+    body += '<div style="margin-top:16px;text-align:right"><button id="recapContinueBtn" class="btn btn-primary" onclick="closeModal()">Continue \u2192</button></div></div>';
+    const title = round.name + ' \u00b7 ' + (won ? (po.champion ? 'STATE CHAMPIONS \uD83C\uDFC6' : 'Win') : 'Eliminated');
+    this.showModal(title, body);
+  },
+
+  // Seed the team into a 4-round state-playoff bracket once the regular season ends. Better records
+  // earn a higher seed (easier draw + a small win-odds bump).
+  _initHSPlayoffs(r) {
+    const total = Math.max(1, r.record.w + r.record.l);
+    const winPct = r.record.w / total;
+    const seed = winPct >= 0.9 ? 1 : winPct >= 0.78 ? 2 : winPct >= 0.6 ? 4 : winPct >= 0.45 ? 6 : 8;
+    const seedBonus = seed <= 1 ? 0.08 : seed <= 2 ? 0.05 : seed <= 4 ? 0.02 : seed <= 6 ? -0.02 : -0.05;
+    const used = new Set([r.city]);
+    const roundNames = ['First Round', 'Quarterfinals', 'Semifinals', 'State Championship'];
+    const rounds = roundNames.map(name => {
+      let opp, guard = 0;
+      do { opp = this._randomHometown().city; guard++; } while (used.has(opp) && guard < 25);
+      used.add(opp);
+      return { name, opp: opp + ' High', played: false, won: null, sf: null, sa: null };
+    });
+    r.playoffs = { active: true, roundIdx: 0, rounds, seed, seedBonus, champion: false, eliminated: false };
+  },
+
+  // Generate a realistic-magnitude HS final score that lands on the winning side. Playoff games
+  // run a touch tighter than blowout-prone regular-season games.
+  _hsGameScore(won, playoff) {
+    const winBase = (playoff ? 24 : 28) + Math.floor(Math.random() * (playoff ? 20 : 25));
+    const loseBase = Math.floor(Math.random() * (playoff ? 22 : 25));
+    let sf, sa;
+    if (won) { sf = this.roundToValidScore(winBase); sa = this.roundToValidScore(loseBase); }
+    else { sa = this.roundToValidScore(winBase); sf = this.roundToValidScore(loseBase); }
+    if (won && sf <= sa) sf = this.roundToValidScore(sa + 7);
+    if (!won && sa <= sf) sa = this.roundToValidScore(sf + 7);
+    if (sf === sa) { if (won) sf = this.roundToValidScore(sf + 3); else sa = this.roundToValidScore(sa + 3); }
+    return { sf, sa };
+  },
+
+  // Occasional teammate-standout flavor note for a recap.
+  _hsMateNote(r) {
+    if (Math.random() < 0.5 && r.teammates && r.teammates.length) {
+      const standouts = r.teammates.filter(m => m.madeCollege);
+      const pool = standouts.length && Math.random() < 0.7 ? standouts : r.teammates;
+      const m = pool[Math.floor(Math.random() * pool.length)];
+      return m.name + ' (' + m.position + ') flashed again — the kind of tape college scouts notice.';
+    }
+    return '';
+  },
+
+  // Grow the user's bonds with HS teammates + the head coach after a game. Each teammate carries a
+  // stable closeness weight so the relationships diverge naturally over the season.
+  _hsBumpChem(r, won) {
+    if (!r.teammateChem) r.teammateChem = {};
+    (r.teammates || []).forEach(m => {
+      if (m._closeness === undefined) m._closeness = 0.5 + Math.random(); // 0.5..1.5, fixed per teammate
+      const c = r.teammateChem[m.id] || { score: 0, gp: 0 };
+      const base = won ? 6 : 4;
+      c.score = Math.min(100, c.score + base * m._closeness * (0.7 + Math.random() * 0.6));
+      c.gp = (c.gp || 0) + 1;
+      r.teammateChem[m.id] = c;
+    });
+    if (r.headCoach) {
+      r.headCoach.chem = Math.min(100, (r.headCoach.chem || 0) + (won ? 5 : 3.5));
+      r.headCoach.gp = (r.headCoach.gp || 0) + 1;
+    }
+  },
+
+  // DREAM SCHOOL — increment the targeted program's accrued boost (max +10%) and re-apply it.
+  _hsTickTarget(r) {
+    if (r.targetSchool && (r.targetBoost || 0) < 10) r.targetBoost = (r.targetBoost || 0) + 1;
+    this._hsApplyTargetBoost(r);
+  },
+
+  // Apply the accrued dream-school boost to live offer interest. Idempotent: every offer is reset to
+  // its natural baseInterest, then the targeted school gets +targetBoost (capped at 99%).
+  _hsApplyTargetBoost(r) {
+    (r.offers || []).forEach(o => {
+      if (o.baseInterest === undefined) o.baseInterest = o.interest;
+      o.interest = (o.abbr === r.targetSchool)
+        ? Math.min(99, Math.round(o.baseInterest + (r.targetBoost || 0)))
+        : o.baseInterest;
+    });
+  },
+
+  // Set (or clear) the user's targeted dream school. Switching resets the accrued boost — you can
+  // only build momentum with one program at a time.
+  setHSTarget(abbr) {
+    const r = this.state.career && this.state.career.hsRecruit;
+    if (!r) return;
+    if (!abbr || abbr === r.targetSchool) {
+      r.targetSchool = null;
+    } else {
+      r.targetSchool = abbr;
+    }
+    r.targetBoost = 0;
+    this._hsApplyTargetBoost(r);
+    this.saveGame();
+    this.render();
+  },
+
+  // Shared recap-body builder for HS games (regular season + playoffs).
+  _buildHSRecapBody(opts) {
+    const r = this.state.career && this.state.career.hsRecruit;
+    const { weekLabel, oppName, won, sf, sa, line, mateNote, fresh } = opts;
     const resultColor = won ? 'var(--success)' : 'var(--danger)';
     const resultWord = won ? 'W' : 'L';
     let body = '<div style="padding:4px 2px 0">' +
       '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px">' +
-      '<div style="font-size:13px;color:var(--text-muted)">Week ' + r.week + ' · ' + r.teamName + ' vs ' + oppName + '</div>' +
+      '<div style="font-size:13px;color:var(--text-muted)">' + weekLabel + ' · ' + r.teamName + ' vs ' + oppName + '</div>' +
       '<div style="font-size:18px;font-weight:800;color:' + resultColor + '">' + resultWord + ' ' + sf + '\u2013' + sa + '</div></div>' +
       '<div style="margin-top:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border)">' +
       '<div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;font-weight:700">Your line</div>' +
       '<div style="font-size:13px;font-weight:600;margin-top:4px">' + this._hsSeasonStatLine(this._lineAsSeason(line, r.position), r.position) + '</div></div>';
     if (mateNote) body += '<div style="margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.5">' + mateNote + '</div>';
-    if (fresh.length) {
+    if (fresh && fresh.length) {
       body += '<div style="margin-top:12px"><div style="font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.6px;font-weight:700">' +
         (fresh.length === 1 ? 'New scholarship offer' : fresh.length + ' new scholarship offers') + '</div>';
       fresh.forEach(o => {
@@ -3838,13 +4041,7 @@ let game = {
       });
       body += '</div>';
     }
-    if (r.signingDay) {
-      body += '<div style="margin-top:14px;padding:10px 12px;border-left:3px solid var(--warning);background:var(--bg)">' +
-        '<div style="font-size:12px;font-weight:700;color:var(--warning)">Regular season complete \u2014 ' + r.record.w + '\u2013' + r.record.l + '</div>' +
-        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5">It\u2019s National Signing Day. Head to <strong>Recruitment</strong> to choose where you\u2019ll sign.</div></div>';
-    }
-    body += '<div style="margin-top:16px;text-align:right"><button id="recapContinueBtn" class="btn btn-primary" onclick="closeModal()">Continue \u2192</button></div></div>';
-    this.showModal('Week ' + r.week + ' \u00b7 ' + (won ? 'Win' : 'Loss'), body);
+    return body;
   },
 
   // Wrap a single-game line so the season-stat formatter can render it (games=1).
@@ -4221,10 +4418,17 @@ let game = {
       '<div class="page-subtitle">' + r.position + ' \u00b7 <span style="color:#d4a017;letter-spacing:2px">' + starLabel + '</span> \u00b7 ' +
       r.city + ', ' + r.state + ' \u00b7 senior year</div></div>';
 
+    const po = r.playoffs;
+    const inPlayoffs = !!(po && po.active);
+    const phaseLabel = inPlayoffs ? 'PLAYOFFS' : (signingDay ? 'DONE' : 'WEEK');
+    const phaseVal = inPlayoffs
+      ? (po.rounds[po.roundIdx] ? po.rounds[po.roundIdx].name.replace('State Championship', 'Final') : 'Playoffs')
+      : (Math.min(weeksDone + (signingDay ? 0 : 1), r.totalWeeks) + '/' + r.totalWeeks);
+
     // Captain + status strip
     html += '<div class="card"><div style="padding:14px 16px;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;text-align:center">' +
       '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">RECORD</div><div style="font-size:20px;font-weight:700;margin-top:2px">' + r.record.w + '\u2013' + r.record.l + '</div></div>' +
-      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">WEEK</div><div style="font-size:20px;font-weight:700;margin-top:2px">' + Math.min(weeksDone + (signingDay ? 0 : 1), r.totalWeeks) + '/' + r.totalWeeks + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">' + phaseLabel + '</div><div style="font-size:' + (inPlayoffs ? '13' : '20') + 'px;font-weight:700;margin-top:' + (inPlayoffs ? '6' : '2') + 'px">' + phaseVal + '</div></div>' +
       '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">PROJ. GRADE</div><div style="font-size:20px;font-weight:700;margin-top:2px">' + r.grade.toFixed(1) + '</div></div>' +
       '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">OUTLOOK</div><div style="font-size:12px;font-weight:600;margin-top:6px">' + projText(r.grade) + '</div></div>' +
       '</div>' +
@@ -4234,9 +4438,15 @@ let game = {
       '</div></div></div>';
 
     if (signingDay) {
-      html += '<div class="card" style="border-left:3px solid var(--warning)"><div style="padding:12px 16px;font-size:12px;color:var(--warning);font-weight:600;line-height:1.5">Signing Day \u2014 your senior season finished ' + r.record.w + '\u2013' + r.record.l + '. Pick where you sign below.</div></div>';
+      const champLine = po && po.champion
+        ? ' You went out a <strong style="color:var(--success)">STATE CHAMPION</strong>!'
+        : (po && po.eliminated ? ' Your playoff run ended in the ' + (po.eliminatedRound || 'playoffs') + '.' : '');
+      html += '<div class="card" style="border-left:3px solid var(--warning)"><div style="padding:12px 16px;font-size:12px;color:var(--warning);font-weight:600;line-height:1.5">Signing Day \u2014 your senior season finished ' + r.record.w + '\u2013' + r.record.l + '.' + champLine + ' Pick where you sign below.</div></div>';
+    } else if (inPlayoffs) {
+      const cur = po.rounds[po.roundIdx];
+      html += '<div class="card" style="border-left:3px solid var(--accent)"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted);line-height:1.5">State Playoffs \u2014 <strong style="color:var(--accent)">' + cur.name + '</strong> vs ' + cur.opp + '. Press <strong>Sim</strong> to play it. Win four rounds for the state title; a loss ends your season.</div></div>';
     } else {
-      html += '<div class="card"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted);line-height:1.5">Press <strong>Sim</strong> to play your next game. Offers come in during the season; you sign on <strong>Signing Day</strong> after week 10.</div></div>';
+      html += '<div class="card"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted);line-height:1.5">Press <strong>Sim</strong> to play your next game. Offers come in during the season, then it\u2019s the <strong>State Playoffs</strong> after week 10, and finally <strong>Signing Day</strong>.</div></div>';
     }
 
     // Schedule
@@ -4253,8 +4463,54 @@ let game = {
     });
     html += '</div></div>';
 
-    // Offers
-    html += '<div class="card"><div class="card-header"><div class="card-title">Scholarship offers</div><div class="card-meta">' + r.offers.length + ' offer' + (r.offers.length === 1 ? '' : 's') + (signingDay ? ' \u00b7 click to sign' : ' \u00b7 sign on Signing Day') + '</div></div><div style="padding:8px 0">';
+    // State-playoff bracket (shown once the postseason has begun).
+    if (po) {
+      html += '<div class="card"><div class="card-header"><div class="card-title">State Playoffs</div>' +
+        '<div class="card-meta">#' + po.seed + ' seed' + (po.champion ? ' \u00b7 \uD83C\uDFC6 CHAMPIONS' : (po.eliminated ? ' \u00b7 eliminated' : '')) + '</div></div><div style="padding:6px 0">';
+      po.rounds.forEach((rd, i) => {
+        const isCurrent = po.active && i === po.roundIdx;
+        const status = rd.played
+          ? '<span style="font-weight:700;color:' + (rd.won ? 'var(--success)' : 'var(--danger)') + '">' + (rd.won ? 'W' : 'L') + ' ' + rd.sf + '\u2013' + rd.sa + '</span>'
+          : (isCurrent ? '<span style="font-size:11px;font-weight:700;color:var(--accent)">NEXT UP</span>' : '<span style="font-size:11px;color:var(--text-muted)">\u2014</span>');
+        const dim = (!rd.played && !isCurrent && (po.eliminated || po.champion)) ? 'opacity:0.4;' : '';
+        html += '<div style="padding:9px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;' + dim + (isCurrent ? 'background:var(--surface-2)' : '') + '">' +
+          '<div style="width:120px;font-size:11px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.4px">' + rd.name + '</div>' +
+          '<div style="flex:1;font-size:13px;font-weight:600">vs ' + rd.opp + '</div>' +
+          '<div style="text-align:right;min-width:70px">' + status + '</div></div>';
+      });
+      html += '</div></div>';
+    }
+
+    // DREAM SCHOOL — let the user target one program to court week over week (+1%/wk, max +10%).
+    if (!signingDay) {
+      const tgtAbbr = r.targetSchool;
+      const tgt = tgtAbbr ? COLLEGE_SCHOOLS.find(s => s.abbr === tgtAbbr) : null;
+      const boost = r.targetBoost || 0;
+      const opts = COLLEGE_SCHOOLS.slice().sort((a, b) => a.name.localeCompare(b.name))
+        .map(s => '<option value="' + s.abbr + '"' + (s.abbr === tgtAbbr ? ' selected' : '') + '>' + s.name + '</option>').join('');
+      html += '<div class="card"><div class="card-header"><div class="card-title">Dream school</div>' +
+        '<div class="card-meta">Court one program · +1%/week, up to +10%</div></div>' +
+        '<div style="padding:12px 16px">' +
+        '<div style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:10px">Pick one school to actively recruit toward. Their interest in you climbs about 1% each game you play, up to a +10% total bump. Switching schools resets the momentum.</div>' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+        '<select id="hsTargetSelect" onchange="game.setHSTarget(this.value)" style="flex:1;min-width:180px;padding:8px 10px;background:var(--bg);color:var(--text);border:1px solid var(--border-strong);border-radius:4px;font-size:13px">' +
+        '<option value="">— No target —</option>' + opts + '</select>' +
+        (tgtAbbr ? '<button class="btn btn-sm" onclick="game.setHSTarget(\'\')">Clear</button>' : '') +
+        '</div>';
+      if (tgt) {
+        const o = r.offers.find(x => x.abbr === tgtAbbr);
+        const pct = Math.round((boost / 10) * 100);
+        html += '<div style="margin-top:12px;padding:10px 12px;background:var(--bg);border:1px solid var(--border-strong);border-radius:4px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline">' +
+          '<div style="font-size:13px;font-weight:700">' + tgt.name + '</div>' +
+          '<div style="font-size:12px;font-weight:700;color:var(--accent)">+' + boost + '% applied</div></div>' +
+          '<div style="height:7px;background:var(--surface-2);border-radius:4px;overflow:hidden;margin:6px 0 4px"><div style="height:100%;width:' + pct + '%;background:var(--accent)"></div></div>' +
+          '<div style="font-size:11px;color:var(--text-muted)">' +
+          (o ? 'Current interest: <strong>' + o.interest + '%</strong>' + (boost < 10 ? ' · keep playing to push it higher' : ' · maxed-out bump') : 'No offer from them yet — your push will apply the moment they offer.') +
+          '</div></div>';
+      }
+      html += '</div></div>';
+    }
     if (r.offers.length === 0) {
       html += '<div style="padding:16px;font-size:12px;color:var(--text-muted);font-style:italic">No offers yet. Keep dominating \u2014 they\u2019ll come.</div>';
     } else {
@@ -8022,6 +8278,19 @@ let game = {
       const loserScore = aScore > bScore ? bScore : aScore;
       // Mutate winner.strength slightly so a hot team carries momentum (small bonus)
       winner.strength += 0.5;
+      // PLAYER CAREER — if the user's school is in this CFP game, capture their personal performance
+      // and queue the weekly post-game popup, exactly like a regular-season Saturday. Without this the
+      // playoff week would fall through to the generic "bye" check-in even though the team is playing.
+      try {
+        const up = this.getUserPlayer && this.getUserPlayer();
+        if (up && up.school && (up.school === a.abbr || up.school === b.abbr)) {
+          const cfpG = {
+            home: a.abbr, away: b.abbr, week: this.state.collegeWeek,
+            played: true, isCFP: true
+          };
+          this._captureUserCollegeGame(cfpG, aScore, bScore);
+        }
+      } catch (e) { /* defensive — never break the bracket sim */ }
       return { winner, loser, winnerScore, loserScore };
     };
     
@@ -8244,6 +8513,37 @@ let game = {
 
     // If the user's player is in this game, capture their personal performance for the post-game popup.
     // This runs regardless of whether they were a top performer — the user always sees their own line.
+    // Factored into a helper so the CFP playoff path can reuse the exact same capture (it builds the
+    // games abstractly rather than through simCollegeGame).
+    this._captureUserCollegeGame(g, homeScore, awayScore);
+
+    // Update standings
+    const homeWin = homeScore > awayScore;
+    const homeStands = this.state.collegeStandings[g.home];
+    const awayStands = this.state.collegeStandings[g.away];
+    if (homeStands && awayStands) {
+      homeStands.pointsFor += homeScore;
+      homeStands.pointsAgainst += awayScore;
+      awayStands.pointsFor += awayScore;
+      awayStands.pointsAgainst += homeScore;
+      if (homeWin) {
+        homeStands.wins++;
+        awayStands.losses++;
+        if (g.isConference) { homeStands.confWins++; awayStands.confLosses++; }
+      } else {
+        awayStands.wins++;
+        homeStands.losses++;
+        if (g.isConference) { awayStands.confWins++; homeStands.confLosses++; }
+      }
+    }
+  },
+
+  // Capture the user player's personal performance for a college game (their stat line, season
+  // accumulation, per-game log, chemistry, signature moment, press take, prospect-grade swing on
+  // big postseason stages, NIL) and queue the weekly post-game popup. Reused by both the regular
+  // season (simCollegeGame) and the CFP playoff rounds so a player in the playoff gets the same
+  // normal weekly recap instead of a "bye" check-in.
+  _captureUserCollegeGame(g, homeScore, awayScore) {
     const userPlayer = this.getUserPlayer();
     if (userPlayer && (userPlayer.school === g.home || userPlayer.school === g.away)) {
       const userIsHome = userPlayer.school === g.home;
@@ -8303,9 +8603,10 @@ let game = {
         snapPct: perf.snapPct || 0,
         raw: perf.raw || {}
       });
-      // Queue the popup. simWeek will check this flag after college sim finishes. (Skipped while
-      // redshirting — no need for a weekly "did not play" popup all season.)
-      if (!userPlayer.redshirting) this._pendingUserGamePopup = { gameRef: g };
+      // Queue the popup. simWeek will check this flag after college sim finishes. Fires every week
+      // the player's team plays — including while redshirting (it shows the team's result and a
+      // redshirt note) so the user always gets a normal weekly recap rather than a "bye" check-in.
+      this._pendingUserGamePopup = { gameRef: g };
       // RELATIONSHIPS — build the user's college bonds (teammates + school staff) from this game.
       if (perf.raw && !perf.didNotPlay) {
         const r = perf.raw;
@@ -8358,26 +8659,6 @@ let game = {
         }
         // #6 COLLEGE NIL — a strong showing can draw a brand deal (rate-limited so it isn't spammy).
         try { this._maybeOfferCollegeNIL(userPlayer, collegeStats, oppLabel); } catch (e) { /* defensive */ }
-      }
-    }
-    
-    // Update standings
-    const homeWin = homeScore > awayScore;
-    const homeStands = this.state.collegeStandings[g.home];
-    const awayStands = this.state.collegeStandings[g.away];
-    if (homeStands && awayStands) {
-      homeStands.pointsFor += homeScore;
-      homeStands.pointsAgainst += awayScore;
-      awayStands.pointsFor += awayScore;
-      awayStands.pointsAgainst += homeScore;
-      if (homeWin) {
-        homeStands.wins++;
-        awayStands.losses++;
-        if (g.isConference) { homeStands.confWins++; awayStands.confLosses++; }
-      } else {
-        awayStands.wins++;
-        homeStands.losses++;
-        if (g.isConference) { awayStands.confWins++; homeStands.confLosses++; }
       }
     }
   },
@@ -9937,7 +10218,10 @@ let game = {
       (currentTeam ? 'ON THE CLOCK: ' + currentTeam.city + ' ' + currentTeam.name : 'Draft in progress') + '</div>' +
       '<div style="display:flex;gap:6px">' +
       (userPicked
-        ? '<button class="btn btn-sm btn-success" onclick="game._fastForwardDraft()">Sim rest of draft →</button>'
+        // Already drafted — the user can still reveal the rest of the board pick-by-pick if they
+        // want to watch the whole draft unfold, or jump straight to the end.
+        ? '<button class="btn btn-sm btn-success" onclick="game._revealNextDraftPick()">Reveal next pick →</button>' +
+          '<button class="btn btn-sm" onclick="game._fastForwardDraft()">Sim rest of draft →</button>'
         : '<button class="btn btn-sm btn-success" onclick="game._revealNextDraftPick()">Reveal next pick →</button>' +
           '<button class="btn btn-sm" onclick="game._fastForwardToUserPick()">Sim to my pick</button>') +
       '</div></div>';
@@ -10796,6 +11080,92 @@ let game = {
     return 'Your team is over the salary cap. You must get under both caps before continuing.\n\n' +
       violations.join('\n') +
       '\n\nCut players from My Team, restructure contracts on Cap & Contracts, or fire coaches from Coaching Staff.';
+  },
+
+  // ============================================================
+  // SIM OPTIONS — multi-week fast-forward from the header dropdown.
+  // ============================================================
+  toggleSimOptions() {
+    const menu = document.getElementById('simOptionsMenu');
+    if (!menu) return;
+    menu.style.display = (menu.style.display === 'none' || !menu.style.display) ? 'block' : 'none';
+  },
+  _closeSimOptions() {
+    const menu = document.getElementById('simOptionsMenu');
+    if (menu) menu.style.display = 'none';
+  },
+
+  // Method wrapper so both `closeModal()` (global) and `game.closeModal()` (used by some popup
+  // buttons) work consistently.
+  closeModal() { try { closeModal(); } catch (e) {} },
+
+  // Whether multi-week sim is appropriate right now: a pro regular season is in progress (not the
+  // offseason, playoffs, draft, or a HS/college player stage where weeks don't map to an NFL season).
+  _canMultiSim() {
+    if (!this.state || this.state.draftActive || this.state.playoffActive) return false;
+    if (this.state.offseasonPhase) return false;
+    if (this.state.week >= 18) return false; // regular season already complete (playoffs next)
+    const c = this.state.career;
+    if (c && c.mode === 'player' && c.careerStage !== 'nfl') return false; // HS/college/declared handled their own way
+    if (c && c.mode === 'coach') {
+      // Only when the coach actually has a team (in-season). Between jobs there's nothing to sim.
+      const coach = this.getUserCoach && this.getUserCoach();
+      if (!coach || coach.teamId === null || coach.teamId === undefined) return false;
+    }
+    return true;
+  },
+
+  // Advance week-by-week until the NFL week reaches targetWeek, or until something needs the user's
+  // attention (a forced popup/choice, the offseason, the draft, the playoffs, or a cap problem).
+  // Intermediate weekly popups are auto-dismissed so the user lands at the target in one step.
+  _simToWeek(targetWeek, label) {
+    this._closeSimOptions();
+    if (!this._canMultiSim()) { this.simWeek(); return; }
+    let guard = 0;
+    let advanced = 0;
+    while (guard < 40) {
+      guard++;
+      // Reached the target (or beyond) → stop.
+      if (this.state.week >= targetWeek) break;
+      // Stop if a blocking state arose (offseason/draft/playoffs) — shouldn't happen mid-regular-season
+      // but guards against edge cases.
+      if (this.state.draftActive || this.state.playoffActive || this.state.offseasonPhase) break;
+      // Stop if the user is over the cap (they must resolve it first).
+      if (this.checkUserCapCompliance()) { this.simWeek(); return; }
+      const weekBefore = this.state.week;
+      // For player careers, auto-resolve the per-game sim/play choice as "sim" so we don't stop weekly.
+      this._gameChoiceResolved = true;
+      this.simWeek();
+      // If a forced decision popup opened (contract negotiation, FA choice, etc.), stop and let the
+      // user handle it — don't bulldoze through it.
+      const modalEl = document.getElementById('modal');
+      const modalOpen = modalEl && modalEl.classList && modalEl.classList.contains('show');
+      const blockingChoice = this.state.offseasonPhase || (this.state.career && (
+        (this.state.career.pendingContractNegotiation && !this.state.career.pendingContractNegotiation.resolved)));
+      if (this.state.week === weekBefore) break; // sim didn't advance (something blocked) — stop
+      advanced++;
+      if (this.state.week >= targetWeek) break;
+      if (blockingChoice) break;
+      // Dismiss the intermediate weekly recap/game popup so popups don't stack across many weeks.
+      if (modalOpen) { try { closeModal(); } catch (e) {} }
+    }
+    // Re-render the landing week (the last weekly popup, if any, stays for the user to read).
+    this.render();
+  },
+
+  simUntilMidseason() {
+    // Midseason = week 9 of the 18-week regular season.
+    if (this.state && this.state.week >= 9) {
+      this._closeSimOptions();
+      alert('You\u2019re already at or past midseason (week ' + this.state.week + ').');
+      return;
+    }
+    this._simToWeek(9, 'midseason');
+  },
+
+  simRegularSeason() {
+    // End of the 18-week regular season (playoffs begin on the next sim).
+    this._simToWeek(18, 'end of regular season');
   },
 
   simWeek() {
@@ -12399,7 +12769,7 @@ let game = {
       let inc = 0.16; if (won) inc += 0.12; if (perfGood) inc += 0.06;
       c.score = Math.min(100, (c.score || 0) + inc);
       c.name = tm.name; c.pos = tm.position; c.college = true;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; } // seasons counter only — chem rises from shared games, not from the calendar
+      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
       up._chemistry[tm.id] = c;
     });
     // Coaches: the head coach and the coordinator on the user's side of the ball.
@@ -12414,7 +12784,7 @@ let game = {
         if (role === 'HC') inc *= 1.05;
         c.score = Math.min(100, (c.score || 0) + inc);
         c.name = coach.name; c.role = role; c.college = true; c.collegeTeam = up.school;
-        if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; } // seasons counter only — chem rises from shared games, not from the calendar
+        if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
         up._coachChem[cid] = c;
       });
     }
@@ -13279,6 +13649,39 @@ let game = {
   },
 
   // Sign a free-agent player
+  // FREE-AGENT MARKET DISCOUNT — the longer a player sits unsigned (and the older they are), the
+  // more their asking price drops, so stale-but-useful vets become bargains teams will actually sign.
+  // This is what stops good mid-tier FAs from languishing on the board year after year.
+  _faMarketDiscount(p) {
+    let d = 1.0;
+    const yrs = p.yearsAsFA || 0;
+    if (yrs >= 1) d -= 0.22 * Math.min(2, yrs);      // -22% after a season unsigned, -44% after two
+    if (p.age >= 31) d -= 0.10;                       // older vets take a further haircut
+    else if (p.age >= 29) d -= 0.05;
+    return Math.max(0.45, d);                          // never less than 45% of market
+  },
+
+  // Effective asking AAV for a free agent — market value scaled by the staleness/age discount.
+  _faAskingAAV(p) {
+    const base = calculateContractAAV(p.position, p.rating, p.age, this.state.year);
+    return Math.max(900_000, Math.round(base * this._faMarketDiscount(p) / 50_000) * 50_000);
+  },
+
+  // Build a contract for a free-agent signing at their (discounted) asking price. Scales a normally
+  // generated deal down to the bargain AAV so cap usage reflects the discount.
+  _makeFAContract(p) {
+    const c = generateContract(p.position, p.rating, p.age, this.state.year, false);
+    const askAAV = this._faAskingAAV(p);
+    const ratio = c.aav > 0 ? askAAV / c.aav : 1;
+    if (ratio < 0.999) {
+      c.aav = askAAV;
+      c.totalValue = Math.round(askAAV * c.years);
+      c.signingBonus = Math.round((c.signingBonus || 0) * ratio / 50_000) * 50_000;
+      c.baseSalaries = (c.baseSalaries || []).map(b => Math.max(800_000, Math.round(b * ratio / 50_000) * 50_000));
+    }
+    return c;
+  },
+
   signFreeAgent(playerId) {
     if (this.state.userTeamId === null) return;
     const p = this.state.players[playerId];
@@ -13288,11 +13691,12 @@ let game = {
       alert('Roster is full (' + ROSTER_SIZE + '). Release a player first.');
       return;
     }
-    // Generate a contract offer
-    const contract = generateContract(p.position, p.rating, p.age, this.state.year, false);
+    // Generate a contract offer at the player's current (possibly discounted) asking price.
+    const contract = this._makeFAContract(p);
     if (!confirm('Sign ' + p.name + ' (' + p.position + ', OVR ' + p.rating + ') for ' + contract.years + ' yrs, ' + formatMoney(contract.totalValue) + ' (' + formatMoney(contract.aav) + '/yr)?')) return;
     p.team = team.id;
     p.contract = contract;
+    p.yearsAsFA = 0;
     team.roster.push(p.id);
     this.addHeadline({ type: 'contract', title: team.city + ' ' + team.name + ' sign ' + p.name, body: p.position + ' joins on a ' + contract.years + '-year, ' + formatMoney(contract.totalValue) + ' deal.' });
     this.saveGame();
@@ -13415,10 +13819,12 @@ let game = {
       }
     }
     
-    // STEP 3: TRADE OVERPAID VETS (simulated — for CPU we just "trade" by releasing without dead cap penalty)
-    // Real NFL: a team in cap trouble trades a vet to a team with cap room.
-    // We model this simply: find moderately-overpaid vets and "trade" them (release as if absorbed by another team).
-    // This is preferable to a cap-casualty cut because dead cap stays minimal.
+    // STEP 3: TRADE / RELEASE OVERPAID VETS — honest cap relief only.
+    // A cap-strapped team moves a moderately-overpaid vet. If a real receiver exists (a team with a
+    // roster slot and the cap room to absorb the player's remaining BASE salary), it's a true trade:
+    // the player moves there carrying only his base (the acquiring team's new cost), while THIS team
+    // eats the full remaining prorated signing bonus as dead cap — exactly like real NFL trade math.
+    // If no receiver wants him, he's simply released (also full dead cap). No discounts, no fictions.
     if (teamCapUsed(team, this.state.players) > cap) {
       const tradeCandidates = getPlayers()
         .filter(p =>
@@ -13432,18 +13838,39 @@ let game = {
         .sort((a, b) => overpaidness(b) - overpaidness(a));
       for (const p of tradeCandidates) {
         if (teamCapUsed(team, this.state.players) <= cap) break;
-        // "Trade away" — release with reduced dead cap (simulate absorbing team taking salary)
-        // This is a fiction since we don't model a receiving team, but it produces realistic-looking cap relief.
-        const reducedDead = Math.round(deadCapIfReleased(p.contract) * 0.5);
-        team.deadCap = (team.deadCap || 0) + reducedDead;
+        const deadFull = deadCapIfReleased(p.contract);
+        const baseGoingForward = (p.contract.baseSalaries && p.contract.baseSalaries[0]) || currentCapHit(p.contract);
+        // The original team always eats the full remaining bonus proration (honest dead cap).
+        team.deadCap = (team.deadCap || 0) + deadFull;
         team.roster = team.roster.filter(id => id !== p.id);
-        p.team = null;
-        p.contract = null;
-        this.addHeadline({
-          type: 'contract',
-          title: team.city + ' ' + team.name + ' trade ' + p.name,
-          body: 'Veteran ' + p.position + ' sent to another team to clear cap. Dead cap impact: ' + formatMoney(reducedDead) + '.'
-        });
+        // Look for a genuine receiver: not us, not the user team, has a roster slot, and the cap room
+        // to take on the player's base salary.
+        const receiver = this.state.teams
+          .filter(t => t.id !== team.id && t.id !== this.state.userTeamId &&
+            t.roster.length < ROSTER_SIZE &&
+            (getSalaryCap(this.state.year) - teamCapUsed(t, this.state.players)) >= baseGoingForward)
+          .sort((a, b) => (getSalaryCap(this.state.year) - teamCapUsed(b, this.state.players)) - (getSalaryCap(this.state.year) - teamCapUsed(a, this.state.players)))[0];
+        if (receiver) {
+          // Real trade: the player keeps his remaining base salaries but the signing bonus (and its
+          // proration) stays behind as the trading team's dead cap, so the receiver only owes base.
+          p.contract = Object.assign({}, p.contract, { signingBonus: 0, bonusProrationYears: 1 });
+          p.team = receiver.id;
+          receiver.roster.push(p.id);
+          this.addHeadline({
+            type: 'contract',
+            title: team.city + ' ' + team.name + ' trade ' + p.name + ' to ' + receiver.abbr,
+            body: 'Veteran ' + p.position + ' dealt to clear cap. Dead cap retained: ' + formatMoney(deadFull) + '.'
+          });
+        } else {
+          // No taker — straight release.
+          p.team = null;
+          p.contract = null;
+          this.addHeadline({
+            type: 'contract',
+            title: team.city + ' ' + team.name + ' release ' + p.name,
+            body: 'Veteran ' + p.position + ' released to clear cap. Dead cap: ' + formatMoney(deadFull) + '.'
+          });
+        }
       }
     }
     
@@ -13506,13 +13933,14 @@ let game = {
           .filter(p => p && !p.retired && p.position === fa.position)
           .sort((a, b) => b.rating - a.rating)[0];
         if (ourStarter && fa.rating <= ourStarter.rating - 2) continue; // not enough of an upgrade
-        // Estimated AAV for this player. Skip if we can't afford.
-        const estAAV = calculateContractAAV(fa.position, fa.rating, fa.age, this.state.year);
+        // Estimated AAV for this player (discounted for staleness). Skip if we can't afford.
+        const estAAV = this._faAskingAAV(fa);
         if (estAAV > remainingCap) continue;
         // Sign the FA
         fa.team = team.id;
         team.roster.push(fa.id);
-        fa.contract = generateContract(fa.position, fa.rating, fa.age, this.state.year, false);
+        fa.contract = this._makeFAContract(fa);
+        fa.yearsAsFA = 0;
         signingsThisTeam++;
         // Quietly recompute needs since we just changed the roster
         Object.assign(needs, this.calculateTeamNeeds(team));
@@ -14457,7 +14885,29 @@ let game = {
               reSignChance *= 0.6;
             }
             if (curTeam && !userManaged && Math.random() < reSignChance) {
-              p.contract = generateContract(p.position, p.rating, p.age, this.state.year, false);
+              // CAP DISCIPLINE — a well-run front office won't sign itself into a hole. Re-sign only
+              // if the deal fits the current cap, or if the player is a true cornerstone worth making
+              // room for via restructures. Mid-tier players a cap-strapped team can't afford are let
+              // walk to the open market (where another team with room can sign them) instead of being
+              // retained at a price that blows the budget. This is the prevention that keeps CPU teams
+              // out of cap trouble in the first place — no artificial forgiveness needed downstream.
+              const newC = generateContract(p.position, p.rating, p.age, this.state.year, false);
+              const firstHit = currentCapHit(newC);
+              const capNow = getSalaryCap(this.state.year);
+              const room = capNow - teamCapUsed(curTeam, this.state.players);
+              const cornerstone = (p.rating >= 85) || ((p.awards || []).some(a => a.year === this.state.year && ['MVP','OPOY','DPOY','All-Pro 1st'].includes(a.type)));
+              // Cornerstones get a restructure-sized cushion (the AGM will create the room); others
+              // must fit within ~$3M of available space or they hit free agency.
+              const cushion = cornerstone ? Math.round(capNow * 0.06) : 3_000_000;
+              if (firstHit <= room + cushion) {
+                p.contract = newC;
+              } else {
+                if (p.team !== null) {
+                  this.state.teams[p.team].roster = this.state.teams[p.team].roster.filter(id => id !== p.id);
+                  p.team = null;
+                }
+                p.contract = null;
+              }
             } else {
               if (p.team !== null) {
                 this.state.teams[p.team].roster = this.state.teams[p.team].roster.filter(id => id !== p.id);
@@ -14929,6 +15379,10 @@ let game = {
       const isUser = team.id === this.state.userTeamId;
       if (!isUser || this.state.useAssistantGM) this.runAssistantGM(team);
     });
+    // Hard guarantee: bring every team to (or under) the cap right now so the offseason cap pages
+    // never show a team over the cap. (CPU teams get cuts if needed; the user's roster is only
+    // restructured — they manage their own cuts, gated by checkUserCapCompliance.)
+    this.enforceCapCompliance();
     
     this.state.offseasonPhase = 'fa'; // 'fa' → 'draft' → null
     this.addHeadline({ type: 'contract', title: 'Free agency opens', body: 'Player and coach FAs available. Click Continue to advance to the draft.' });
@@ -14983,17 +15437,79 @@ let game = {
             fas.sort((a, b) => b.rating - a.rating);
             const fa = fas[0];
             fa.team = team.id;
-            fa.contract = generateContract(fa.position, fa.rating, fa.age, this.state.year, false);
+            fa.contract = this._makeFAContract(fa);
+            fa.yearsAsFA = 0;
             team.roster.push(fa.id);
           }
         }
       });
     });
+
+    // HARD GUARANTEE — no quality FA sits on the board for a second straight season. Any unsigned
+    // player above 77 OVR who has already been a free agent for a full season is force-signed now to
+    // the team that fits best (most cap room / biggest positional need), making room with a fringe
+    // cut if necessary. This is what stops good mid-tier vets from languishing year after year.
+    this._forceSignStaleFAs();
+
     // Cleanup very old / very poor FAs (retire them so they don't clog the pool indefinitely)
     this.state.players.forEach(p => {
       if (p.team === null && !p.retired && p.collegeGrade === undefined && (p.age >= 34 || p.rating < 60)) {
         p.retired = true;
         p.retiredYear = this.state.year;
+      }
+    });
+  },
+
+  // Force-sign every unsigned FA above 77 OVR that has already spent a full season unsigned, so none
+  // ever go more than one season without a home. Each is placed with the best-fit team (cap room +
+  // need), displacing a clearly-worse fringe player if the roster is full.
+  _forceSignStaleFAs() {
+    const cap = getSalaryCap(this.state.year);
+    const stale = this.state.players.filter(p =>
+      p.team === null && !p.retired && !p.isUserControlled && p.collegeGrade === undefined &&
+      p.rating >= 78 && (p.yearsAsFA || 0) >= 1
+    ).sort((a, b) => b.rating - a.rating);
+
+    stale.forEach(fa => {
+      const askAAV = this._faAskingAAV(fa);
+      // Rank teams by fit: most cap room first, with a bump for genuine positional need.
+      const ranked = this.state.teams.map(team => {
+        if (team.id === this.state.userTeamId) return null; // user manages their own signings
+        const space = cap - teamCapUsed(team, this.state.players);
+        const atPos = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired && p.position === fa.position);
+        const worst = atPos.length ? Math.min.apply(null, atPos.map(p => p.rating)) : 0;
+        const need = (atPos.length < (POSITION_COUNTS[fa.position] || 2)) ? 6 : Math.max(0, fa.rating - worst);
+        return { team, space, need, worst, atPos };
+      }).filter(x => x !== null)
+        .sort((a, b) => (b.need - a.need) || (b.space - a.space));
+
+      for (const cand of ranked) {
+        const team = cand.team;
+        let madeRoom = true;
+        if (team.roster.length >= ROSTER_SIZE) {
+          // Cut the weakest non-user player if they're clearly worse than this FA.
+          const cut = team.roster.map(id => this.state.players[id])
+            .filter(p => p && !p.retired && !p.isUserControlled)
+            .sort((a, b) => a.rating - b.rating)[0];
+          if (cut && cut.rating < fa.rating) {
+            team.roster = team.roster.filter(id => id !== cut.id);
+            if (cut.contract) { team.deadCap = (team.deadCap || 0) + deadCapIfReleased(cut.contract); cut.contract = null; }
+            cut.team = null;
+          } else {
+            madeRoom = false;
+          }
+        }
+        if (!madeRoom) continue;
+        fa.team = team.id;
+        fa.contract = this._makeFAContract(fa);
+        fa.yearsAsFA = 0;
+        team.roster.push(fa.id);
+        // Cap is reconciled afterward by the offseason AGM + enforceCapCompliance pass.
+        if (fa.rating >= 82) {
+          this.addHeadline({ type: 'contract', title: team.city + ' ' + team.name + ' sign veteran ' + fa.name,
+            body: fa.position + ' ' + fa.name + ' (OVR ' + fa.rating + ') finds a home on a ' + fa.contract.years + '-yr, ' + formatMoney(fa.contract.totalValue) + ' deal.' });
+        }
+        break;
       }
     });
   },
@@ -15051,8 +15567,9 @@ let game = {
           }
           // Would the FA be an upgrade over the worst at the position (or fill a thin room)?
           if (atPos.length > 0 && fa.rating <= worstAtPos + 2 && atPos.length >= (POSITION_COUNTS[fa.position] || 2)) return null;
-          // Cap check — would signing them blow the cap? Hard limit, no grace.
-          const projAAV = calculateContractAAV(fa.position, fa.rating, fa.age, this.state.year);
+          // Cap check — would signing them blow the cap? Hard limit, no grace. Uses the player's
+          // (possibly discounted) asking price so cap-tight teams will still scoop up stale bargains.
+          const projAAV = this._faAskingAAV(fa);
           const capUsed = teamCapUsed(team, this.state.players);
           if (capUsed + projAAV > cap) return null;
           // Score this team's interest: higher when weakness is bigger
@@ -15074,7 +15591,8 @@ let game = {
           ct.team = null;
         }
         fa.team = winner.id;
-        fa.contract = generateContract(fa.position, fa.rating, fa.age, this.state.year, false);
+        fa.contract = this._makeFAContract(fa);
+        fa.yearsAsFA = 0;
         winner.roster.push(fa.id);
         anySigned = true;
         
@@ -15092,37 +15610,93 @@ let game = {
     }
   },
 
-  // Post-AGM: ensure no team exceeds ROSTER_SIZE. Cut lowest-value to get to 53.
-  // Value = rating + a small youth bonus (so young projects stay over old declining vets when close).
-  // Guarantee EVERY team is under the salary cap — in-season, in any game mode. Primary tool is
-  // contract restructuring (convert current-year base into prorated bonus), which lowers this year's
-  // cap hit WITHOUT creating dead money or losing the player, so the 53-man roster stays intact. A
-  // hard dead-cap ceiling prevents the dead-money spirals that pushed teams to 106%+ used. Any tiny
-  // residual is granted as cap relief out of dead money, so no team is ever shown over the cap.
+  // Bring every team to (or under) the salary cap through legitimate moves only — no invented or
+  // erased money. Tools, in order: (1) restructure multi-year deals (convert current-year base into
+  // prorated signing bonus — real future cost, keeps the player), then for CPU teams (2) release
+  // genuinely overpaid players whose cut actually saves cap (real dead money), most-overpaid first.
+  // The user's roster is never auto-cut; they manage their own moves (gated by checkUserCapCompliance).
+  // A team that can't fully balance in a deep cap-hell year simply runs tight until dead money rolls
+  // off — the same bind a real cap-strapped franchise lives with — rather than having it forgiven.
   enforceCapCompliance() {
     const cap = getSalaryCap(this.state.year);
-    const maxDead = Math.round(cap * 0.20); // dead money can't exceed ~20% of the cap (anti-spiral)
+    const userTeamId = this.state.userTeamId;
     this.state.teams.forEach(team => {
-      if ((team.deadCap || 0) > maxDead) team.deadCap = maxDead;
-      let used = teamCapUsed(team, this.state.players);
-      if (used <= cap) return;
-      const rostered = team.roster.map(id => this.state.players[id])
-        .filter(p => p && !p.retired && p.contract && (p.contract.yearsRemaining || 0) >= 2)
-        .sort((a, b) => currentCapHit(b.contract) - currentCapHit(a.contract));
-      for (const p of rostered) {
-        if (used <= cap) break;
-        const c = p.contract;
-        const base = (c.baseSalaries && c.baseSalaries[0]) || 0;
-        if (base <= 1_500_000) continue;
-        const convert = Math.round(base * 0.75 / 50_000) * 50_000;
-        c.baseSalaries[0] = base - convert;
-        c.signingBonus = (c.signingBonus || 0) + convert;
-        c.bonusProrationYears = Math.max(c.bonusProrationYears || 1, Math.min(5, c.yearsRemaining));
-        used = teamCapUsed(team, this.state.players);
+      // Live salary = sum of current-year cap hits of rostered players (excludes dead money).
+      const liveSalary = () => {
+        let s = 0;
+        team.roster.forEach(id => { const p = this.state.players[id]; if (p && !p.retired && p.contract) s += currentCapHit(p.contract); });
+        return s;
+      };
+      const total = () => liveSalary() + (team.deadCap || 0);
+      if (total() <= cap) return;
+
+      // PASS 1 — RESTRUCTURE (non-destructive): convert current-year base into prorated signing
+      // bonus for multi-year deals, lowering this year's cap hit while keeping the player. Several
+      // sweeps, biggest base first, down to a $1.0M floor. This is exactly how real teams create room
+      // for star contracts — no money is invented or erased, it's pushed forward as real future cost.
+      for (let sweep = 0; sweep < 4 && total() > cap; sweep++) {
+        const cands = team.roster.map(id => this.state.players[id])
+          .filter(p => p && !p.retired && p.contract && (p.contract.yearsRemaining || 0) >= 2 &&
+            Array.isArray(p.contract.baseSalaries) && (p.contract.baseSalaries[0] || 0) > 1_000_000)
+          .sort((a, b) => (b.contract.baseSalaries[0] || 0) - (a.contract.baseSalaries[0] || 0));
+        let movedThisSweep = false;
+        for (const p of cands) {
+          if (total() <= cap) break;
+          const c = p.contract;
+          const base = c.baseSalaries[0] || 0;
+          const convertible = base - 1_000_000;
+          if (convertible < 500_000) continue;
+          const converting = Math.round(convertible * 0.85 / 50_000) * 50_000;
+          if (converting <= 0) continue;
+          c.baseSalaries[0] = base - converting;
+          c.signingBonus = (c.signingBonus || 0) + converting;
+          c.bonusProrationYears = Math.max(c.bonusProrationYears || 1, Math.min(5, c.yearsRemaining));
+          movedThisSweep = true;
+        }
+        if (!movedThisSweep) break;
       }
-      // Final guarantee — absorb any residual overage as cap relief (no forced cuts; roster stays full).
-      used = teamCapUsed(team, this.state.players);
-      if (used > cap) team.deadCap = Math.max(0, (team.deadCap || 0) - (used - cap));
+
+      // PASS 2 — REAL CUTS (CPU teams only): if still over after restructuring, release players whose
+      // release actually saves cap (cap hit > dead-cap hit), most-overpaid first, until compliant. Each
+      // such cut genuinely lowers the team's cap number — no forgiveness. We never force-cut the user's
+      // roster; the user is gated by checkUserCapCompliance and manages their own moves.
+      if (team.id !== userTeamId && total() > cap) {
+        const savings = (p) => currentCapHit(p.contract) - deadCapIfReleased(p.contract);
+        const overpaid = (p) => currentCapHit(p.contract) - calculateContractAAV(p.position, p.rating, p.age, this.state.year);
+        // Protect a small core of genuine franchise players from a cap-purge cut (real GMs build
+        // around them); everyone else is fair game when the books don't balance.
+        const sortedByVal = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired)
+          .sort((a, b) => (b.rating * (POSITION_VALUE[b.position] || 1)) - (a.rating * (POSITION_VALUE[a.position] || 1)));
+        const coreProtected = new Set(sortedByVal.slice(0, 10).filter(p => p.age < 30 && p.rating >= 82).map(p => p.id));
+        let cutCandidates = team.roster.map(id => this.state.players[id])
+          .filter(p => p && !p.retired && p.contract && !p.isUserControlled && !coreProtected.has(p.id) && savings(p) > 0)
+          .sort((a, b) => (overpaid(b) - overpaid(a)) || (a.rating - b.rating));
+        for (const p of cutCandidates) {
+          if (total() <= cap) break;
+          team.roster = team.roster.filter(id => id !== p.id);
+          team.deadCap = (team.deadCap || 0) + deadCapIfReleased(p.contract);
+          p.team = null;
+          p.contract = null;
+        }
+        // If STILL over (the protected core itself is the overage), drop the protection and keep
+        // cutting positive-savings players — a real fire sale. This is the honest last resort: the
+        // team gets under the cap by shedding salary, not by erasing dead money.
+        if (total() > cap) {
+          cutCandidates = team.roster.map(id => this.state.players[id])
+            .filter(p => p && !p.retired && p.contract && !p.isUserControlled && savings(p) > 0)
+            .sort((a, b) => (overpaid(b) - overpaid(a)) || (a.rating - b.rating));
+          for (const p of cutCandidates) {
+            if (total() <= cap) break;
+            team.roster = team.roster.filter(id => id !== p.id);
+            team.deadCap = (team.deadCap || 0) + deadCapIfReleased(p.contract);
+            p.team = null;
+            p.contract = null;
+          }
+        }
+      }
+      // No dead-money forgiveness. A team that's still marginally over (e.g. heavy prior-year dead
+      // money with no positive-savings cuts left) simply runs tight until the dead money rolls off at
+      // the next offseason — exactly like a real cap-strapped franchise.
     });
   },
 
@@ -15470,6 +16044,13 @@ let game = {
     else if (this.state.playoffActive) btnText = 'Sim ' + weekDisplay + ' →';
     else if (this.state.week >= 18) btnText = 'Start Playoffs →';
     document.getElementById('simBtn').textContent = btnText;
+    // Sim Options dropdown — only available during a pro regular season the user can fast-forward.
+    const simOptsWrap = document.getElementById('simOptionsWrap');
+    if (simOptsWrap) {
+      const simBtnVisible = document.getElementById('simBtn').style.display !== 'none';
+      simOptsWrap.style.display = (simBtnVisible && this._canMultiSim()) ? '' : 'none';
+      if (simOptsWrap.style.display === 'none') this._closeSimOptions();
+    }
     
     // Show playoffs nav if active
     const navPlayoffs = document.getElementById('navPlayoffs');
@@ -15704,20 +16285,31 @@ let game = {
       .map(p => ({ ...pinfo(p), round: p.draftRound, overall: p.draftOverall }));
     const draftedIds = new Set(draftClass.map(d => d.id));
 
-    // ADDITIONS (non-draft) — on the roster now but not at offseason start, and not a rookie pick.
+    // TRADES — pull the user's logged trades (players + picks, acquired + sent) since the last summary.
+    const tradeLog = (this.state._userTradeLog || []).slice();
+    const tradeAcquiredPlayerIds = new Set();
+    const tradeSentPlayerIds = new Set();
+    tradeLog.forEach(t => {
+      (t.acquired || []).forEach(a => { if (a.kind === 'player' && a.id !== undefined) tradeAcquiredPlayerIds.add(a.id); });
+      (t.sent || []).forEach(a => { if (a.kind === 'player' && a.id !== undefined) tradeSentPlayerIds.add(a.id); });
+    });
+
+    // ADDITIONS (non-draft) — on the roster now but not at offseason start, not a rookie pick, and not
+    // acquired via trade (trade acquisitions are shown in their own Trades section instead).
     const additions = beforeSet
       ? afterIds
-          .filter(id => !beforeSet.has(id) && !draftedIds.has(id))
+          .filter(id => !beforeSet.has(id) && !draftedIds.has(id) && !tradeAcquiredPlayerIds.has(id))
           .map(id => this.state.players[id])
           .filter(p => p)
           .sort((a, b) => b.rating - a.rating)
           .map(pinfo)
       : [];
 
-    // DEPARTURES — on the roster at offseason start but gone now; resolve where they landed.
+    // DEPARTURES — on the roster at offseason start but gone now; resolve where they landed. Players
+    // sent in a trade are reported in the Trades section instead, so exclude them here.
     const departures = beforeSet
       ? beforeIds
-          .filter(id => !afterSet.has(id))
+          .filter(id => !afterSet.has(id) && !tradeSentPlayerIds.has(id))
           .map(id => this.state.players[id])
           .filter(p => p)
           .map(p => {
@@ -15731,11 +16323,12 @@ let game = {
       : [];
 
     this.state._rosterSnapshot = null; // consumed
+    this.state._userTradeLog = [];      // consumed — trades are now folded into this summary
     // Nothing meaningful to report (e.g. very first draft with no snapshot and no picks) → skip.
-    if (!draftClass.length && !additions.length && !departures.length) { this.state._pendingRosterMoves = null; return; }
+    if (!draftClass.length && !additions.length && !departures.length && !tradeLog.length) { this.state._pendingRosterMoves = null; return; }
     this.state._pendingRosterMoves = {
       orgId, year: yr, teamName: team.city + ' ' + team.name, teamColor: team.primary,
-      draftClass, additions, departures
+      draftClass, additions, departures, trades: tradeLog
     };
   },
 
@@ -15791,6 +16384,33 @@ let game = {
       });
     } else {
       html += '<div style="color:var(--text-muted);font-size:12px;font-style:italic;padding-bottom:6px">No draft picks this year.</div>';
+    }
+
+    // Trades — players AND picks acquired/sent (separate from FA adds and natural departures).
+    const trades = data.trades || [];
+    html += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);font-weight:700;margin:14px 0 6px">Trades (' + trades.length + ')</div>';
+    if (trades.length) {
+      const assetLine = (a) => {
+        if (a.kind === 'player') {
+          const nm = (a.id !== undefined)
+            ? '<strong style="cursor:pointer;text-decoration:underline" onclick="game.showPlayer(' + a.id + ')">' + a.label + '</strong>'
+            : '<strong>' + a.label + '</strong>';
+          return nm + ' <span style="color:var(--text-muted)">' + (a.pos || '') + (a.ovr ? ' · ' + a.ovr + ' OVR' : '') + '</span>';
+        }
+        return '<span>' + a.label + '</span>';
+      };
+      trades.forEach(t => {
+        const acq = (t.acquired || []).map(assetLine).join('<br>') || '<span style="color:var(--text-muted)">—</span>';
+        const sent = (t.sent || []).map(assetLine).join('<br>') || '<span style="color:var(--text-muted)">—</span>';
+        html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">' +
+          '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);font-weight:700;margin-bottom:4px">Trade with ' + t.partnerAbbr + '</div>' +
+          '<div style="display:flex;gap:12px;flex-wrap:wrap">' +
+          '<div style="flex:1;min-width:140px"><div style="font-size:10px;font-weight:700;color:var(--success);margin-bottom:2px">ACQUIRED</div>' + acq + '</div>' +
+          '<div style="flex:1;min-width:140px"><div style="font-size:10px;font-weight:700;color:var(--danger);margin-bottom:2px">SENT</div>' + sent + '</div>' +
+          '</div></div>';
+      });
+    } else {
+      html += '<div style="color:var(--text-muted);font-size:12px;font-style:italic;padding-bottom:6px">No trades.</div>';
     }
 
     // Free-agent / other additions
@@ -16978,6 +17598,11 @@ let game = {
   },
 
   renderRelationships() {
+    // HIGH-SCHOOL STAGE — the user has no pro/college player yet; their bonds are with senior-year
+    // teammates and their head coach, built up by the games they've played this season.
+    if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'highschool') {
+      return this.renderHSRelationships();
+    }
     const up = this.getUserPlayer();
     if (!up || this.state.career.mode !== 'player') {
       this.currentView = 'mycareer'; this.render(); return;
@@ -17070,6 +17695,85 @@ let game = {
             '<span style="color:' + r.statusColor + ';font-weight:600;white-space:nowrap">' + r.status + '</span>' +
           '</div>' +
           recruitCtrl +
+        '</div>' +
+        chevron +
+        '</div>';
+    });
+    html += '</div></div>';
+    document.getElementById('content').innerHTML = html;
+  },
+
+  // HIGH-SCHOOL RELATIONSHIPS — bonds the senior builds with teammates + their head coach, growing
+  // every game played (regular season and the state-playoff run). Mirrors the college/NFL look so the
+  // tab feels consistent across career stages.
+  renderHSRelationships() {
+    const r = this.state.career && this.state.career.hsRecruit;
+    if (!r) { this.currentView = 'hsrecruit'; this.render(); return; }
+    const chem = r.teammateChem || {};
+    let html = '<div class="page-header"><div class="page-title">Relationships</div>' +
+      '<div class="page-subtitle">The bonds ' + r.name + ' is building at ' + r.teamName + ' — they grow every game you play and follow your closest teammates into college.</div></div>';
+
+    const gamesPlayed = (r.record.w || 0) + (r.record.l || 0);
+    if (gamesPlayed === 0) {
+      html += '<div class="card"><div style="padding:24px;text-align:center;color:var(--text-muted)">' +
+        'No bonds yet. Play your senior-season games and chemistry with your teammates and coach will build week by week.</div></div>';
+      document.getElementById('content').innerHTML = html;
+      return;
+    }
+
+    // Assemble the list: head coach first if present, then teammates by chemistry desc.
+    const rows = [];
+    if (r.headCoach && (r.headCoach.chem || 0) > 0) {
+      rows.push({
+        kind: 'coach', name: r.headCoach.name, sub: 'Head Coach', score: Math.round(r.headCoach.chem),
+        gp: r.headCoach.gp || 0, faceSeed: r.headCoach.faceSeed,
+        status: 'Your HS head coach', statusColor: 'var(--success)', tap: null, mate: null
+      });
+    }
+    (r.teammates || []).forEach(m => {
+      const c = chem[m.id];
+      if (!c || (c.score || 0) <= 0) return;
+      const tierStatus = !m.madeCollege ? 'HS teammate'
+        : m.tier === 'elite' ? '★ Blue-chip teammate'
+        : m.tier === 'good' ? 'College-bound teammate'
+        : 'College-bound teammate';
+      rows.push({
+        kind: 'player', name: m.name, sub: m.position, score: Math.round(c.score),
+        gp: c.gp || 0, faceSeed: m.faceSeed,
+        status: tierStatus, statusColor: m.madeCollege ? 'var(--accent)' : 'var(--text-muted)',
+        tap: "game.showHSTeammateCard('" + m.id + "')", mate: m
+      });
+    });
+    rows.sort((a, b) => (a.kind === 'coach' ? -1 : b.kind === 'coach' ? 1 : b.score - a.score));
+
+    html += '<style>.rel-row{transition:background 0.12s}.rel-row.tappable{cursor:pointer}.rel-row.tappable:hover{background:var(--surface-2)}</style>';
+    html += '<div style="font-size:11px;color:var(--text-muted);padding:0 16px 8px">Pin a teammate from their card to follow them into college and the pros.</div>';
+    html += '<div class="card"><div class="card-header"><div class="card-title">Closest bonds</div>' +
+      '<div class="card-meta">' + rows.length + ' relationship' + (rows.length === 1 ? '' : 's') + '</div></div><div style="padding:8px 0">';
+    rows.forEach(row => {
+      const tier = this._chemTier(row.score);
+      const face = (row.faceSeed !== null && row.faceSeed !== undefined)
+        ? '<div style="width:42px;height:42px;flex:none">' + pixelFaceSVG(row.faceSeed) + '</div>'
+        : '<div style="width:42px;height:42px;flex:none;background:var(--surface-2);border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--text-muted)">' + (row.name ? row.name.charAt(0) : '?') + '</div>';
+      const tag = row.kind === 'coach'
+        ? '<span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;background:var(--info);color:#fff;padding:1px 6px;border-radius:2px;margin-left:6px">Coach</span>'
+        : '';
+      const tappable = !!row.tap;
+      const onclick = tappable ? ' onclick="' + row.tap + '"' : '';
+      const chevron = tappable ? '<span style="flex:none;color:var(--text-dim);font-size:16px;margin-left:2px">›</span>' : '';
+      const note = row.gp ? row.gp + ' game' + (row.gp === 1 ? '' : 's') + ' together this season' : '';
+      html += '<div class="rel-row' + (tappable ? ' tappable' : '') + '" style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border)"' + onclick + '>' +
+        face +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+            '<div style="font-weight:700;font-size:14px">' + row.name + tag + '</div>' +
+            '<div style="font-size:14px;font-weight:700;font-family:var(--font-mono);color:' + tier.color + '">' + row.score + '%</div>' +
+          '</div>' +
+          '<div style="height:7px;background:var(--surface-2);border-radius:4px;overflow:hidden;margin:5px 0 4px"><div style="height:100%;width:' + row.score + '%;background:' + tier.color + '"></div></div>' +
+          '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px">' +
+            '<span style="color:var(--text-muted)">' + row.sub + (row.sub && note ? ' · ' : '') + note + '</span>' +
+            '<span style="color:' + row.statusColor + ';font-weight:600;white-space:nowrap">' + row.status + '</span>' +
+          '</div>' +
         '</div>' +
         chevron +
         '</div>';
@@ -22287,7 +22991,7 @@ let game = {
     
     filtered.slice(0, 100).forEach(p => {
       const rc = this.ratingClass(p.rating);
-      const aav = calculateContractAAV(p.position, p.rating, p.age, this.state.year);
+      const aav = this._faAskingAAV(p);
       html += '<tr>' +
         '<td onclick="game.showPlayer(' + p.id + ')" style="cursor:pointer"><strong>' + p.name + '</strong></td>' +
         '<td class="text-center"><span class="position-tag">' + p.position + '</span></td>' +
@@ -23036,7 +23740,26 @@ let game = {
       title: 'TRADE: ' + userTeam.abbr + ' ↔ ' + partner.abbr,
       body: userTeam.abbr + ' sends ' + giveSummary + ' for ' + receiveSummary + '.'
     });
-    
+
+    // TRADE LOG — record what the user sent and acquired so the offseason "Roster Moves" summary can
+    // show traded/acquired players AND draft picks (not just free-agent adds/departures).
+    if (!this.state._userTradeLog) this.state._userTradeLog = [];
+    const assetDesc = (a) => {
+      if (a.type === 'player') {
+        const p = this.state.players[a.playerId];
+        return p ? { kind: 'player', id: p.id, label: p.name, pos: p.position, ovr: p.rating } : null;
+      }
+      const yr = a.year || this.state.year;
+      const origin = (a.teamAbbr && a.teamAbbr !== userTeam.abbr && a.teamAbbr !== partner.abbr) ? ' (' + a.teamAbbr + ')' : '';
+      return { kind: 'pick', label: yr + ' Round ' + a.round + ' pick' + origin };
+    };
+    this.state._userTradeLog.push({
+      year: this.state.year,
+      partnerAbbr: partner.abbr,
+      acquired: this.tradeOffer.receive.map(assetDesc).filter(Boolean),
+      sent: this.tradeOffer.give.map(assetDesc).filter(Boolean)
+    });
+
     this.tradeOffer = { give: [], receive: [] };
     this.saveGame();
     this.render();
@@ -24953,7 +25676,7 @@ let game = {
       // Snapshot identity (so the Relationships page can show them even after they move/retire)
       // and count distinct seasons spent as teammates.
       c.name = tm.name; c.pos = tm.position;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; } // seasons counter only — chem rises from shared games, not from the calendar
+      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
       up._chemistry[pid] = c;
     });
     // Build the bond with the coaching staff in the same pass.
@@ -24988,7 +25711,7 @@ let game = {
       if (role === 'HC') inc *= 1.05;
       c.score = Math.min(100, (c.score || 0) + inc);
       c.name = coach.name; c.role = role;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; } // seasons counter only — chem rises from shared games, not from the calendar
+      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
       up._coachChem[id] = c;
     });
   },
@@ -29891,11 +30614,25 @@ let game = {
       '<div style="font-size:24px;font-weight:700;font-family:var(--font-mono);letter-spacing:-0.5px">' + scoreText + '</div>' +
       '</div></div>';
     
-    // DNP case — short message and nothing else
+    // DNP case — short message and nothing else. Distinguish redshirt / bowl opt-out from a normal
+    // healthy scratch so the recap reads sensibly rather than referencing a depth-chart slot.
     if (perf.didNotPlay) {
+      let dnpHead, dnpSub;
+      if (perf.redshirt) {
+        dnpHead = userPlayer.name + ' is redshirting this season — preserving a year of eligibility.';
+        dnpSub = 'You don\u2019t suit up, but you\u2019re developing in practice all year. The team played; here\u2019s how it went.';
+      } else if (perf.optOut) {
+        dnpHead = userPlayer.name + ' has opted out of the postseason to protect their draft stock.';
+        dnpSub = 'Sitting out the bowl/playoff run. The team played without you this week.';
+      } else {
+        dnpHead = userPlayer.name + ' did not see the field this week.';
+        dnpSub = (perf.depthIdx !== undefined && perf.depthIdx !== null)
+          ? 'Depth chart slot #' + (perf.depthIdx + 1) + ' at ' + userPlayer.position + ' — keep working in practice.'
+          : 'Buried on the depth chart at ' + userPlayer.position + ' — keep working in practice.';
+      }
       body += '<div style="background:var(--surface);padding:18px 18px;text-align:center">' +
-        '<div style="font-size:13px;color:var(--text-muted)">' + userPlayer.name + ' did not see the field this week.</div>' +
-        '<div class="muted" style="font-size:11px;margin-top:4px">Depth chart slot #' + (perf.depthIdx + 1) + ' at ' + userPlayer.position + ' — keep working in practice.</div>' +
+        '<div style="font-size:13px;color:var(--text-muted)">' + dnpHead + '</div>' +
+        '<div class="muted" style="font-size:11px;margin-top:4px">' + dnpSub + '</div>' +
         '</div>';
     } else {
       // Usage block: snaps + role
