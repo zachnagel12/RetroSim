@@ -2342,6 +2342,13 @@ let game = {
       '<div style="background:var(--surface);border:1px solid var(--border);padding:20px;text-align:left;margin-top:16px">' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Your name</label>' +
       '<input id="playerNameInput" type="text" value="' + suggestedName + '" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)" onchange="game._playerCreationSuggestedName=this.value"></div>' +
+      '<div style="margin-bottom:14px;display:grid;grid-template-columns:2fr 1fr;gap:10px">' +
+      '<div><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Hometown (city)</label>' +
+      '<input id="playerCityInput" type="text" value="' + (this._playerCreationCity || '') + '" placeholder="e.g. Stockton" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)" onchange="game._playerCreationCity=this.value"></div>' +
+      '<div><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">State</label>' +
+      '<input id="playerStateInput" type="text" value="' + (this._playerCreationState || '') + '" placeholder="e.g. CA" maxlength="14" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)" onchange="game._playerCreationState=this.value"></div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--text-muted);margin:-8px 0 14px;line-height:1.5">You\u2019ll suit up for <strong>{your city} High</strong> as a senior team captain. Leave blank to have one picked for you.</div>' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Position</label>' +
       '<select id="playerPositionInput" onchange="game._selectPlayerPosition(this.value)" style="width:100%;padding:8px 10px;font-family:inherit;font-size:14px;border:1px solid var(--border-strong);background:var(--bg)">' + posOpts + '</select></div>' +
       '<div style="margin-bottom:14px"><label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Playing style</label>' +
@@ -2365,6 +2372,10 @@ let game = {
     // Save the current name input value before re-render
     const nameInput = document.getElementById('playerNameInput');
     if (nameInput) this._playerCreationSuggestedName = nameInput.value;
+    const cityInput = document.getElementById('playerCityInput');
+    if (cityInput && cityInput.value) this._playerCreationCity = cityInput.value;
+    const stateInput = document.getElementById('playerStateInput');
+    if (stateInput && stateInput.value) this._playerCreationState = stateInput.value;
     this.showPlayerCreation();
   },
   
@@ -2372,17 +2383,27 @@ let game = {
     this._playerCreationArchetype = archetype;
     const nameInput = document.getElementById('playerNameInput');
     if (nameInput) this._playerCreationSuggestedName = nameInput.value;
+    const cityInput = document.getElementById('playerCityInput');
+    if (cityInput && cityInput.value) this._playerCreationCity = cityInput.value;
+    const stateInput = document.getElementById('playerStateInput');
+    if (stateInput && stateInput.value) this._playerCreationState = stateInput.value;
     this.showPlayerCreation();
   },
   
-  // After the user clicks a star rating, generate scholarship offers and show them the offer list.
-  // The school they pick becomes their college home. Higher star ratings unlock more (and better) offers.
+  // After the user picks a star rating, kick off their PLAYABLE high-school senior season. They start
+  // at week 1 as a team captain; offers arrive as weekly popups; a Signing Day caps the year.
   selectStarRating(stars) {
     const name = document.getElementById('playerNameInput').value.trim() || this.generateName(2026);
     const position = document.getElementById('playerPositionInput').value;
-    
-    // Map star tier → grade range. Recruits now START about 5 points lower than their eventual
-    // ceiling — they earn the rest through (bigger) year-by-year development in college.
+    const cityRaw = (document.getElementById('playerCityInput') || {}).value;
+    const stateRaw = (document.getElementById('playerStateInput') || {}).value;
+    let city = (cityRaw || this._playerCreationCity || '').trim();
+    let state = (stateRaw || this._playerCreationState || '').trim();
+    if (!city) { const c = this._randomHometown(); city = c.city; if (!state) state = c.state; }
+    if (!state) state = 'USA';
+
+    // Map star tier → eventual prospect grade range (the grade they'll carry into college). Recruits
+    // START about 5 points below their ceiling and earn the rest with year-by-year college development.
     let grade;
     if (stars === 5) grade = 85 + Math.random() * 9;       // 85-94
     else if (stars === 4) grade = 77 + Math.random() * 7;  // 77-84
@@ -2391,34 +2412,9 @@ let game = {
     else if (stars === 1) grade = 47 + Math.random() * 9;  // 47-56
     else grade = 38 + Math.random() * 10; // walk-on, 38-48
     grade = Math.round(grade * 10) / 10;
-    
-    // Generate offers. Number of offers + which schools depends on star tier.
-    // AVAILABILITY BY STAR RATING (schools sorted by prestige, highest first). Higher-rated recruits
-    // can commit to more elite programs; every eligible school becomes an offer so the recruit can
-    // freely pick any of them:
-    //   5★: ALL schools.            4★: all but the top 10.
-    //   3★: all but the top 25.     2★: all but the top 50.
-    //   1★: all but the top 75.     0★ (walk-on): only the lowest tier (all but the top 90).
-    const schoolsByPrestige = COLLEGE_SCHOOLS.slice().sort((a, b) => b.prestige - a.prestige);
-    const excludeTopN = stars >= 5 ? 0 : stars === 4 ? 10 : stars === 3 ? 25 : stars === 2 ? 50 : stars === 1 ? 75 : 90;
-    const offers = schoolsByPrestige.filter((school, rankIdx) => rankIdx >= excludeTopN);
-    // Guarantee at least 1 offer for 1★+ so the user always has a choice, and at least
-    // a walk-on slot for 0★ (we offer them the LOWEST prestige school as a walk-on option).
-    if (offers.length === 0) {
-      if (stars >= 1) {
-        // Pick a random G5 school as a fallback
-        const fallback = schoolsByPrestige[schoolsByPrestige.length - 1 - Math.floor(Math.random() * 5)];
-        offers.push(fallback);
-      } else {
-        // 0★ walk-on — give them ONE low-prestige walk-on offer
-        offers.push(schoolsByPrestige[schoolsByPrestige.length - 1]);
-      }
-    }
-    
-    // Stash the recruit and start the career IN-GAME as a high-school senior — the recruitment
-    // offer board is now a playable stage (commit happens in-game, after fielding/advancing offers).
+
     const archetype = this._playerCreationArchetype;
-    this.playerCareerParams = { name, position, grade, stars, archetype, school: null };
+    this.playerCareerParams = { name, position, grade, stars, archetype, school: null, city, state };
     this.pendingMode = 'default';
     this.startLeague(null);
   },
@@ -3494,23 +3490,202 @@ let game = {
   },
 
   // ============================================================
-  // ===== HIGH-SCHOOL SENIOR STAGE + RECRUITMENT (#1, #7) ======
+  // ===== HIGH-SCHOOL SENIOR SEASON + RECRUITMENT (#1, #7) =====
   // ============================================================
-  // The user begins in-game as a HS senior recruit. They field offers (each pitching something
-  // different), can advance their recruiting timeline as offers evolve, then commit and enroll.
-  installUserHSRecruit({ name, position, grade, stars, archetype }) {
+  // The user begins in-game as a senior team captain at {their city} High. They play out a 10-game
+  // senior season one week at a time (dominating, as a real blue-chip would), field scholarship
+  // offers that arrive as forced weekly popups, then commit on Signing Day after the season ends.
+
+  // A small bank of real-feeling US towns, used when the user leaves their hometown blank or when
+  // naming opponent schools. Kept compact on purpose.
+  _HS_TOWNS: [
+    { city: 'Stockton', state: 'CA' }, { city: 'Bakersfield', state: 'CA' }, { city: 'Fresno', state: 'CA' },
+    { city: 'Modesto', state: 'CA' }, { city: 'Tyler', state: 'TX' }, { city: 'Katy', state: 'TX' },
+    { city: 'Allen', state: 'TX' }, { city: 'Midland', state: 'TX' }, { city: 'Valdosta', state: 'GA' },
+    { city: 'Marietta', state: 'GA' }, { city: 'Bradenton', state: 'FL' }, { city: 'Naples', state: 'FL' },
+    { city: 'Belle Glade', state: 'FL' }, { city: 'Steubenville', state: 'OH' }, { city: 'Massillon', state: 'OH' },
+    { city: 'Aliquippa', state: 'PA' }, { city: 'Gardena', state: 'CA' }, { city: 'Mission Viejo', state: 'CA' },
+    { city: 'Bellevue', state: 'WA' }, { city: 'Hoover', state: 'AL' }, { city: 'Bogalusa', state: 'LA' },
+    { city: 'Cedar Hill', state: 'TX' }, { city: 'Scottsdale', state: 'AZ' }, { city: 'Cheraw', state: 'SC' },
+    { city: 'Olney', state: 'MD' }, { city: 'Toledo', state: 'OH' }, { city: 'Lincoln', state: 'NE' },
+    { city: 'Provo', state: 'UT' }, { city: 'Carrollton', state: 'TX' }, { city: 'Dublin', state: 'OH' }
+  ],
+  _randomHometown() {
+    return this._HS_TOWNS[Math.floor(Math.random() * this._HS_TOWNS.length)];
+  },
+
+  installUserHSRecruit({ name, position, grade, stars, archetype, city, state }) {
     this.state.career.entityType = 'player';
     this.state.career.careerStage = 'highschool';
     const g = Math.round(grade * 10) / 10;
     const st = (stars !== undefined && stars !== null) ? stars : 0;
+    if (!city) { const h = this._randomHometown(); city = h.city; state = state || h.state; }
+    const teamName = city + ' High';
+
+    // The full set of programs that will offer this recruit over the season (best-first by prestige,
+    // gated by star tier). They get DELIVERED week by week as popups; the rest are flushed on Signing Day.
+    const offerQueue = this._generateRecruitOffers(g, st, position, 0).map((o, i) => { o.weekReceived = null; return o; });
+
     this.state.career.hsRecruit = {
       name, position, archetype: archetype || null, grade: g, stars: st,
-      period: 0, committedSchool: null,
-      offers: this._generateRecruitOffers(g, st, position, 0)
+      city, state, teamName, captain: true,
+      week: 0, totalWeeks: 10,
+      record: { w: 0, l: 0 },
+      schedule: this._genHSSchedule(city),
+      teammates: this._genHSTeammates(position),
+      seasonStats: { games: 0 },
+      offers: [],          // delivered so far
+      offerQueue,          // not yet delivered
+      committedSchool: null,
+      signingDay: false
     };
+    this.state.career.hsTeammates = null; // cleared from any prior playthrough
     this.currentView = 'hsrecruit';
-    this.addHeadline({ type: 'college', title: name + ' enters their senior year of high school',
-      body: (st > 0 ? st + '\u2605 ' : 'Walk-on ') + position + ' weighing ' + this.state.career.hsRecruit.offers.length + ' offer' + (this.state.career.hsRecruit.offers.length === 1 ? '' : 's') + '. Initial grade: ' + g.toFixed(1) + '.' });
+    this.addHeadline({ type: 'college', title: name + ' takes over at ' + teamName,
+      body: (st > 0 ? st + '\u2605 ' : 'Unranked ') + position + ' and team captain opens his senior year. ' +
+        offerQueue.length + ' program' + (offerQueue.length === 1 ? '' : 's') + ' already circling. Projected grade: ' + g.toFixed(1) + '.' });
+  },
+
+  // Build a 10-game senior schedule of {City} High opponents (distinct from the user's town).
+  _genHSSchedule(myCity) {
+    const used = new Set([myCity]);
+    const sched = [];
+    for (let i = 0; i < 10; i++) {
+      let opp;
+      let guard = 0;
+      do { opp = this._randomHometown().city; guard++; } while (used.has(opp) && guard < 20);
+      used.add(opp);
+      sched.push({ opp: opp + ' High', played: false, won: null, sf: null, sa: null });
+    }
+    return sched;
+  },
+
+  // Generate the user's high-school teammates. MOST never play college; a chunk make it as marginal
+  // prospects; a few are good; and on rare occasions one is an elite, blue-chip talent in his own right.
+  // ============================================================
+  // ===== LIFE AFTER FOOTBALL (civilian careers) ===============
+  // ============================================================
+  // For players whose football road ends — HS teammates who never play college, and rookies who go
+  // undrafted AND unsigned — we give them a randomly generated everyday job. Pure flavor, for laughs.
+  _CIVILIAN_CAREERS: [
+    'bagging groceries at the local supermarket', 'working as a flight attendant',
+    'riding the back of a garbage truck', 'pulling shots at a coffee shop',
+    'selling used cars on commission', 'managing a mattress store',
+    'subbing as a middle-school gym teacher', 'running a one-man roofing crew',
+    'driving 18-wheelers cross-country', 'adjusting claims for an insurance company',
+    'coaching 6 a.m. CrossFit classes', 'delivering for DoorDash',
+    'cleaning backyard pools', 'patrolling the mall as a security guard',
+    'cold-calling for a telemarketing firm', 'greeting families at a funeral home',
+    'wearing the mascot suit for a minor-league baseball team', 'working the door at a nightclub',
+    'training clients at a chain gym', 'tending bar downtown',
+    'selling real estate (mostly open houses)', 'screening bags for the TSA',
+    'mowing lawns for a landscaping company', 'spraying houses for a pest-control outfit',
+    'tattooing walk-ins at a strip-mall shop', 'hosting karaoke four nights a week',
+    'jousting at the Renaissance fair', 'selling phone plans at a mall kiosk',
+    'demoing vacuums door-to-door', 'operating a crane at a construction site',
+    'fixing AC units in the summer heat', 'running a 24-hour locksmith van',
+    'entertaining guests on a cruise ship', 'doing birthday parties as a clown',
+    'repossessing cars for a finance company', 'auctioning off abandoned storage units',
+    'driving the neighborhood ice-cream truck', 'out on a commercial fishing boat',
+    'DJing weddings on weekends', 'trying to make it as a fitness influencer',
+    'selling supplements on Instagram', 'playing mall Santa every December',
+    'day-trading crypto (down bad)', 'teaching goat yoga in the suburbs',
+    'flipping sneakers online', 'working the fryer at a fast-food joint',
+    'stocking shelves on the overnight shift', 'selling timeshares in Florida',
+    'valeting cars at a steakhouse', 'substitute teaching and reffing rec leagues'
+  ],
+  _randomCivilianCareer() {
+    return this._CIVILIAN_CAREERS[Math.floor(Math.random() * this._CIVILIAN_CAREERS.length)];
+  },
+
+  // Scan this year's rookie class for players who went undrafted AND unsigned (still no team after
+  // the draft and every free-agent sweep). They're out of football — hand each one a day job.
+  _assignCivilianCareersToWashouts() {
+    (this.state.players || []).forEach(p => {
+      if (!p || p.retired) return;
+      if (p.team !== null && p.team !== undefined) return;       // made a roster — still playing
+      if ((p.yearsInLeague || 0) !== 0) return;                  // only this year's rookies wash out here
+      if (p.draftYear !== this.state.year) return;               // only the class that just came out
+      if (p.civilianCareer) return;                              // already assigned
+      p.civilianCareer = this._randomCivilianCareer();
+      p.washedOut = true;
+    });
+  },
+
+  _genHSTeammates(userPos) {
+    // A believable two-deep spread of positions for a HS roster (excluding the user's own spot mostly).
+    const roster = ['QB','RB','RB','WR','WR','WR','TE','OT','OT','OG','C','EDGE','EDGE','DT','LB','LB','CB','CB','S','K'];
+    const mates = [];
+    let n = 0;
+    roster.forEach(pos => {
+      // Don't stack too many at the user's exact position — swap a couple to keep it natural.
+      const id = 'hsmate_' + (++n);
+      const hsRating = 50 + Math.floor(Math.random() * 38); // 50-87, his standing in HS
+      // College outcome roll — deliberately top-heavy toward "never makes it."
+      const roll = Math.random();
+      let madeCollege = false, collegeGrade = null, tier = 'none';
+      if (roll < 0.60) { tier = 'none'; }                                   // ~60% no college
+      else if (roll < 0.85) { tier = 'low';   madeCollege = true; collegeGrade = 56 + Math.random() * 12; } // ~25% marginal
+      else if (roll < 0.96) { tier = 'good';  madeCollege = true; collegeGrade = 72 + Math.random() * 11; } // ~11% good
+      else { tier = 'elite'; madeCollege = true; collegeGrade = 85 + Math.random() * 11; }                  // ~4% elite
+      if (collegeGrade !== null) collegeGrade = Math.round(Math.min(98, collegeGrade) * 10) / 10;
+      mates.push({
+        id, name: this.generateName(this.state.year), position: pos,
+        hsRating, faceSeed: Math.floor(Math.random() * 1000000),
+        madeCollege, collegeGrade, tier,
+        collegeSchool: null, collegeProspectId: null,
+        // The ones whose ball ends at high school get a real-world gig.
+        civilianCareer: madeCollege ? null : this._randomCivilianCareer()
+      });
+    });
+    // Sort so the standouts surface first on the roster page.
+    mates.sort((a, b) => (b.collegeGrade || b.hsRating - 40) - (a.collegeGrade || a.hsRating - 40));
+    return mates;
+  },
+
+  // Produce one DOMINANT high-school box score for the user, scaled mildly by star tier. These are
+  // narrative/immersion stats for the senior season — the college prospect grade is set separately.
+  _genHSGameStatline(position, stars) {
+    const boost = 1 + Math.max(0, stars - 2) * 0.10; // higher recruits put up bigger numbers
+    const R = (lo, hi) => Math.round((lo + Math.random() * (hi - lo)) * boost);
+    const pos = position;
+    if (pos === 'QB') return { passYds: R(220, 360), passTDs: R(2, 5), ints: Math.random() < 0.25 ? 1 : 0, rushYds: R(20, 90), rushTDs: Math.random() < 0.5 ? R(0, 2) : 0 };
+    if (pos === 'RB') return { rushYds: R(120, 240), rushTDs: R(2, 4), recYds: R(10, 60), recTDs: Math.random() < 0.4 ? 1 : 0, receptions: R(1, 5) };
+    if (pos === 'WR') return { recYds: R(90, 200), recTDs: R(1, 3), receptions: R(5, 11), rushYds: Math.random() < 0.2 ? R(10, 40) : 0 };
+    if (pos === 'TE') return { recYds: R(60, 130), recTDs: R(1, 2), receptions: R(4, 8) };
+    if (pos === 'OT' || pos === 'OG' || pos === 'C') return { pancakes: R(6, 14), sacksAllowed: Math.random() < 0.3 ? 1 : 0 };
+    if (pos === 'EDGE' || pos === 'DT') return { tackles: R(4, 9), sacks: R(1, 3), tfl: R(2, 4) };
+    if (pos === 'LB') return { tackles: R(8, 16), sacks: Math.random() < 0.5 ? R(0, 2) : 0, tfl: R(1, 3), ints: Math.random() < 0.2 ? 1 : 0 };
+    if (pos === 'CB' || pos === 'S') return { tackles: R(4, 9), ints: Math.random() < 0.45 ? R(0, 2) : 0, pd: R(1, 4) };
+    if (pos === 'K') return { fgm: R(2, 4), fga: R(2, 5), longFg: R(40, 55) };
+    if (pos === 'P') return { punts: R(2, 5), puntAvg: 40 + R(0, 8), inside20: R(1, 3) };
+    return { tackles: R(3, 7) };
+  },
+
+  _accumulateHSStats(season, line) {
+    Object.keys(line).forEach(k => {
+      if (k === 'puntAvg' || k === 'longFg') { season[k] = Math.max(season[k] || 0, line[k]); return; }
+      season[k] = (season[k] || 0) + line[k];
+    });
+    season.games = (season.games || 0) + 1;
+  },
+
+  // Human-readable season stat line for the user's senior year, by position.
+  _hsSeasonStatLine(season, position) {
+    const g = Math.max(1, season.games || 0);
+    const per = (v) => (v / g).toFixed(1);
+    const pos = position;
+    if (pos === 'QB') return (season.passYds || 0) + ' pass yds · ' + (season.passTDs || 0) + ' pass TD · ' + (season.ints || 0) + ' INT · ' + (season.rushYds || 0) + ' rush yds, ' + (season.rushTDs || 0) + ' rush TD';
+    if (pos === 'RB') return (season.rushYds || 0) + ' rush yds (' + per(season.rushYds || 0) + '/g) · ' + (season.rushTDs || 0) + ' rush TD · ' + (season.receptions || 0) + ' rec, ' + (season.recYds || 0) + ' yds';
+    if (pos === 'WR') return (season.receptions || 0) + ' rec · ' + (season.recYds || 0) + ' yds · ' + (season.recTDs || 0) + ' TD';
+    if (pos === 'TE') return (season.receptions || 0) + ' rec · ' + (season.recYds || 0) + ' yds · ' + (season.recTDs || 0) + ' TD';
+    if (pos === 'OT' || pos === 'OG' || pos === 'C') return (season.pancakes || 0) + ' pancakes · ' + (season.sacksAllowed || 0) + ' sacks allowed';
+    if (pos === 'EDGE' || pos === 'DT') return (season.tackles || 0) + ' tackles · ' + (season.sacks || 0) + ' sacks · ' + (season.tfl || 0) + ' TFL';
+    if (pos === 'LB') return (season.tackles || 0) + ' tackles · ' + (season.sacks || 0) + ' sacks · ' + (season.tfl || 0) + ' TFL · ' + (season.ints || 0) + ' INT';
+    if (pos === 'CB' || pos === 'S') return (season.tackles || 0) + ' tackles · ' + (season.ints || 0) + ' INT · ' + (season.pd || 0) + ' PD';
+    if (pos === 'K') return (season.fgm || 0) + '/' + (season.fga || 0) + ' FG · long ' + (season.longFg || 0);
+    if (pos === 'P') return (season.punts || 0) + ' punts · ' + (season.puntAvg || 0) + ' avg · ' + (season.inside20 || 0) + ' inside 20';
+    return (season.tackles || 0) + ' tackles';
   },
 
   _recruitPitch(prestige, grade, position) {
@@ -3562,40 +3737,157 @@ let game = {
     list.sort((a, b) => b.prestige - a.prestige);
     return list;
   },
-  advanceHSRecruiting() {
-    const r = this.state.career && this.state.career.hsRecruit;
-    if (!r || r.committedSchool) return;
-    if (r.period >= 4) { this.render(); return; } // signing day — must commit
-    r.period++;
-    // A strong senior year nudges the grade and warms every program; a new suitor may emerge.
-    r.grade = Math.round(Math.min(99, Math.max(40, r.grade + (Math.random() * 1.8 - 0.3))) * 10) / 10;
-    r.offers.forEach(o => { o.interest = Math.min(99, o.interest + Math.round(2 + Math.random() * 6)); o.pitch = this._recruitPitch(o.prestige, r.grade, r.position); });
-    // Chance a higher-tier program (not already offering) jumps in as the user's stock rises.
-    if (Math.random() < 0.7) {
-      const have = new Set(r.offers.map(o => o.abbr));
-      const fresh = this._generateRecruitOffers(r.grade, r.stars, r.position, r.period)
-        .filter(o => !have.has(o.abbr));
-      if (fresh.length) {
-        const add = fresh[0];
-        r.offers.push(add);
-        this.addHeadline({ type: 'college', title: r.name + ' picks up a new offer',
-          body: (COLLEGE_SCHOOLS.find(s => s.abbr === add.abbr) || {}).name + ' enters the mix after a strong senior season.' });
-      }
+  // Move offers from the queue into the live offer list, paced so they arrive across the season.
+  // Returns the list of schools that newly offered this step (for the weekly popup).
+  _deliverHSOffers(r, deliverAll) {
+    if (!r.offerQueue || !r.offerQueue.length) return [];
+    let target;
+    if (deliverAll) target = r.offers.length + r.offerQueue.length;
+    else {
+      const totalSet = r.offers.length + r.offerQueue.length;
+      // Front-load slightly: by the final week the whole set should be out.
+      target = Math.min(totalSet, Math.ceil(totalSet * r.week / Math.max(1, r.totalWeeks - 1)));
+      if (r.week >= 1 && r.offers.length === 0) target = Math.max(target, 1); // always at least one by week 1
+    }
+    const fresh = [];
+    while (r.offers.length < target && r.offerQueue.length) {
+      const o = r.offerQueue.shift();
+      o.weekReceived = r.week;
+      r.offers.push(o);
+      fresh.push(o);
     }
     r.offers.sort((a, b) => b.prestige - a.prestige);
+    return fresh;
+  },
+
+  // Play one week of the user's senior high-school season: a (usually dominant) game, stat
+  // accumulation, any new scholarship offers, and a forced weekly recap popup. Signing Day caps it.
+  playHSWeek() {
+    const r = this.state.career && this.state.career.hsRecruit;
+    if (!r || r.committedSchool) { this.render(); return; }
+    if (r.signingDay) { this.render(); return; } // season over — must commit on Signing Day
+
+    const game = r.schedule[r.week];
+    // The user is a blue-chip — wins most of the time, often in a blowout.
+    const winChance = 0.74 + Math.min(0.18, r.stars * 0.035);
+    const won = Math.random() < winChance;
+    let sf, sa;
+    if (won) { sf = 28 + Math.floor(Math.random() * 28); sa = Math.max(0, Math.floor(Math.random() * 21)); if (sa >= sf) sa = sf - 7; }
+    else { sa = 24 + Math.floor(Math.random() * 17); sf = Math.max(0, sa - (3 + Math.floor(Math.random() * 11))); }
+    if (game) { game.played = true; game.won = won; game.sf = sf; game.sa = sa; }
+    if (won) r.record.w++; else r.record.l++;
+
+    // Dominant individual line.
+    const line = this._genHSGameStatline(r.position, r.stars);
+    this._accumulateHSStats(r.seasonStats, line);
+
+    // A teammate occasionally has a big night too (flavor; favors the college-bound ones).
+    let mateNote = '';
+    if (Math.random() < 0.5 && r.teammates.length) {
+      const standouts = r.teammates.filter(m => m.madeCollege);
+      const pool = standouts.length && Math.random() < 0.7 ? standouts : r.teammates;
+      const m = pool[Math.floor(Math.random() * pool.length)];
+      mateNote = m.name + ' (' + m.position + ') flashed again — the kind of tape college scouts notice.';
+    }
+
+    r.week++;
+
+    // Offers arriving this week.
+    const fresh = this._deliverHSOffers(r, false);
+    fresh.forEach(o => {
+      const sc = COLLEGE_SCHOOLS.find(s => s.abbr === o.abbr);
+      this.addHeadline({ type: 'college', title: r.name + ' picks up an offer from ' + (sc ? sc.name : o.abbr),
+        body: (sc ? sc.name : o.abbr) + ' extends a scholarship offer after a big week ' + r.week + '.' });
+    });
+
+    const seasonOver = r.week >= r.totalWeeks;
+    if (seasonOver) {
+      r.signingDay = true;
+      this._deliverHSOffers(r, true); // flush every remaining offer so the full board is live on Signing Day
+    }
+
     this.saveGame();
     this.render();
+
+    // ---- forced weekly popup ----
+    const oppName = game ? game.opp : 'their rival';
+    const resultColor = won ? 'var(--success)' : 'var(--danger)';
+    const resultWord = won ? 'W' : 'L';
+    let body = '<div style="padding:4px 2px 0">' +
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px">' +
+      '<div style="font-size:13px;color:var(--text-muted)">Week ' + r.week + ' · ' + r.teamName + ' vs ' + oppName + '</div>' +
+      '<div style="font-size:18px;font-weight:800;color:' + resultColor + '">' + resultWord + ' ' + sf + '\u2013' + sa + '</div></div>' +
+      '<div style="margin-top:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border)">' +
+      '<div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;font-weight:700">Your line</div>' +
+      '<div style="font-size:13px;font-weight:600;margin-top:4px">' + this._hsSeasonStatLine(this._lineAsSeason(line, r.position), r.position) + '</div></div>';
+    if (mateNote) body += '<div style="margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.5">' + mateNote + '</div>';
+    if (fresh.length) {
+      body += '<div style="margin-top:12px"><div style="font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.6px;font-weight:700">' +
+        (fresh.length === 1 ? 'New scholarship offer' : fresh.length + ' new scholarship offers') + '</div>';
+      fresh.forEach(o => {
+        const sc = COLLEGE_SCHOOLS.find(s => s.abbr === o.abbr);
+        body += '<div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border-strong)">' +
+          '<div style="width:4px;height:30px;background:' + (sc ? sc.primary : '#888') + ';flex:none"></div>' +
+          '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">' + (sc ? sc.name : o.abbr) + (o.walkOn ? ' <span style="font-size:9px;color:var(--text-muted);border:1px solid var(--border);padding:1px 4px">WALK-ON</span>' : '') + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">prestige ' + (sc ? sc.prestige : '?') + ' · interest ' + o.interest + '%</div></div></div>';
+      });
+      body += '</div>';
+    }
+    if (r.signingDay) {
+      body += '<div style="margin-top:14px;padding:10px 12px;border-left:3px solid var(--warning);background:var(--bg)">' +
+        '<div style="font-size:12px;font-weight:700;color:var(--warning)">Regular season complete \u2014 ' + r.record.w + '\u2013' + r.record.l + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5">It\u2019s National Signing Day. Head to <strong>Recruitment</strong> to choose where you\u2019ll sign.</div></div>';
+    }
+    body += '<div style="margin-top:16px;text-align:right"><button id="recapContinueBtn" class="btn btn-primary" onclick="closeModal()">Continue \u2192</button></div></div>';
+    this.showModal('Week ' + r.week + ' \u00b7 ' + (won ? 'Win' : 'Loss'), body);
   },
+
+  // Wrap a single-game line so the season-stat formatter can render it (games=1).
+  _lineAsSeason(line, position) {
+    const s = Object.assign({}, line, { games: 1 });
+    return s;
+  },
+
   commitToSchoolInGame(abbr) {
     const r = this.state.career && this.state.career.hsRecruit;
     if (!r) return;
+    if (!r.signingDay) { alert('You can commit on National Signing Day, after your senior season wraps up. Keep playing your games first.'); return; }
     const offer = r.offers.find(o => o.abbr === abbr);
     if (!offer) return;
     const wasWalkOn = r.stars === 0;
+
+    // Inject college-bound teammates into the live college pool as freshman prospects so the user
+    // can keep following them. Each one carries fromHSMateId so a pin set in high school follows the
+    // player all the way through college and into the NFL.
+    if (!this.state.collegeProspects) this.state.collegeProspects = [];
+    r.teammates.forEach(m => {
+      if (!m.madeCollege || m.collegeProspectId) return;
+      const school = this.pickSchoolWeightedByPrestige(m.collegeGrade);
+      if (this.state.prospectIdCounter === undefined) this.state.prospectIdCounter = 0;
+      this.state.prospectIdCounter++;
+      const prospect = {
+        id: 'cp_' + this.state.prospectIdCounter,
+        name: m.name, school, position: m.position, year: 'Freshman',
+        prospectGrade: Math.max(40, Math.min(99, Math.round(m.collegeGrade * 10) / 10)),
+        injuryProneness: this.rollInjuryProneness(),
+        faceSeed: m.faceSeed, classYear: this.state.year,
+        fromHSMateId: m.id, hsTeammateOf: r.name
+      };
+      this.state.collegeProspects.push(prospect);
+      m.collegeProspectId = prospect.id;
+      m.collegeSchool = school;
+    });
+
+    // Persist the full teammate list beyond the HS stage so pins (and the alumni page) keep resolving.
+    this.state.career.hsTeammates = r.teammates;
+
     // Enroll as a college freshman (this sets careerStage='college' + the redshirt prompt).
     this.installUserPlayer({ name: r.name, position: r.position, school: abbr, grade: r.grade, stars: r.stars, archetype: r.archetype });
     const up = this.getUserPlayer && this.getUserPlayer();
     if (up && wasWalkOn) { up.walkOn = true; up.recruitStars = 0; }
+    const sc = COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
+    this.addHeadline({ type: 'college', title: r.name + ' signs with ' + (sc ? sc.name : abbr),
+      body: 'Capping a ' + r.record.w + '\u2013' + r.record.l + ' senior season at ' + r.teamName + ', ' + r.name + ' makes it official on Signing Day.' });
     this.state.career.hsRecruit = null;
     this.currentView = 'mycareer';
     this.saveGame();
@@ -3915,49 +4207,146 @@ let game = {
   renderHSRecruitmentHub() {
     const r = this.state.career && this.state.career.hsRecruit;
     if (!r) { this.currentView = 'mycareer'; document.getElementById('content').innerHTML = ''; return; }
-    const periods = ['Summer camps', 'Senior season (early)', 'Senior season (late)', 'All-Star game', 'National Signing Day'];
-    const periodName = periods[Math.min(r.period, periods.length - 1)];
-    const signingDay = r.period >= periods.length - 1;
+    const signingDay = !!r.signingDay;
     const starLabel = '\u2605'.repeat(r.stars) + '<span style="opacity:0.3">' + '\u2605'.repeat(5 - r.stars) + '</span>';
     const projText = (g) => g >= 90 ? 'Top 15 pick ceiling' : g >= 85 ? 'Round 1 ceiling' : g >= 78 ? 'Day 2 ceiling' : g >= 68 ? 'Day 3 ceiling' : 'Developmental prospect';
+    const weeksDone = r.week;
 
-    let html = '<div class="page-header"><div class="page-title">Recruitment \u00b7 ' + r.name + '</div>' +
-      '<div class="page-subtitle">' + r.position + ' \u00b7 <span style="color:#d4a017;letter-spacing:2px">' + starLabel + '</span> \u00b7 senior year of high school</div></div>';
+    let html = '<div class="page-header"><div class="page-title">' + r.teamName + ' \u00b7 ' + r.name + '</div>' +
+      '<div class="page-subtitle">' + r.position + ' \u00b7 <span style="color:#d4a017;letter-spacing:2px">' + starLabel + '</span> \u00b7 ' +
+      r.city + ', ' + r.state + ' \u00b7 senior year</div></div>';
 
-    // Status strip
-    html += '<div class="card"><div style="padding:14px 16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;text-align:center">' +
-      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">RECRUITING PERIOD</div><div style="font-size:15px;font-weight:700;margin-top:4px">' + periodName + '</div></div>' +
-      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">PROSPECT GRADE</div><div style="font-size:20px;font-weight:700;margin-top:2px">' + r.grade.toFixed(1) + '</div></div>' +
-      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">OUTLOOK</div><div style="font-size:13px;font-weight:600;margin-top:5px">' + projText(r.grade) + '</div></div>' +
-      '</div></div>';
+    // Captain + status strip
+    html += '<div class="card"><div style="padding:14px 16px;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;text-align:center">' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">RECORD</div><div style="font-size:20px;font-weight:700;margin-top:2px">' + r.record.w + '\u2013' + r.record.l + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">WEEK</div><div style="font-size:20px;font-weight:700;margin-top:2px">' + Math.min(weeksDone + (signingDay ? 0 : 1), r.totalWeeks) + '/' + r.totalWeeks + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">PROJ. GRADE</div><div style="font-size:20px;font-weight:700;margin-top:2px">' + r.grade.toFixed(1) + '</div></div>' +
+      '<div><div style="font-size:10px;color:var(--text-muted);letter-spacing:0.5px;font-weight:600">OUTLOOK</div><div style="font-size:12px;font-weight:600;margin-top:6px">' + projText(r.grade) + '</div></div>' +
+      '</div>' +
+      '<div style="padding:0 16px 14px"><div style="background:var(--bg);border:1px solid var(--border);padding:10px 12px;font-size:12px;line-height:1.5">' +
+      '<span style="color:var(--accent);font-weight:700">\u00A9 Team captain.</span> You wear the C for ' + r.teamName + ' \u2014 the unquestioned leader of this team. ' +
+      (weeksDone > 0 ? 'Season line so far: <strong>' + this._hsSeasonStatLine(r.seasonStats, r.position) + '</strong>.' : 'Sim your first game to get the season rolling.') +
+      '</div></div></div>';
 
     if (signingDay) {
-      html += '<div class="card" style="border-left:3px solid var(--warning)"><div style="padding:12px 16px;font-size:12px;color:var(--warning);font-weight:600">It\u2019s National Signing Day. Choose where to sign.</div></div>';
+      html += '<div class="card" style="border-left:3px solid var(--warning)"><div style="padding:12px 16px;font-size:12px;color:var(--warning);font-weight:600;line-height:1.5">National Signing Day \u2014 your senior season is in the books at ' + r.record.w + '\u2013' + r.record.l + '. Choose where to sign below.</div></div>';
     } else {
-      html += '<div class="card"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted);line-height:1.5">Commit whenever you\u2019re ready, or use <strong>Advance recruiting</strong> to keep playing out your senior year — your stock can rise and new offers can come in before Signing Day.</div></div>';
+      html += '<div class="card"><div style="padding:12px 16px;font-size:12px;color:var(--text-muted);line-height:1.5">Press <strong>Sim</strong> (or Enter) to play your next game. Offers will roll in through the season as popups \u2014 you commit on <strong>Signing Day</strong>, once all 10 games are played.</div></div>';
     }
 
+    // Schedule
+    html += '<div class="card"><div class="card-header"><div class="card-title">Senior schedule</div><div class="card-meta">' + r.totalWeeks + ' games</div></div><div style="padding:6px 0">';
+    r.schedule.forEach((gm, i) => {
+      const isNext = !signingDay && i === r.week;
+      const status = gm.played
+        ? '<span style="font-weight:700;color:' + (gm.won ? 'var(--success)' : 'var(--danger)') + '">' + (gm.won ? 'W' : 'L') + ' ' + gm.sf + '\u2013' + gm.sa + '</span>'
+        : (isNext ? '<span style="font-size:11px;font-weight:700;color:var(--accent)">NEXT UP</span>' : '<span style="font-size:11px;color:var(--text-muted)">\u2014</span>');
+      html += '<div style="padding:9px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;' + (isNext ? 'background:var(--surface-2)' : '') + '">' +
+        '<div style="width:42px;font-size:11px;color:var(--text-muted);font-weight:600">Wk ' + (i + 1) + '</div>' +
+        '<div style="flex:1;font-size:13px;font-weight:600">vs ' + gm.opp + '</div>' +
+        '<div style="text-align:right;min-width:70px">' + status + '</div></div>';
+    });
+    html += '</div></div>';
+
     // Offers
-    html += '<div class="card"><div class="card-header"><div class="card-title">Scholarship offers</div><div class="card-meta">' + r.offers.length + ' program' + (r.offers.length === 1 ? '' : 's') + ' \u00b7 click to commit</div></div><div style="padding:8px 0">';
-    r.offers.forEach(o => {
-      const school = COLLEGE_SCHOOLS.find(s => s.abbr === o.abbr);
-      if (!school) return;
-      const conf = COLLEGE_CONFERENCES[school.conference] ? COLLEGE_CONFERENCES[school.conference].name : school.conference;
-      const intColor = o.interest >= 80 ? 'var(--success)' : o.interest >= 55 ? 'var(--accent)' : 'var(--text-muted)';
-      html += '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">' +
-        '<div style="width:4px;height:46px;background:' + school.primary + ';flex:none"></div>' +
+    html += '<div class="card"><div class="card-header"><div class="card-title">Scholarship offers</div><div class="card-meta">' + r.offers.length + ' offer' + (r.offers.length === 1 ? '' : 's') + (signingDay ? ' \u00b7 click to sign' : ' \u00b7 sign on Signing Day') + '</div></div><div style="padding:8px 0">';
+    if (r.offers.length === 0) {
+      html += '<div style="padding:16px;font-size:12px;color:var(--text-muted);font-style:italic">No offers yet. Keep dominating \u2014 they\u2019ll come.</div>';
+    } else {
+      r.offers.forEach(o => {
+        const school = COLLEGE_SCHOOLS.find(s => s.abbr === o.abbr);
+        if (!school) return;
+        const conf = COLLEGE_CONFERENCES[school.conference] ? COLLEGE_CONFERENCES[school.conference].name : school.conference;
+        const intColor = o.interest >= 80 ? 'var(--success)' : o.interest >= 55 ? 'var(--accent)' : 'var(--text-muted)';
+        html += '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">' +
+          '<div style="width:4px;height:46px;background:' + school.primary + ';flex:none"></div>' +
+          '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:700;font-size:14px">' + school.name + (o.walkOn ? ' <span style="font-size:10px;color:var(--text-muted);border:1px solid var(--border);padding:1px 5px;border-radius:3px">WALK-ON</span>' : '') + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + conf + ' \u00b7 prestige ' + school.prestige + (o.weekReceived ? ' \u00b7 offered wk ' + o.weekReceived : '') + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.4">' + o.pitch + '</div>' +
+          '<div style="font-size:10px;margin-top:5px;color:' + intColor + ';font-weight:600">INTEREST ' + o.interest + '%</div>' +
+          '</div>' +
+          (signingDay
+            ? '<button class="btn btn-sm btn-primary" style="flex:none" onclick="game.commitToSchoolInGame(\'' + o.abbr + '\')">Sign \u2192</button>'
+            : '<span style="flex:none;font-size:10px;color:var(--text-muted);border:1px solid var(--border);padding:4px 8px">OFFER</span>') +
+          '</div>';
+      });
+    }
+    html += '</div></div>';
+
+    // Teammates — pinnable, click to view their card and follow their journey.
+    html += '<div class="card"><div class="card-header"><div class="card-title">Your teammates</div><div class="card-meta">' + r.teammates.length + ' players \u00b7 tap a name to view their card</div></div><div style="padding:8px 0">';
+    r.teammates.forEach(m => {
+      const pinned = this.isPlayerPinned(m.id);
+      const tierLabel = !m.madeCollege ? '<span style="font-size:10px;color:var(--text-muted)">HS only</span>'
+        : m.tier === 'elite' ? '<span style="font-size:10px;color:var(--accent);font-weight:700">\u2605 BLUE-CHIP</span>'
+        : m.tier === 'good' ? '<span style="font-size:10px;color:var(--success);font-weight:600">College prospect</span>'
+        : '<span style="font-size:10px;color:var(--text-muted)">College-bound</span>';
+      html += '<div style="padding:9px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">' +
+        '<div class="player-face-small" style="width:30px;height:30px;flex:none">' + pixelFaceSVG(m.faceSeed) + '</div>' +
         '<div style="flex:1;min-width:0">' +
-        '<div style="font-weight:700;font-size:14px">' + school.name + (o.walkOn ? ' <span style="font-size:10px;color:var(--text-muted);border:1px solid var(--border);padding:1px 5px;border-radius:3px">WALK-ON</span>' : '') + '</div>' +
-        '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + conf + ' \u00b7 prestige ' + school.prestige + '</div>' +
-        '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.4">' + o.pitch + '</div>' +
-        '<div style="font-size:10px;margin-top:5px;color:' + intColor + ';font-weight:600">INTEREST ' + o.interest + '%</div>' +
+        '<div style="font-size:13px;font-weight:600;cursor:pointer;text-decoration:underline" onclick="game.showHSTeammateCard(\'' + m.id + '\')">' + m.name + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-top:1px"><span class="position-tag">' + m.position + '</span> \u00b7 ' + tierLabel + '</div>' +
         '</div>' +
-        '<button class="btn btn-sm btn-primary" style="flex:none" onclick="game.commitToSchoolInGame(\'' + o.abbr + '\')">Commit \u2192</button>' +
+        '<button class="btn btn-sm" style="flex:none;background:' + (pinned ? 'var(--accent)' : 'transparent') + ';color:' + (pinned ? '#fff' : 'var(--text)') + ';border:1px solid ' + (pinned ? 'var(--accent)' : 'var(--border)') + '" onclick="game.togglePin(\'' + m.id + '\',\'hsmate\')">' + (pinned ? '\u2605' : '\u2606') + '</button>' +
         '</div>';
     });
     html += '</div></div>';
 
     document.getElementById('content').innerHTML = html;
+  },
+
+  // Teammate card — high-school profile, college projection, link to their college prospect card once
+  // enrolled, and a pin button so the user can follow them through the rest of their career.
+  showHSTeammateCard(id, replace) {
+    const r = this.state.career && this.state.career.hsRecruit;
+    const list = (r && r.teammates) || (this.state.career && this.state.career.hsTeammates) || [];
+    const m = list.find(x => x.id === id);
+    if (!m) return;
+    const teamName = (r && r.teamName) || ((this.state.career && this.state.career.hsTeammates) ? 'his high school' : 'high school');
+    const grC = m.collegeGrade == null ? 'avg' : m.collegeGrade >= 90 ? 'elite' : m.collegeGrade >= 80 ? 'great' : m.collegeGrade >= 70 ? 'good' : 'avg';
+    let outlook;
+    if (!m.madeCollege) outlook = 'Career high-school player \u2014 the talent or grades aren\u2019t there for the next level. The end of the road comes after senior year.';
+    else if (m.tier === 'elite') outlook = 'A genuine blue-chip in his own right. Major programs want him, and he projects as a real pro prospect down the line.';
+    else if (m.tier === 'good') outlook = 'A legit college prospect who should carve out a role at the next level.';
+    else outlook = 'Squeaks onto a college roster \u2014 likely a depth piece, but he made it.';
+
+    let html = '<div style="padding:20px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:64px 1fr;gap:14px;align-items:center">' +
+      '<div class="player-face-small" style="width:64px;height:64px">' + pixelFaceSVG(m.faceSeed) + '</div>' +
+      '<div><div style="font-size:18px;font-weight:600">' + m.name + '</div>' +
+      '<div style="margin-top:4px;display:flex;gap:10px;align-items:center;font-size:12px">' +
+      '<span class="position-tag">' + m.position + '</span>' +
+      '<span class="muted">Senior \u00b7 ' + teamName + '</span></div></div></div>';
+
+    const pinned = this.isPlayerPinned(m.id);
+    html += '<div style="padding:12px 20px;border-bottom:1px solid var(--border)">' +
+      '<button class="btn btn-sm" style="background:' + (pinned ? 'var(--accent)' : 'transparent') + ';color:' + (pinned ? '#fff' : 'var(--text)') + ';border:1px solid ' + (pinned ? 'var(--accent)' : 'var(--border)') + '" onclick="game.togglePin(\'' + m.id + '\',\'hsmate\')">' +
+      (pinned ? '\u2605 Pinned \u00b7 Tap to unpin' : '\u2606 Pin teammate') + '</button></div>';
+
+    html += '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)">' +
+      '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">HS standing</div><div style="font-size:22px;font-weight:600;font-family:var(--font-mono)">' + m.hsRating + '</div></div>' +
+      '<div style="background:var(--surface);padding:12px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">College projection</div><div style="font-size:22px;font-weight:600;font-family:var(--font-mono)">' + (m.collegeGrade == null ? '<span class="muted" style="font-size:14px">\u2014</span>' : '<span class="rating ' + grC + '">' + m.collegeGrade.toFixed(1) + '</span>') + '</div></div>' +
+      '</div>';
+
+    html += '<div style="padding:14px 20px;border-bottom:1px solid var(--border)"><div class="section-label">Recruiting outlook</div>' +
+      '<div style="margin-top:8px;font-size:13px;color:var(--text-muted);line-height:1.5">' + outlook + '</div></div>';
+
+    if (m.collegeProspectId) {
+      const sc = COLLEGE_SCHOOLS.find(s => s.abbr === m.collegeSchool);
+      html += '<div style="padding:14px 20px"><div class="section-label">Now in college</div>' +
+        '<div style="margin-top:8px;font-size:13px">Committed to ' + (sc ? sc.name : m.collegeSchool) + '. ' +
+        '<span style="cursor:pointer;text-decoration:underline;color:var(--accent);font-weight:600" onclick="game.showProspectCard(\'' + m.collegeProspectId + '\')">View college card \u2192</span></div></div>';
+    } else if (!m.madeCollege && m.civilianCareer) {
+      const stillHS = !!r;
+      html += '<div style="padding:14px 20px"><div class="section-label">Life after football</div>' +
+        '<div style="margin-top:8px;font-size:13px;line-height:1.5">' +
+        (stillHS
+          ? 'No college offers are coming. When the lights go out after senior year, he\u2019s headed for life <strong>' + m.civilianCareer + '</strong>.'
+          : 'No college offers came. These days he\u2019s <strong>' + m.civilianCareer + '</strong>.') +
+        '</div></div>';
+    }
+
+    this.showModal(m.name, html, replace);
   },
 
   // Each year of college, capture the user's season stat line + grade evolution + awards.
@@ -9305,6 +9694,10 @@ let game = {
         body: '7 rounds, 224 picks. ' + this.state.year + ' season begins.'
       });
       
+      // LIFE AFTER FOOTBALL — any rookie who came out of college this cycle and ended up neither
+      // drafted nor signed as a UDFA washes out of the league. Give each one a (funny) civilian job.
+      this._assignCivilianCareersToWashouts();
+
       // Post-draft: bridge user prospect → NFL player if applicable
       this.runPlayerCareerProgression();
       // Annual draft: assign agents to the new rookies (existing players keep their current agent).
@@ -10402,9 +10795,10 @@ let game = {
 
   simWeek() {
     if (!this.state || this.state.draftActive) return;
-    // HIGH-SCHOOL STAGE — the sim button advances the recruiting timeline instead of the league.
+    // HIGH-SCHOOL STAGE — the sim button plays the next senior-season game (and its recruiting popup)
+    // instead of advancing the pro league.
     if (this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'highschool') {
-      this.advanceHSRecruiting();
+      this.playHSWeek();
       return;
     }
     
@@ -24330,11 +24724,13 @@ let game = {
       this.state.pinnedIds.splice(idx, 1);
     }
     this.saveGame();
-    // Re-render the current card so the button updates. We handle player and prospect cards.
-    // Pass replace=true so this in-place refresh does NOT push the pre-toggle state onto the modal
-    // history stack — otherwise hitting the back arrow would restore the stale card and look like
-    // it undid the pin.
-    if (isProspect) {
+    // Re-render the current card so the button updates. We handle player, prospect, and HS-teammate
+    // cards. Pass replace=true so this in-place refresh does NOT push the pre-toggle state onto the
+    // modal history stack — otherwise the back arrow would restore the stale card and look like it
+    // undid the pin.
+    if (isProspect === 'hsmate') {
+      this.showHSTeammateCard(id, true);
+    } else if (isProspect) {
       this.showProspectCard(id, true);
     } else {
       this.showPlayer(id, true);
@@ -24360,6 +24756,27 @@ let game = {
     // For prospect IDs that have since graduated, find the resulting NFL player via fromProspectId.
     const rows = [];
     pinnedIds.forEach(id => {
+      if (typeof id === 'string' && id.indexOf('hsmate_') === 0) {
+        // HIGH-SCHOOL TEAMMATE pin. Follow them across every stage:
+        //   1) still in HS  -> live hsRecruit.teammates (or persisted career.hsTeammates)
+        //   2) made college -> the freshman prospect we created (linked by fromHSMateId)
+        //   3) drafted/NFL  -> the player created from that prospect (fromProspectId)
+        const matesNow = (this.state.career && this.state.career.hsRecruit && this.state.career.hsRecruit.teammates) || [];
+        const matesPast = (this.state.career && this.state.career.hsTeammates) || [];
+        const mate = matesNow.find(x => x.id === id) || matesPast.find(x => x.id === id);
+        // Resolve a college prospect if they've enrolled.
+        const cp = (this.state.collegeProspects || []).find(p => p.fromHSMateId === id) ||
+                   (this.state.pendingDraftClass || []).find(p => p.fromHSMateId === id);
+        if (cp) { rows.push({ kind: 'prospect', prospect: cp, id }); return; }
+        if (cp === undefined && mate && mate.collegeProspectId) {
+          // Prospect graduated → find resulting NFL player via the prospect's id.
+          const nfl = (this.state.players || []).find(p => p && p.fromProspectId === mate.collegeProspectId);
+          if (nfl) { rows.push({ kind: 'player', player: nfl, id, wasProspect: true }); return; }
+        }
+        if (mate) { rows.push({ kind: 'hsmate', mate, id }); return; }
+        rows.push({ kind: 'missing', id });
+        return;
+      }
       if (typeof id === 'string') {
         // Prospect-origin id. This covers BOTH CPU prospects ("cp_...") AND the user's own prospect
         // ("user_prospect_..."). Track them through every stage so a pin ALWAYS follows the player:
@@ -24416,16 +24833,41 @@ let game = {
           '</tr>';
         return;
       }
+      if (row.kind === 'hsmate') {
+        const m = row.mate;
+        const stillHS = !!(this.state.career && this.state.career.hsRecruit);
+        const statusText = stillHS ? 'HS senior' : (m.madeCollege ? 'Headed to college' : 'Out of football');
+        const gradeCell = m.collegeGrade == null
+          ? '<span class="muted">' + m.hsRating + '</span>'
+          : '<span class="rating ' + (m.collegeGrade >= 90 ? 'elite' : m.collegeGrade >= 80 ? 'great' : m.collegeGrade >= 70 ? 'good' : 'avg') + '">' + m.collegeGrade.toFixed(1) + '</span>';
+        const placeCell = m.collegeSchool
+          ? ((COLLEGE_SCHOOLS.find(s => s.abbr === m.collegeSchool) || {}).name || 'College')
+          : (!stillHS && !m.madeCollege && m.civilianCareer ? '<span style="font-style:italic">Now ' + m.civilianCareer + '</span>' : 'High school');
+        html += '<tr>' +
+          '<td><span style="cursor:pointer;text-decoration:underline;font-weight:600" onclick="game.showHSTeammateCard(\'' + m.id + '\')">' + m.name + '</span> <span class="muted" style="font-size:10px">(HS teammate)</span></td>' +
+          '<td>' + m.position + '</td>' +
+          '<td><span class="muted" style="font-size:11px">' + statusText + '</span></td>' +
+          '<td><span class="muted" style="font-size:11px">' + placeCell + '</span></td>' +
+          '<td class="text-right mono-num">' + gradeCell + '</td>' +
+          '<td class="text-right mono-num">~18</td>' +
+          '<td class="text-right"><button class="btn btn-sm" onclick="event.stopPropagation();game.togglePin(\'' + m.id + '\',\'hsmate\');game.renderPinnedPlayers()">Unpin</button></td>' +
+          '</tr>';
+        return;
+      }
       // Player row
       const p = row.player;
       const team = p.team !== null && p.team !== undefined ? this.state.teams[p.team] : null;
       let statusText, statusColor;
+      const washoutRow = (!team && !p.retired && p.civilianCareer);
       if (p.retired) {
         statusText = 'Retired' + (p.hofInducted ? ' · HOF' : '');
         statusColor = 'var(--text-muted)';
       } else if (team) {
         statusText = 'Active';
         statusColor = 'var(--success)';
+      } else if (washoutRow) {
+        statusText = 'Out of football';
+        statusColor = 'var(--text-muted)';
       } else {
         statusText = 'Free Agent';
         statusColor = 'var(--warning)';
@@ -24437,7 +24879,7 @@ let game = {
       }
       const teamCell = team
         ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</span>'
-        : (p.retired ? '—' : 'Free Agent');
+        : (p.retired ? '—' : (washoutRow ? '<span class="muted" style="font-style:italic">Now ' + p.civilianCareer + '</span>' : 'Free Agent'));
       const rc = this.ratingClass(p.rating);
       html += '<tr>' +
         '<td><span style="cursor:pointer;text-decoration:underline;font-weight:600" onclick="game.showPlayer(' + p.id + ')">' + p.name + '</span>' +
@@ -24627,10 +25069,12 @@ let game = {
     const rc = this.ratingClass(p.rating);
     const isOnUserTeam = team && team.id === this.state.userTeamId;
     const cap = getSalaryCap(this.state.year);
+    // Washed out: undrafted-and-unsigned rookie who now has a day job (and isn't on a roster).
+    const washout = (!team && !p.retired && p.civilianCareer);
 
     const teamLabel = team
       ? '<span style="cursor:pointer;text-decoration:underline" onclick="game.showTeam(' + team.id + ')">' + team.city + ' ' + team.name + '</span>'
-      : (p.retired ? 'Retired' : 'Free Agent');
+      : (p.retired ? 'Retired' : (washout ? '<span style="color:var(--text-muted)">Out of football</span>' : 'Free Agent'));
     
     // Pin button — lets the user track any player (their own team, another team, college, retired).
     // Useful in player career: a QB pinning their star WR so they can find them 8 years later.
@@ -24647,6 +25091,13 @@ let game = {
       pinBtn +
       '</div></div>' +
       '<div class="player-detail-body">';
+
+    // LIFE AFTER FOOTBALL — funny banner for the undrafted-and-unsigned washout.
+    if (washout) {
+      html += '<div style="margin:0 0 14px;padding:12px 14px;background:var(--bg);border:1px solid var(--border-strong);border-left:3px solid var(--warning)">' +
+        '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:var(--warning);font-weight:700">Life after football</div>' +
+        '<div style="font-size:13px;margin-top:5px;line-height:1.5">Went undrafted and never caught on with a team. ' + p.name + '\u2019s now <strong>' + p.civilianCareer + '</strong>.</div></div>';
+    }
 
     // Chemistry with the user's player (same side of the ball) — shown prominently at the top.
     html += this._renderChemistryBar(p);
