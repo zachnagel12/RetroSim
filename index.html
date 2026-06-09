@@ -1649,15 +1649,38 @@ function determineContractYears(rating, age) {
   return 2 + Math.floor(Math.random() * 3); // depth gets multi-year deals too (more continuity)
 }
 
-function generateContract(position, rating, age, year, isRookie) {
+// NFL-style rookie wage scale, slotted by overall draft pick. Top picks are expensive (but nowhere
+// near veteran money); the value falls off fast and by the mid rounds it's essentially the minimum.
+// Expressed as a fraction of that year's salary cap so it scales with the league over time.
+//   pick 1   ≈ 4.4% of cap      (the premium slot)
+//   pick 10  ≈ 3.1%
+//   pick 32  ≈ 1.4%  (end of round 1)
+//   pick 64  ≈ 0.6%  (end of round 2)
+//   round 5+ ≈ 0.4%  → the veteran/rookie minimum
+function rookieAAVByPick(overall, year) {
+  const cap = getSalaryCap(year);
+  const o = Math.max(1, overall || 1);
+  const frac = 0.004 + 0.040 * Math.exp(-(o - 1) / 22);
+  const minAAV = 1_100_000; // league minimum-ish
+  return Math.max(minAAV, Math.round(cap * frac / 50_000) * 50_000);
+}
+
+function generateContract(position, rating, age, year, isRookie, rookieOverall) {
   const years = isRookie ? 4 : determineContractYears(rating, age);
-  const aav = calculateContractAAV(position, rating, age, year);
+  let aav, bonusPct;
+  if (isRookie) {
+    // Rookie deals are SLOTTED by draft position, not by rating — a 5th-round flier never gets a
+    // star contract just because his OVR is high. Undrafted/unknown-slot rookies sign at the minimum.
+    aav = rookieAAVByPick(rookieOverall || 9999, year);
+    // Top picks are signing-bonus-heavy; late picks are almost all base (minimum-type deals).
+    bonusPct = Math.max(0.10, Math.min(0.55, 0.55 * Math.exp(-(Math.max(1, rookieOverall || 9999) - 1) / 40)));
+  } else {
+    aav = calculateContractAAV(position, rating, age, year);
+    if (years >= 4) bonusPct = 0.35 + Math.random() * 0.15;
+    else if (years >= 2) bonusPct = 0.20 + Math.random() * 0.15;
+    else bonusPct = 0.05 + Math.random() * 0.10;
+  }
   const totalValue = aav * years;
-  let bonusPct = 0;
-  if (years >= 4) bonusPct = 0.35 + Math.random() * 0.15;
-  else if (years >= 2) bonusPct = 0.20 + Math.random() * 0.15;
-  else bonusPct = 0.05 + Math.random() * 0.10;
-  if (isRookie) bonusPct = 0.25;
   const signingBonus = Math.round(totalValue * bonusPct / 100_000) * 100_000;
   const remaining = totalValue - signingBonus;
   const weights = [];
@@ -3362,6 +3385,24 @@ let game = {
   },
   
   // User accepts a coach job offer
+  // Guarantees the user's coach has a real regular season to coach. A player who retires directly into
+  // coaching can complete the hire mid-offseason — after the old season's schedule is fully played but
+  // before the new season's draft/generateSchedule step ran — which leaves nothing to sim and every
+  // team's record stuck at 0-0. If there are no unplayed regular-season games ahead, start a clean
+  // season: reset weekly records and regenerate the schedule. A legitimate mid-season hire (games still
+  // ahead) is left untouched, and game-creation starts already have a fresh full schedule.
+  _ensureCoachSeasonReady() {
+    if (!this.state || !this.state.career || this.state.career.mode !== 'coach') return;
+    const sched = this.state.schedule || [];
+    const playableAhead = sched.some(g => !g.played && (g.week || 0) > (this.state.week || 0));
+    if (playableAhead) return; // a real season is already in progress — don't disturb it
+    this.state.week = 0;
+    this.state.playoffActive = false;
+    this.state.teams.forEach(t => { t.wins = 0; t.losses = 0; t.pointsFor = 0; t.pointsAgainst = 0; });
+    this.generateSchedule();
+    try { this.generateCollegeSchedule(); } catch (e) { /* defensive */ }
+  },
+
   acceptCoachOffer(teamId) {
     const userCoach = this.getUserCoach();
     if (!userCoach || !this.state.career.pendingCoachOffers) return;
@@ -3402,6 +3443,10 @@ let game = {
     if (this.state.career.initialCoachHiring) {
       this.state.offseasonPhase = null;
       this.state.career.initialCoachHiring = false;
+      // A player who retires straight into coaching can land here mid-offseason, where the normal
+      // draft → generateSchedule step was skipped — leaving no games to sim and every team frozen at
+      // 0-0. Make sure the coach actually has a season to coach before play resumes.
+      this._ensureCoachSeasonReady();
     } else {
       this.state.offseasonPhase = 'fa';
     }
@@ -3424,6 +3469,7 @@ let game = {
     if (this.state.career.initialCoachHiring) {
       this.state.offseasonPhase = null;
       this.state.career.initialCoachHiring = false;
+      this._ensureCoachSeasonReady();
     } else {
       this.state.offseasonPhase = 'fa';
     }
@@ -9830,13 +9876,26 @@ let game = {
     // FRONT-OFFICE REQUEST (player career): if the user's 92+ star has an accepted, active request
     // for the front office to target a position, nudge that position's need up for the user's CURRENT
     // team only. This flows into the draft (cpuPick), the CPU trade market, and strategic FA signings.
+    // The nudge is suppressed once the team already has a reasonable number at that position, so
+    // honoring the request never turns into hoarding (e.g. stacking 11 QBs).
     const gmReq = this._activeGMRequest && this._activeGMRequest();
     if (gmReq && gmReq.position && need[gmReq.position] !== undefined) {
       const up = this.getUserPlayer && this.getUserPlayer();
       if (up && up.team !== null && up.team !== undefined && team && team.id === up.team) {
-        need[gmReq.position] += 2.2; // "slight" but enough to reorder priorities
+        const reqHave = (byPos[gmReq.position] || []).length;
+        const reqTarget = POSITION_COUNTS[gmReq.position] || 3;
+        if (reqHave < reqTarget) need[gmReq.position] += 2.2; // only push while there's a real opening
       }
     }
+
+    // HARD ROSTER CEILING — never let any position exceed a sensible cap, even when honoring a player's
+    // positional request. QB tops out at 3; every other spot at its target depth + 1. Once a team is at
+    // the ceiling, additional need at that position is forced sharply negative so the AI stops adding.
+    Object.keys(need).forEach(pos => {
+      const have = (byPos[pos] || []).length;
+      const ceiling = (pos === 'QB') ? 3 : (POSITION_COUNTS[pos] || 3) + 1;
+      if (have >= ceiling) need[pos] = Math.min(need[pos], -20);
+    });
 
     return need;
   },
@@ -9867,7 +9926,7 @@ let game = {
     // Inaugural startup draft: don't sign contracts here — they're allocated retroactively after the
     // full draft to fit exactly into the $300M cap. Annual draft picks get rookie deals as normal.
     if (this.state.draftIsAnnual) {
-      player.contract = generateContract(player.position, player.rating, player.age, this.state.year, player.yearsInLeague === 0);
+      player.contract = generateContract(player.position, player.rating, player.age, this.state.year, player.yearsInLeague === 0, this.state.draftCurrentIdx + 1);
     } else {
       player.contract = null;
     }
@@ -10409,7 +10468,7 @@ let game = {
     const client = agency.clients.find(c => c.prospectId === player.fromProspectId);
     if (!client) return;
     // Rookie contract value scales with draft slot — early picks get far richer deals.
-    const contract = player.contract || generateContract(player.position, player.rating, player.age, this.state.year, true);
+    const contract = player.contract || generateContract(player.position, player.rating, player.age, this.state.year, true, overall);
     const totalValue = contract.totalValue || (contract.aav || 0) * (contract.years || 4);
     if (!player.contract) player.contract = contract; // ensure the deal lives on the player for weekly paycheck commissions
     const rate = (client.commissionRate || 4) / 100;
@@ -15776,6 +15835,27 @@ let game = {
   },
 
   enforceRosterMax() {    this.state.teams.forEach(team => {
+      // POSITION CEILING — release clearly excess depth at any single position (e.g. a hoarded stack of
+      // QBs) down to a sensible cap before the overall 53-man trim. QB tops out at 3; others at target
+      // depth + 1. Lowest-rated go first; the user's player and this year's draft picks are protected.
+      const posCeiling = (pos) => (pos === 'QB') ? 3 : (POSITION_COUNTS[pos] || 3) + 1;
+      const byPos = {};
+      team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired)
+        .forEach(p => { (byPos[p.position] = byPos[p.position] || []).push(p); });
+      Object.entries(byPos).forEach(([pos, arr]) => {
+        let excess = arr.length - posCeiling(pos);
+        if (excess <= 0) return;
+        const cuttable = arr.filter(p => !p.isUserControlled &&
+          !(p.draftedYear === this.state.year && p.draftedByTeamId === team.id && (p.yearsInLeague || 0) === 0))
+          .sort((a, b) => a.rating - b.rating);
+        for (const p of cuttable) {
+          if (excess <= 0) break;
+          team.roster = team.roster.filter(id => id !== p.id);
+          if (p.contract) { team.deadCap = (team.deadCap || 0) + deadCapIfReleased(p.contract); p.contract = null; }
+          p.team = null;
+          excess--;
+        }
+      });
       while (team.roster.length > ROSTER_SIZE) {
         const rosterPlayers = team.roster.map(id => ({ id, p: this.state.players[id] })).filter(x => x.p && !x.p.retired);
         // Never trim the user's player, and don't dump quality starters who are still under
