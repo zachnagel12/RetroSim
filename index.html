@@ -3964,26 +3964,19 @@ let game = {
     return '';
   },
 
-  // Grow the user's bonds with HS teammates + the head coach after a game. Each teammate carries a
-  // stable closeness weight so the relationships diverge a little across the locker room. Bonds build
-  // at roughly 4% per game played (a touch more in a win, a touch less in a loss) — so a full senior
-  // season leaves you with solid, but not maxed-out, relationships to carry into college.
+  // Grow the user's bonds with HS teammates + the head coach after a game. High-school is one level
+  // (and one season) of the unified bond model — meaningful, but a HS-only bond tops out modestly; it
+  // only becomes special if it carries into college/pros (a second level).
   _hsBumpChem(r, won) {
     if (!r.teammateChem) r.teammateChem = {};
     (r.teammates || []).forEach(m => {
-      if (m._closeness === undefined) m._closeness = 0.5 + Math.random(); // 0.5..1.5, fixed per teammate
       const c = r.teammateChem[m.id] || { score: 0, gp: 0 };
-      const base = won ? 4.4 : 3.6; // ~4% per game
-      // Compress the closeness weight (0.5..1.5) to a gentle 0.85..1.15 factor so per-game gains stay
-      // close to 5% and nobody slams into 100 over a single season.
-      const factor = 0.85 + (m._closeness - 0.5) * 0.30;
-      c.score = Math.min(100, (c.score || 0) + base * factor);
-      c.gp = (c.gp || 0) + 1;
+      this._bumpBond(c, 'hs');
       r.teammateChem[m.id] = c;
     });
     if (r.headCoach) {
-      r.headCoach.chem = Math.min(100, (r.headCoach.chem || 0) + (won ? 4 : 3.2)); // ~4% per game
-      r.headCoach.gp = (r.headCoach.gp || 0) + 1;
+      this._bumpBond(r.headCoach, 'hs');
+      r.headCoach.chem = r.headCoach.score; // renderHSRelationships reads .chem
     }
   },
 
@@ -4105,22 +4098,31 @@ let game = {
         const c = r.teammateChem && r.teammateChem[m.id];
         if (!c || (c.score || 0) <= 0) return;
         const key = m.collegeProspectId || ('hsmate_' + m.id);
-        up._chemistry[key] = {
+        const rec = {
           gp: c.gp || 0,
-          score: Math.min(100, Math.round(c.score || 0)),
+          seasons: c.seasons || 1,
+          _levels: Object.assign({ hs: true }, c._levels || {}),
+          _affinity: c._affinity || 1,
           name: m.name, pos: m.position,
           college: !!m.collegeProspectId, // a same-path college player; otherwise a HS-only snapshot
           fromHighSchool: true,
           hsTeam: r.teamName,
-          lastSeason: this.state.year
+          lastSeason: c.lastSeason || this.state.year
         };
+        rec.score = this._bondScore(rec);
+        up._chemistry[key] = rec;
       });
-      if (r.headCoach && (r.headCoach.chem || 0) > 0) {
-        up._coachChem['hscoach_' + (r.headCoach.faceSeed || 0)] = {
-          score: Math.min(100, Math.round(r.headCoach.chem || 0)),
-          seasons: 1, name: r.headCoach.name, role: 'HC',
-          fromHighSchool: true, hsTeam: r.teamName, lastSeason: this.state.year
+      if (r.headCoach && (r.headCoach.score || r.headCoach.chem || 0) > 0) {
+        const hc = {
+          gp: r.headCoach.gp || 0,
+          seasons: r.headCoach.seasons || 1,
+          _levels: Object.assign({ hs: true }, r.headCoach._levels || {}),
+          _affinity: r.headCoach._affinity || 1,
+          name: r.headCoach.name, role: 'HC',
+          fromHighSchool: true, hsTeam: r.teamName, lastSeason: r.headCoach.lastSeason || this.state.year
         };
+        hc.score = this._bondScore(hc);
+        up._coachChem['hscoach_' + (r.headCoach.faceSeed || 0)] = hc;
       }
     }
 
@@ -7087,10 +7089,14 @@ let game = {
     };
 
     const TOTAL_COLLEGE = pool.length;
-    const targetTransfers = Math.round(TOTAL_COLLEGE * (0.17 + Math.random() * 0.06)); // ~17-23% of all
+    const targetTransfers = Math.round(TOTAL_COLLEGE * (0.09 + Math.random() * 0.04)); // ~9-13% of all
     let transfersSoFar = coachingChangeMoves.length; // coaching follows already count toward the cap
 
     // Build a desire-scored list of eligible movers; the most logical candidates transfer first.
+    // KEY: a rotational #2 who's actually getting reps is mostly content and stays — only players
+    // genuinely BURIED (3rd string or deeper), or stars stuck behind someone, have real reason to flee.
+    // This keeps depth charts populated with a realistic mix of classes instead of churning every
+    // backup out and backfilling with freshmen each year.
     const movers = pool.filter(p =>
       !p.isUserControlled && p.year !== 'Senior' && p.prospectGrade >= 52 && !p._transferredThisOffseason
     ).map(p => {
@@ -7101,18 +7107,20 @@ let game = {
       const aheadStaying = posDepth.slice(0, Math.max(0, depthIdx)).filter(x => x.year !== 'Senior').length;
       const cs = COLLEGE_SCHOOLS.find(s => s.abbr === p.school);
       const currentPrestige = cs ? (prestigeMap[p.school] !== undefined ? prestigeMap[p.school] : cs.prestige) : 60;
-      let desire = Math.random() * 0.35;
-      if (aheadStaying >= 1) desire += 0.55 + Math.min(0.6, aheadStaying * 0.25);       // buried (behind players who STAY)
-      if (aheadStaying >= 1 && p.prospectGrade >= 85) desire += 0.9;                      // buried STAR: definitely moves
-      else if (aheadStaying >= 1 && p.prospectGrade >= 75) desire += 0.4;                 // buried good player
-      if ((p.prospectGrade - currentPrestige) >= 5 && aheadStaying <= 1) desire += 0.5;   // good player on a weak program → up
-      if (p.year === 'Freshman' || p.year === 'Sophomore') desire += 0.12;               // underclassmen more mobile
+      let desire = Math.random() * 0.22;
+      if (aheadStaying >= 2) desire += 0.55 + Math.min(0.45, (aheadStaying - 1) * 0.22); // genuinely buried (3rd+)
+      else if (aheadStaying === 1) desire += 0.14;                                       // rotational #2 — mostly content
+      if (aheadStaying >= 1 && p.prospectGrade >= 86) desire += 0.7;                     // a buried STAR won't sit, even at #2
+      else if (aheadStaying >= 2 && p.prospectGrade >= 76) desire += 0.35;               // buried good player
+      if ((p.prospectGrade - currentPrestige) >= 6 && aheadStaying === 0) desire += 0.35; // good player starting on a weak program → up
+      if (p.year === 'Freshman') desire += 0.05;                                          // freshmen a touch more mobile, but mostly develop
       return { p, depthIdx: aheadStaying, currentPrestige, desire };
     });
     movers.sort((a, b) => b.desire - a.desire);
 
     movers.forEach(m => {
       if (transfersSoFar >= targetTransfers) return;
+      if (m.desire < 0.5) return; // only genuinely motivated players enter the portal — no churn of content backups
       const p = m.p;
       const isStarter = m.depthIdx === 0;
       // A contented starter at a strong program (not overqualified) usually stays put.
@@ -8959,19 +8967,22 @@ let game = {
     const totalSnaps = 65 + Math.floor(Math.random() * 15);
     const snaps = Math.round(totalSnaps * snapFactor);
     
-    // Role label
+    // Role label — based on ACTUAL playing time (snap share), not raw depth-chart ranking, so a
+    // freshman who won the job in fall camp reads as a Starter rather than "Deep reserve," and a
+    // higher-graded player who lost the camp battle reads correctly as a backup.
     let role;
-    if (depthIdx === 0) role = 'Starter';
-    else if (depthIdx === 1) role = 'Rotational';
-    else if (depthIdx === 2) role = 'Deep reserve';
+    if (snapPct >= 70) role = 'Starter';
+    else if (snapPct >= 28) role = 'Rotational';
+    else if (snapPct >= 8) role = 'Deep reserve';
     else role = 'Scout team';
     
     const raw = {};
     const lines = []; // human-readable stat lines
     
     if (p.position === 'QB') {
-      // QB stats only get generated if starter or close. Backup QBs occasionally take a series.
-      if (depthIdx === 0) {
+      // QB stats only get generated if they actually play starter-level snaps (whether by depth or by
+      // winning the job in fall camp). Backups occasionally take a series.
+      if (snapPct >= 70) {
         // Grade-driven volume on the same realistic scale as CPU passers, scaled by snaps. College
         // passing runs hotter than the NFL (more explosive, weaker defenses): an elite upperclassman
         // (~95 grade) averages ~340 yds/game (~4,400 over a season), an average P5 starter (~75) ~255,
@@ -12788,6 +12799,36 @@ let game = {
   // Builds the user's COLLEGE bonds (same-side teammates + the school's HC and side coordinator)
   // after a college game they played. Mirrors the NFL chemistry build so the Relationships page is
   // alive in college too.
+  // ============================================================
+  // RELATIONSHIP MODEL — a bond's strength comes from three things, in priority order:
+  //   1) playing together across MULTIPLE LEVELS (HS→college, college→pros) — the biggest reward,
+  //   2) total games together (diminishing returns), and
+  //   3) seasons together (diminishing returns).
+  // A single-level bond (e.g. a few college seasons) tops out around the 50s — "in sync," real but
+  // not legendary. A perfect 100 requires either two levels together, OR a very long shared pro
+  // tenure, OR both — exactly the bonds that should feel unbreakable.
+  _bondScore(c) {
+    const gp = c.gp || 0;
+    const seasons = c.seasons || 0;
+    const levels = c._levels ? Object.keys(c._levels).filter(k => c._levels[k]).length : 1;
+    const gamesPts = 58 * (1 - Math.exp(-gp / 55));      // volume — approaches 58 over a long career
+    const seasonPts = 34 * (1 - Math.exp(-seasons / 6));  // longevity — approaches 34 over many years
+    const multiLevel = Math.max(0, levels - 1) * 20;      // +20 for a 2nd shared level, +40 for a 3rd
+    const aff = c._affinity || 1;                          // per-bond personality (0.85..1.15), set once
+    return Math.min(100, (gamesPts + seasonPts) * aff + multiLevel);
+  },
+  // Record one more game/season of a bond at a given level, then recompute its score.
+  _bumpBond(c, level) {
+    if (c._affinity === undefined) c._affinity = 0.85 + Math.random() * 0.30;
+    if (!c._levels) c._levels = {};
+    if (level) c._levels[level] = true;
+    c.gp = (c.gp || 0) + 1;
+    const yr = this.state.year;
+    if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; }
+    c.score = this._bondScore(c);
+    return c;
+  },
+
   _updateUserCollegeChem(up, won, perfGood) {
     if (!up || !up.school) return;
     if (!up._chemistry) up._chemistry = {};
@@ -12802,11 +12843,8 @@ let game = {
       .slice(0, 14);
     mates.forEach(tm => {
       const c = up._chemistry[tm.id] || { gp: 0, score: 0 };
-      c.gp += 1;
-      let inc = 2.3; if (won) inc += 0.2; if (perfGood) inc += 0.15; // ~2.5% per game in college
-      c.score = Math.min(100, (c.score || 0) + inc);
+      this._bumpBond(c, 'college');
       c.name = tm.name; c.pos = tm.position; c.college = true;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
       up._chemistry[tm.id] = c;
     });
     // Coaches: the head coach and the coordinator on the user's side of the ball.
@@ -12817,11 +12855,8 @@ let game = {
         const coach = this.getCoach(cid);
         if (!coach) return;
         const c = up._coachChem[cid] || { score: 0, seasons: 0 };
-        let inc = 2.3; if (won) inc += 0.2; if (perfGood) inc += 0.15; // ~2.5% per game in college
-        if (role === 'HC') inc *= 1.05;
-        c.score = Math.min(100, (c.score || 0) + inc);
+        this._bumpBond(c, 'college');
         c.name = coach.name; c.role = role; c.college = true; c.collegeTeam = up.school;
-        if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
         up._coachChem[cid] = c;
       });
     }
@@ -13196,6 +13231,9 @@ let game = {
     team.roster = team.roster.filter(id => id !== playerId);
     p.team = null;
     p.contract = null;
+    if (p.isUserControlled) {
+      this._pendingPlayerTransaction = { type: 'cut', fromTeamId: team.id, toTeamId: null };
+    }
     this.addHeadline({ type:'contract', title: team.city + ' ' + team.name + ' release ' + p.name, body: p.position + ' ' + p.name + ' is now a free agent. Dead cap: ' + formatMoney(dead) + '.' });
     this.saveGame();
     closeModal();
@@ -16224,6 +16262,23 @@ let game = {
         this.state.career.campYear = this.state.year; // don't prompt camp during a redshirt year
       }
     }
+    // NFL OFFSEASON TRAINING PROGRAM — a forced, once-per-year popup at the start of each pro season
+    // so the user deliberately sets their training focus (instead of it being buried on the Training
+    // tab). Re-shows until a focus is chosen; only fires for an active, rostered NFL player.
+    if (this.state && this.state.career && this.state.career.mode === 'player' && this.state.career.careerStage === 'nfl'
+        && this.state.career.trainingPromptYear !== this.state.year
+        && !this.state.offseasonPhase && !this.state.playoffActive && !this.state.draftActive
+        && !document.getElementById('modal').classList.contains('show')) {
+      const _up = this.getUserPlayer && this.getUserPlayer();
+      if (_up && !_up.retired && _up.team !== null && _up.team !== undefined) {
+        try { this.showNflTrainingFocusPopup(); } catch (e) { /* defensive */ }
+      }
+    }
+    // FORCED GM SIT-DOWN — if the user's player was just traded or cut, this takes priority so they
+    // always hear it from the front office before anything else.
+    if (this._pendingPlayerTransaction && !document.getElementById('modal').classList.contains('show')) {
+      try { this.showPlayerTransactionDialogue(); } catch (e) { /* defensive */ }
+    }
     // #5 Coaching carousel · #6 NIL offer · #8 bowl opt-out — forced college popups, one at a time.
     if (this.state && this.state.career && this.state.career.mode === 'player'
         && !document.getElementById('modal').classList.contains('show')) {
@@ -17342,6 +17397,138 @@ let game = {
     const p = this.getUserPlayer();
     if (!p) return;
     p.weeklyTraining = key;
+    this.saveGame();
+    this.render();
+  },
+
+  // Forced once-per-offseason training-program popup for the NFL stage. Mirrors the college fall-camp
+  // training-focus prompt so a pro player explicitly sets their development focus every year.
+  showNflTrainingFocusPopup() {
+    const p = this.getUserPlayer();
+    if (!p || p.retired) return;
+    const opts = this.PLAYER_TRAINING_BY_POS[p.position] || [];
+    if (!opts.length) { // no drills defined for this position — mark handled so we don't loop
+      if (this.state.career) this.state.career.trainingPromptYear = this.state.year;
+      return;
+    }
+    const aging = POSITION_AGING[p.position] || {};
+    let phaseNote;
+    if (p.age < (aging.peakStart || 26)) phaseNote = 'You\u2019re still ascending — focused offseason work raises your overall rating.';
+    else if (p.age <= (aging.peakEnd || 30)) phaseNote = 'You\u2019re in your prime — push your overall toward its ceiling.';
+    else phaseNote = 'Age has caught up — drills still sharpen individual skills even though your overall won\u2019t climb.';
+    const cur = p.weeklyTraining || null;
+    let body = '<div style="background:linear-gradient(135deg,var(--accent),var(--accent-dim,#444));color:#fff;padding:18px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:600;opacity:0.85">OFFSEASON PROGRAM \u00b7 ' + this.state.year + '</div>' +
+      '<div style="font-size:19px;font-weight:800;margin-top:6px">' + p.name + ' \u00b7 ' + p.position + ' \u00b7 age ' + p.age + '</div></div>';
+    body += '<div style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:12px">Set your training program for the year. Your focus applies every week until you change it on the Training tab. ' + phaseNote + '</div>';
+    body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">';
+    opts.forEach(opt => {
+      const selected = cur === opt.key;
+      const boostStr = Object.entries(opt.boosts).map(([k, v]) => '+' + v + ' ' + k).join(', ');
+      body += '<div onclick="game._chooseNflTraining(\'' + opt.key + '\')" style="cursor:pointer;border:' + (selected ? '2px solid var(--accent)' : '1px solid var(--border)') + ';background:' + (selected ? 'var(--surface-2)' : 'var(--surface)') + ';padding:12px">' +
+        '<div style="font-size:13px;font-weight:600;margin-bottom:4px">' + opt.label + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">' + opt.desc + '</div>' +
+        '<div style="font-size:10px;font-family:var(--font-mono)">' + boostStr + '</div></div>';
+    });
+    body += '</div>';
+    body += '<div style="font-size:11px;color:var(--text-muted);margin-top:10px;text-align:center">Tap a program to lock it in for the season.</div>';
+    this.showModal('Offseason training program \u00b7 ' + this.state.year, body);
+  },
+  _chooseNflTraining(key) {
+    const p = this.getUserPlayer();
+    if (!p) return;
+    p.weeklyTraining = key;
+    if (this.state.career) this.state.career.trainingPromptYear = this.state.year;
+    closeModal();
+    this.saveGame();
+    this.render();
+  },
+
+  // ============================================================
+  // FORCED GM SIT-DOWN when the user's PLAYER is traded or cut —
+  // a 3-beat dialogue so a roster move never happens silently.
+  // ============================================================
+  showPlayerTransactionDialogue() {
+    const txn = this._pendingPlayerTransaction;
+    if (!txn) return;
+    const up = this.getUserPlayer && this.getUserPlayer();
+    const fromTeam = this.state.teams[txn.fromTeamId];
+    const toTeam = (txn.toTeamId !== null && txn.toTeamId !== undefined) ? this.state.teams[txn.toTeamId] : null;
+    if (!up || !fromTeam) { this._pendingPlayerTransaction = null; return; }
+    const isTrade = txn.type === 'trade';
+    const step = this._playerTxnStep || 0;
+    const tone = this._playerTxnTone || null;
+    const gmLabel = fromTeam.abbr + ' GM';
+    const color = fromTeam.primary || 'var(--accent)';
+
+    const bubbleGM = (text) => '<div style="display:flex;gap:10px;margin-bottom:12px">' +
+      '<div style="width:34px;height:34px;border-radius:50%;flex:none;background:' + color + ';color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px">GM</div>' +
+      '<div style="flex:1"><div style="font-size:10px;color:var(--text-muted);font-weight:700;margin-bottom:2px">' + gmLabel + '</div>' +
+      '<div style="background:var(--surface-2);padding:10px 12px;border-radius:2px 12px 12px 12px;font-size:13px;line-height:1.5">' + text + '</div></div></div>';
+    const bubbleYou = (text) => '<div style="display:flex;gap:10px;margin-bottom:12px;flex-direction:row-reverse">' +
+      '<div style="width:34px;height:34px;border-radius:50%;flex:none;background:var(--text);color:var(--bg);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">YOU</div>' +
+      '<div style="flex:1;text-align:right"><div style="font-size:10px;color:var(--text-muted);font-weight:700;margin-bottom:2px">' + up.name + '</div>' +
+      '<div style="display:inline-block;background:var(--accent);color:#fff;padding:10px 12px;border-radius:12px 2px 12px 12px;font-size:13px;line-height:1.5;text-align:left">' + text + '</div></div></div>';
+
+    // The GM's opening line (step 0) and convo build up as steps advance.
+    let convo = '';
+    const newWhere = toTeam ? (toTeam.city + ' ' + toTeam.name) : '';
+    const openLine = isTrade
+      ? 'I\u2019m going to be straight with you, ' + up.name + '. We\u2019ve agreed to a deal \u2014 you\u2019ve been traded to the ' + newWhere + ' for ' + (txn.pickSummary || 'draft compensation') + '.'
+      : 'This is the hardest part of this job, ' + up.name + '. We\u2019re releasing you. The roster math just didn\u2019t work out.';
+    convo += bubbleGM(openLine);
+
+    let body = '<div style="background:' + color + ';color:#fff;padding:14px 16px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:700;opacity:0.9">' + (isTrade ? 'YOU\u2019VE BEEN TRADED' : 'YOU\u2019VE BEEN RELEASED') + '</div>' +
+      '<div style="font-size:16px;font-weight:800;margin-top:4px">' + fromTeam.city + ' ' + fromTeam.name + (isTrade && toTeam ? ' \u2192 ' + toTeam.abbr : '') + '</div></div>';
+
+    let buttons = '';
+    if (step === 0) {
+      body += convo;
+      buttons = '<button class="btn btn-primary" style="width:100%" onclick="game._advancePlayerTxnDialogue(null)">' + (isTrade ? 'Wait \u2014 what?' : 'You\u2019re serious?') + '</button>';
+    } else if (step === 1) {
+      // Player gets to react — tone is purely flavor, both advance to the GM's closing line.
+      convo += bubbleYou(isTrade ? 'I gave everything to this organization. This is how it ends?' : 'After everything I gave this team?');
+      const followUp = isTrade
+        ? 'I know. Believe me, this wasn\u2019t easy. The front office values the picks and we\u2019ve got to think long term. You\u2019ve got a real opportunity in ' + (toTeam ? toTeam.city : 'your new home') + '.'
+        : 'I hear you. You did everything we asked. Sometimes it just comes down to the cap and the numbers, and it\u2019s nothing you did wrong.';
+      convo += bubbleGM(followUp);
+      body += convo;
+      buttons = '<div style="display:flex;gap:8px">' +
+        '<button class="btn" style="flex:1" onclick="game._advancePlayerTxnDialogue(\'classy\')">' + (isTrade ? 'I\u2019ll make the most of it.' : 'I\u2019ll catch on somewhere.') + '</button>' +
+        '<button class="btn" style="flex:1" onclick="game._advancePlayerTxnDialogue(\'fire\')">' + (isTrade ? 'You\u2019ll regret this.' : 'Your loss.') + '</button>' +
+        '</div>';
+    } else {
+      // Closing beat — GM reacts to the tone, then the user reports/clears out.
+      convo += bubbleYou(isTrade ? 'I gave everything to this organization. This is how it ends?' : 'After everything I gave this team?');
+      const followUp = isTrade
+        ? 'I know. This wasn\u2019t easy. You\u2019ve got a real opportunity in ' + (toTeam ? toTeam.city : 'your new home') + '.'
+        : 'I hear you. Sometimes it just comes down to the cap, and it\u2019s nothing you did wrong.';
+      convo += bubbleGM(followUp);
+      convo += bubbleYou(tone === 'fire'
+        ? (isTrade ? 'You\u2019ll regret this.' : 'Your loss.')
+        : (isTrade ? 'I\u2019ll make the most of it.' : 'I\u2019ll catch on somewhere.'));
+      const closeLine = tone === 'fire'
+        ? 'Maybe we will. Go prove us wrong \u2014 plenty have. Good luck out there.'
+        : 'That\u2019s the pro\u2019s mentality. Wherever you land, you\u2019ll be ready. Take care of yourself.';
+      convo += bubbleGM(closeLine);
+      body += convo;
+      buttons = '<button class="btn btn-success" style="width:100%" onclick="game._closePlayerTxnDialogue()">' +
+        (isTrade && toTeam ? 'Report to the ' + toTeam.name + ' \u2192' : 'Clear out your locker \u2192') + '</button>';
+    }
+    body += '<div style="margin-top:14px">' + buttons + '</div>';
+    this.showModal(isTrade ? 'Traded \u00b7 ' + this.state.year : 'Released \u00b7 ' + this.state.year, body);
+  },
+  _advancePlayerTxnDialogue(tone) {
+    if (tone) this._playerTxnTone = tone;
+    this._playerTxnStep = (this._playerTxnStep || 0) + 1;
+    this.showPlayerTransactionDialogue();
+  },
+  _closePlayerTxnDialogue() {
+    this._pendingPlayerTransaction = null;
+    this._playerTxnStep = 0;
+    this._playerTxnTone = null;
+    closeModal();
     this.saveGame();
     this.render();
   },
@@ -23700,7 +23887,15 @@ let game = {
           title: 'TRADE: ' + contender.abbr + ' acquire ' + player.name,
           body: contender.city + ' send ' + pickSummary + ' to ' + rebuilder.city + ' for ' + player.position + ' ' + player.name + ' (OVR ' + player.rating + ', age ' + player.age + ').'
         });
-        
+
+        // If it's the USER's own player who just got dealt, force a sit-down with the GM so the trade
+        // never happens silently — the user finds out from the front office, in their own words.
+        if (player.isUserControlled) {
+          this._pendingPlayerTransaction = {
+            type: 'trade', fromTeamId: rebuilder.id, toTeamId: contender.id, pickSummary
+          };
+        }
+
         tradesExecuted++;
         break; // contender is done shopping for this week
       }
@@ -25716,15 +25911,9 @@ let game = {
         delete up._chemistry[tm.fromProspectId];
       }
       const c = up._chemistry[pid] || { gp: 0, score: 0 };
-      c.gp += 1;
-      let inc = 1.0;             // ~1.1% per game in the pros — bonds build slowly over a long career
-      if (won) inc += 0.1;        // winning together
-      if (perfGood) inc += 0.05;  // playing at a high level
-      c.score = Math.min(100, (c.score || 0) + inc);
-      // Snapshot identity (so the Relationships page can show them even after they move/retire)
-      // and count distinct seasons spent as teammates.
+      this._bumpBond(c, 'nfl');
+      // Snapshot identity (so the Relationships page can show them even after they move/retire).
       c.name = tm.name; c.pos = tm.position;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
       up._chemistry[pid] = c;
     });
     // Build the bond with the coaching staff in the same pass.
@@ -25752,14 +25941,8 @@ let game = {
       const coach = this.getCoach(id);
       if (!coach) return;
       const c = up._coachChem[id] || { score: 0, seasons: 0 };
-      let inc = 1.0;             // ~1.1% per game in the pros
-      if (won) inc += 0.1;         // winning for your coach
-      if (perfGood) inc += 0.05;   // rewarding their trust
-      // The head coach who runs your whole program bonds a touch faster.
-      if (role === 'HC') inc *= 1.05;
-      c.score = Math.min(100, (c.score || 0) + inc);
+      this._bumpBond(c, 'nfl');
       c.name = coach.name; c.role = role;
-      if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
       up._coachChem[id] = c;
     });
   },
