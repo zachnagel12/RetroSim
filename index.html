@@ -3965,25 +3965,24 @@ let game = {
   },
 
   // Grow the user's bonds with HS teammates + the head coach after a game. Each teammate carries a
-  // stable closeness weight so the relationships diverge naturally over the season. High-school bonds
-  // build at ~2x the college/pro rate — friendships forged in your hometown senior year run deep and
-  // form fast — so they arrive in college already meaningful.
+  // stable closeness weight so the relationships diverge a little across the locker room. Bonds build
+  // at roughly 5% per game played (a touch more in a win, a touch less in a loss) — so a full senior
+  // season leaves you with solid, but not maxed-out, relationships to carry into college.
   _hsBumpChem(r, won) {
     if (!r.teammateChem) r.teammateChem = {};
     (r.teammates || []).forEach(m => {
       if (m._closeness === undefined) m._closeness = 0.5 + Math.random(); // 0.5..1.5, fixed per teammate
       const c = r.teammateChem[m.id] || { score: 0, gp: 0 };
-      const base = won ? 12 : 8; // 2x the college/pro per-game rate — bonds form fast in HS
-      // Soft diminishing returns so the closest friends climb high without every teammate slamming
-      // into 100 by midseason (keeps a real spread across the locker room).
-      const gain = base * m._closeness * (0.7 + Math.random() * 0.6) * (1 - (c.score || 0) / 118);
-      c.score = Math.min(100, (c.score || 0) + Math.max(0, gain));
+      const base = won ? 5.5 : 4.5; // ~5% per game
+      // Compress the closeness weight (0.5..1.5) to a gentle 0.85..1.15 factor so per-game gains stay
+      // close to 5% and nobody slams into 100 over a single season.
+      const factor = 0.85 + (m._closeness - 0.5) * 0.30;
+      c.score = Math.min(100, (c.score || 0) + base * factor);
       c.gp = (c.gp || 0) + 1;
       r.teammateChem[m.id] = c;
     });
     if (r.headCoach) {
-      const base = won ? 10 : 7; // 2x rate
-      r.headCoach.chem = Math.min(100, (r.headCoach.chem || 0) + base * (1 - (r.headCoach.chem || 0) / 118));
+      r.headCoach.chem = Math.min(100, (r.headCoach.chem || 0) + (won ? 5 : 4)); // ~5% per game
       r.headCoach.gp = (r.headCoach.gp || 0) + 1;
     }
   },
@@ -12804,7 +12803,7 @@ let game = {
     mates.forEach(tm => {
       const c = up._chemistry[tm.id] || { gp: 0, score: 0 };
       c.gp += 1;
-      let inc = 0.16; if (won) inc += 0.12; if (perfGood) inc += 0.06;
+      let inc = 2.7; if (won) inc += 0.2; if (perfGood) inc += 0.15; // ~3% per game in college
       c.score = Math.min(100, (c.score || 0) + inc);
       c.name = tm.name; c.pos = tm.position; c.college = true;
       if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
@@ -12818,7 +12817,7 @@ let game = {
         const coach = this.getCoach(cid);
         if (!coach) return;
         const c = up._coachChem[cid] || { score: 0, seasons: 0 };
-        let inc = 0.18; if (won) inc += 0.12; if (perfGood) inc += 0.05;
+        let inc = 2.7; if (won) inc += 0.2; if (perfGood) inc += 0.15; // ~3% per game in college
         if (role === 'HC') inc *= 1.05;
         c.score = Math.min(100, (c.score || 0) + inc);
         c.name = coach.name; c.role = role; c.college = true; c.collegeTeam = up.school;
@@ -25718,9 +25717,9 @@ let game = {
       }
       const c = up._chemistry[pid] || { gp: 0, score: 0 };
       c.gp += 1;
-      let inc = 0.16;            // longevity — just sharing the field
-      if (won) inc += 0.12;       // winning together
-      if (perfGood) inc += 0.06;  // playing at a high level
+      let inc = 1.0;             // ~1.1% per game in the pros — bonds build slowly over a long career
+      if (won) inc += 0.1;        // winning together
+      if (perfGood) inc += 0.05;  // playing at a high level
       c.score = Math.min(100, (c.score || 0) + inc);
       // Snapshot identity (so the Relationships page can show them even after they move/retire)
       // and count distinct seasons spent as teammates.
@@ -25753,8 +25752,8 @@ let game = {
       const coach = this.getCoach(id);
       if (!coach) return;
       const c = up._coachChem[id] || { score: 0, seasons: 0 };
-      let inc = 0.18;             // working together day to day
-      if (won) inc += 0.12;        // winning for your coach
+      let inc = 1.0;             // ~1.1% per game in the pros
+      if (won) inc += 0.1;         // winning for your coach
       if (perfGood) inc += 0.05;   // rewarding their trust
       // The head coach who runs your whole program bonds a touch faster.
       if (role === 'HC') inc *= 1.05;
