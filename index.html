@@ -3966,14 +3966,14 @@ let game = {
 
   // Grow the user's bonds with HS teammates + the head coach after a game. Each teammate carries a
   // stable closeness weight so the relationships diverge a little across the locker room. Bonds build
-  // at roughly 5% per game played (a touch more in a win, a touch less in a loss) — so a full senior
+  // at roughly 4% per game played (a touch more in a win, a touch less in a loss) — so a full senior
   // season leaves you with solid, but not maxed-out, relationships to carry into college.
   _hsBumpChem(r, won) {
     if (!r.teammateChem) r.teammateChem = {};
     (r.teammates || []).forEach(m => {
       if (m._closeness === undefined) m._closeness = 0.5 + Math.random(); // 0.5..1.5, fixed per teammate
       const c = r.teammateChem[m.id] || { score: 0, gp: 0 };
-      const base = won ? 5.5 : 4.5; // ~5% per game
+      const base = won ? 4.4 : 3.6; // ~4% per game
       // Compress the closeness weight (0.5..1.5) to a gentle 0.85..1.15 factor so per-game gains stay
       // close to 5% and nobody slams into 100 over a single season.
       const factor = 0.85 + (m._closeness - 0.5) * 0.30;
@@ -3982,7 +3982,7 @@ let game = {
       r.teammateChem[m.id] = c;
     });
     if (r.headCoach) {
-      r.headCoach.chem = Math.min(100, (r.headCoach.chem || 0) + (won ? 5 : 4)); // ~5% per game
+      r.headCoach.chem = Math.min(100, (r.headCoach.chem || 0) + (won ? 4 : 3.2)); // ~4% per game
       r.headCoach.gp = (r.headCoach.gp || 0) + 1;
     }
   },
@@ -12803,7 +12803,7 @@ let game = {
     mates.forEach(tm => {
       const c = up._chemistry[tm.id] || { gp: 0, score: 0 };
       c.gp += 1;
-      let inc = 2.7; if (won) inc += 0.2; if (perfGood) inc += 0.15; // ~3% per game in college
+      let inc = 2.3; if (won) inc += 0.2; if (perfGood) inc += 0.15; // ~2.5% per game in college
       c.score = Math.min(100, (c.score || 0) + inc);
       c.name = tm.name; c.pos = tm.position; c.college = true;
       if (c.lastSeason !== yr) { c.seasons = (c.seasons || 0) + 1; c.lastSeason = yr; c.score = Math.min(100, (c.score || 0) + 8); } // each season together adds a relationship bonus on top of per-game growth
@@ -12817,7 +12817,7 @@ let game = {
         const coach = this.getCoach(cid);
         if (!coach) return;
         const c = up._coachChem[cid] || { score: 0, seasons: 0 };
-        let inc = 2.7; if (won) inc += 0.2; if (perfGood) inc += 0.15; // ~3% per game in college
+        let inc = 2.3; if (won) inc += 0.2; if (perfGood) inc += 0.15; // ~2.5% per game in college
         if (role === 'HC') inc *= 1.05;
         c.score = Math.min(100, (c.score || 0) + inc);
         c.name = coach.name; c.role = role; c.college = true; c.collegeTeam = up.school;
