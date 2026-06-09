@@ -3965,19 +3965,25 @@ let game = {
   },
 
   // Grow the user's bonds with HS teammates + the head coach after a game. Each teammate carries a
-  // stable closeness weight so the relationships diverge naturally over the season.
+  // stable closeness weight so the relationships diverge naturally over the season. High-school bonds
+  // build at ~2x the college/pro rate — friendships forged in your hometown senior year run deep and
+  // form fast — so they arrive in college already meaningful.
   _hsBumpChem(r, won) {
     if (!r.teammateChem) r.teammateChem = {};
     (r.teammates || []).forEach(m => {
       if (m._closeness === undefined) m._closeness = 0.5 + Math.random(); // 0.5..1.5, fixed per teammate
       const c = r.teammateChem[m.id] || { score: 0, gp: 0 };
-      const base = won ? 6 : 4;
-      c.score = Math.min(100, c.score + base * m._closeness * (0.7 + Math.random() * 0.6));
+      const base = won ? 12 : 8; // 2x the college/pro per-game rate — bonds form fast in HS
+      // Soft diminishing returns so the closest friends climb high without every teammate slamming
+      // into 100 by midseason (keeps a real spread across the locker room).
+      const gain = base * m._closeness * (0.7 + Math.random() * 0.6) * (1 - (c.score || 0) / 118);
+      c.score = Math.min(100, (c.score || 0) + Math.max(0, gain));
       c.gp = (c.gp || 0) + 1;
       r.teammateChem[m.id] = c;
     });
     if (r.headCoach) {
-      r.headCoach.chem = Math.min(100, (r.headCoach.chem || 0) + (won ? 5 : 3.5));
+      const base = won ? 10 : 7; // 2x rate
+      r.headCoach.chem = Math.min(100, (r.headCoach.chem || 0) + base * (1 - (r.headCoach.chem || 0) / 118));
       r.headCoach.gp = (r.headCoach.gp || 0) + 1;
     }
   },
@@ -4087,6 +4093,38 @@ let game = {
     this.installUserPlayer({ name: r.name, position: r.position, school: abbr, grade: r.grade, stars: r.stars, archetype: r.archetype });
     const up = this.getUserPlayer && this.getUserPlayer();
     if (up && wasWalkOn) { up.walkOn = true; up.recruitStars = 0; }
+
+    // CARRY HIGH-SCHOOL BONDS FORWARD — the chemistry built with senior-year teammates (and the head
+    // coach) follows the player into college so the Relationships tab continues the bond instead of
+    // resetting to zero. Teammates who reached the college ranks are keyed by their college-prospect
+    // id (so the college→NFL migration via fromProspectId then carries them the rest of the way);
+    // others persist as a snapshot ("High school teammate"). The HS head coach lands in _coachChem.
+    if (up) {
+      if (!up._chemistry) up._chemistry = {};
+      if (!up._coachChem) up._coachChem = {};
+      (r.teammates || []).forEach(m => {
+        const c = r.teammateChem && r.teammateChem[m.id];
+        if (!c || (c.score || 0) <= 0) return;
+        const key = m.collegeProspectId || ('hsmate_' + m.id);
+        up._chemistry[key] = {
+          gp: c.gp || 0,
+          score: Math.min(100, Math.round(c.score || 0)),
+          name: m.name, pos: m.position,
+          college: !!m.collegeProspectId, // a same-path college player; otherwise a HS-only snapshot
+          fromHighSchool: true,
+          hsTeam: r.teamName,
+          lastSeason: this.state.year
+        };
+      });
+      if (r.headCoach && (r.headCoach.chem || 0) > 0) {
+        up._coachChem['hscoach_' + (r.headCoach.faceSeed || 0)] = {
+          score: Math.min(100, Math.round(r.headCoach.chem || 0)),
+          seasons: 1, name: r.headCoach.name, role: 'HC',
+          fromHighSchool: true, hsTeam: r.teamName, lastSeason: this.state.year
+        };
+      }
+    }
+
     const sc = COLLEGE_SCHOOLS.find(s => s.abbr === abbr);
     this.addHeadline({ type: 'college', title: r.name + ' signs with ' + (sc ? sc.name : abbr),
       body: 'Capping a ' + r.record.w + '\u2013' + r.record.l + ' senior season at ' + r.teamName + ', ' + r.name + ' makes it official on Signing Day.' });
@@ -15983,8 +16021,11 @@ let game = {
     // transition so the user can still manually flip tabs and have it stick.
     const stage = this.state.career && this.state.career.careerStage;
     const mode = this.state.career && this.state.career.mode;
-    // High-school stage: the recruitment hub is the only screen.
-    if (mode === 'player' && stage === 'highschool') this.currentView = 'hsrecruit';
+    // High-school stage: the recruitment hub is the home screen, but the Relationships tab is also
+    // viewable. Only snap back to the hub if the current view isn't a valid HS-stage view.
+    if (mode === 'player' && stage === 'highschool' && this.currentView !== 'hsrecruit' && this.currentView !== 'relationships') {
+      this.currentView = 'hsrecruit';
+    }
     const expectedDefault = (mode === 'player' && stage === 'college') ? 'college' : 'nfl';
     if (this._lastStageDefault !== expectedDefault) {
       this.navTab = expectedDefault;
@@ -17414,11 +17455,14 @@ let game = {
         else { const sc = COLLEGE_SCHOOLS.find(s => s.abbr === pl.school); status = 'College · ' + (sc ? sc.name : pl.school); statusColor = 'var(--text-muted)'; }
       } else if (pl && pl.retired) {
         status = 'Retired'; statusColor = 'var(--text-muted)';
+      } else if (c.fromHighSchool) {
+        status = 'High school teammate'; statusColor = 'var(--info)';
       } else {
         status = c.college ? 'College teammate' : 'Former teammate'; statusColor = 'var(--text-muted)';
       }
       const seasons = c.seasons || 0;
       const noteBits = [];
+      if (c.fromHighSchool) noteBits.push('High school teammate' + (c.hsTeam ? ' · ' + c.hsTeam : ''));
       if (seasons > 0) noteBits.push(seasons + ' season' + (seasons === 1 ? '' : 's') + (c.college ? ' together in college' : ' as teammates'));
       if (c.gp) noteBits.push(c.gp + ' game' + (c.gp === 1 ? '' : 's') + ' together');
       // Tap target: open the NFL player card, the college prospect card, or nothing if culled.
@@ -17462,14 +17506,19 @@ let game = {
         statusColor = 'var(--info)';
       } else if (coach && coach.retired) {
         status = 'Retired from coaching'; statusColor = 'var(--text-muted)';
+      } else if (c.fromHighSchool) {
+        status = 'High school head coach' + (c.hsTeam ? ' · ' + c.hsTeam : ''); statusColor = 'var(--info)';
       } else {
         status = 'Former coach'; statusColor = 'var(--text-muted)';
       }
       const seasons = c.seasons || 0;
       const noteBits = [];
+      if (c.fromHighSchool) noteBits.push('Coached you in high school');
       if (c.drafted) noteBits.push('Drafted you in ' + (c.draftedYear || ''));
-      if (seasons > 0) noteBits.push((isCollegeBond ? 'Coached you in college for ' : 'Coached you for ') + seasons + ' year' + (seasons === 1 ? '' : 's') + ' as your ' + bondRole.toLowerCase());
-      else noteBits.push('Was your ' + bondRole.toLowerCase());
+      if (!c.fromHighSchool) {
+        if (seasons > 0) noteBits.push((isCollegeBond ? 'Coached you in college for ' : 'Coached you for ') + seasons + ' year' + (seasons === 1 ? '' : 's') + ' as your ' + bondRole.toLowerCase());
+        else noteBits.push('Was your ' + bondRole.toLowerCase());
+      }
       out.push({
         kind: 'coach', id: cid, name, sub: bondRole, score, status, statusColor,
         note: noteBits.join(' · '), faceSeed: coach ? coach.faceSeed : null,
