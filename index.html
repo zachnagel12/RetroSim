@@ -4891,9 +4891,8 @@ let game = {
           title: matchingPlayer.name + ' drafted by ' + (team ? team.city + ' ' + team.name : 'unknown team'),
           body: 'Your NFL career begins. Initial OVR: ' + matchingPlayer.rating + '. Contract: ' + (matchingPlayer.contract ? formatMoney(matchingPlayer.contract.aav) + '/yr for ' + matchingPlayer.contract.years + ' years' : 'pending') + '.'
         });
-        // Spawn a career rival — same position, comparable grade, drafted close to the user.
-        // The rival sticks with the user for their whole career and gets compared each season.
-        this._assignCareerRival(matchingPlayer);
+        // A career rival is spawned later — not as a rookie. See the year-2 trigger in the NFL
+        // offseason block below, so the rivalry forms once the player has established themselves.
       }
     }
     
@@ -4901,6 +4900,12 @@ let game = {
       // NFL stage — handled by the existing player aging/retirement system.
       // If player retired this offseason, mark career as retired.
       const p = this.state.players[this.state.career.entityId];
+      // CAREER RIVAL — spawn once the player has a season under their belt (year 2 at the earliest),
+      // never as a rookie, and match them to a same-position player of comparable CURRENT OVR.
+      if (p && !p.retired && (p.yearsInLeague || 0) >= 1 &&
+          (this.state.career.rivalPlayerId === undefined || this.state.career.rivalPlayerId === null)) {
+        this._assignCareerRival(p);
+      }
       // Record the season's rival comparison BEFORE the player potentially retires.
       this._recordRivalSeasonComparison();
       if (p && p.retired) {
@@ -10075,6 +10080,10 @@ let game = {
       });
       // One more blue-chip sweep after the final AGM pass in case any stars slipped through.
       this.runBlueChipFASweep();
+      // FINAL ABSORPTION — anything the cap/roster-ceiling cuts just spat back onto the street that's
+      // still starter-caliber gets force-placed (displacing a clearly-worse fringe player). This is the
+      // last guarantee that good players don't end the offseason unsigned.
+      this._forceSignStaleFAs();
       
       // Enforce league-wide OVR bell curve. If too many players have inflated into the elite tiers,
       // apply small downward nudges so the league stays approximately bell-shaped year over year.
@@ -11432,6 +11441,8 @@ let game = {
     this.clearWeeklyTraining();
     // Tick down injury timers and post a return-from-injury headline for the user player.
     this.tickInjuries();
+    // Occasionally surface a locker-room / coaching / front-office cutscene for the player career.
+    try { this._maybeQueuePlayerCutscene(); } catch (e) { /* defensive — never break the sim */ }
     // Agent career: tick agency overhead, generate NIL deals, refresh pitch list.
     // Runs after college week so marketability reflects the latest stats.
     if (this.state.career && this.state.career.mode === 'agent') {
@@ -13655,13 +13666,13 @@ let game = {
     const allFAs = this.state.players.filter(p =>
       !p.retired && !p._culled && p.team === null && !p.isUserControlled
     );
-    // Quality bar — anyone 75+ should get signed, period (real NFL: a starter-caliber player does
-    // not sit unrostered). Younger players sign at lower OVR too. This is the main mechanism that
-    // keeps the free-agent board clear of above-average talent.
+    // Quality bar — anyone starter-caliber should get signed (real NFL: a rotation-level player does
+    // not sit unrostered). Thresholds lowered so solid depth (not just stars) gets re-absorbed, which
+    // is the main mechanism that keeps the free-agent board from filling with usable players.
     const blueChips = allFAs.filter(p => {
-      if (p.age <= 26 && p.rating >= 72) return true;
-      if (p.age <= 31 && p.rating >= 74) return true;
-      if (p.age <= 37 && p.rating >= 75) return true; // even older vets get signed if they're still good
+      if (p.age <= 26 && p.rating >= 68) return true;
+      if (p.age <= 31 && p.rating >= 70) return true;
+      if (p.age <= 37 && p.rating >= 72) return true; // even older vets get signed if they're still good
       return false;
     });
     // Sort by attractiveness — high OVR first, with mild penalty for older vets.
@@ -14995,12 +15006,15 @@ let game = {
             const userManaged = (_cmode === 'dynasty') && curTeam && curTeam.id === this.state.userTeamId;
             let reSignChance = 0;
             if (curTeam && !userManaged) {
-              if (p.rating >= 88) reSignChance = 0.98;
-              else if (p.rating >= 83) reSignChance = 0.95;
-              else if (p.rating >= 78) reSignChance = 0.90;
-              else if (p.rating >= 73) reSignChance = 0.82;
-              else if (p.rating >= 67) reSignChance = 0.70;
-              else reSignChance = 0.55;
+              // Teams keep their own players the large majority of the time — real rosters carry
+              // strong continuity year to year. Only genuine cap casualties and clearly-replaceable
+              // depth reach the open market, so the FA board stays realistic instead of flooding.
+              if (p.rating >= 88) reSignChance = 0.99;
+              else if (p.rating >= 83) reSignChance = 0.97;
+              else if (p.rating >= 78) reSignChance = 0.94;
+              else if (p.rating >= 73) reSignChance = 0.90;
+              else if (p.rating >= 67) reSignChance = 0.85;
+              else reSignChance = 0.74;
               // Coming off a decorated or productive season makes a team almost never let them walk
               // (real NFL re-signs / franchise-tags its own studs). Award winners are kept, period.
               const awardsThisYear = (p.awards || []).filter(a => a.year === this.state.year);
@@ -15032,7 +15046,7 @@ let game = {
               const cornerstone = (p.rating >= 85) || ((p.awards || []).some(a => a.year === this.state.year && ['MVP','OPOY','DPOY','All-Pro 1st'].includes(a.type)));
               // Cornerstones get a restructure-sized cushion (the AGM will create the room); others
               // must fit within ~$3M of available space or they hit free agency.
-              const cushion = cornerstone ? Math.round(capNow * 0.06) : 3_000_000;
+              const cushion = cornerstone ? Math.round(capNow * 0.06) : 6_000_000;
               if (firstHit <= room + cushion) {
                 p.contract = newC;
               } else {
@@ -15594,14 +15608,15 @@ let game = {
     });
   },
 
-  // Force-sign every unsigned FA above 77 OVR that has already spent a full season unsigned, so none
-  // ever go more than one season without a home. Each is placed with the best-fit team (cap room +
-  // need), displacing a clearly-worse fringe player if the roster is full.
+  // Force-sign unsigned quality FAs so good players never sit on the street. Anyone 78+ is placed
+  // immediately (a starter-caliber player always finds a home); 72-77 OVR are placed once they've gone
+  // a full season unsigned. Each is slotted onto the best-fit team (cap room + need), displacing a
+  // clearly-worse fringe player if the roster is full.
   _forceSignStaleFAs() {
     const cap = getSalaryCap(this.state.year);
     const stale = this.state.players.filter(p =>
       p.team === null && !p.retired && !p.isUserControlled && p.collegeGrade === undefined &&
-      p.rating >= 78 && (p.yearsAsFA || 0) >= 1
+      ((p.rating >= 76) || (p.rating >= 72 && (p.yearsAsFA || 0) >= 1))
     ).sort((a, b) => b.rating - a.rating);
 
     stale.forEach(fa => {
@@ -15621,11 +15636,16 @@ let game = {
         const team = cand.team;
         let madeRoom = true;
         if (team.roster.length >= ROSTER_SIZE) {
-          // Cut the weakest non-user player if they're clearly worse than this FA.
+          // Make room by cutting the least-keepable player — expiring/fringe before committed depth.
           const cut = team.roster.map(id => this.state.players[id])
             .filter(p => p && !p.retired && !p.isUserControlled)
-            .sort((a, b) => a.rating - b.rating)[0];
-          if (cut && cut.rating < fa.rating) {
+            .sort((a, b) => this._cutValue(a) - this._cutValue(b))[0];
+          // Only displace someone if they're clearly worse than this FA, AND don't yank a mid-contract
+          // rotational player (2+ yrs left) unless the FA is a genuine upgrade — depth finishes its deals.
+          const cutYrsLeft = cut && cut.contract ? (cut.contract.yearsRemaining || 0) : 0;
+          const upgradeGap = cut ? (fa.rating - cut.rating) : 99;
+          const okToCut = cut && cut.rating < fa.rating && (cutYrsLeft <= 1 || upgradeGap >= 4);
+          if (okToCut) {
             team.roster = team.roster.filter(id => id !== cut.id);
             if (cut.contract) { team.deadCap = (team.deadCap || 0) + deadCapIfReleased(cut.contract); cut.contract = null; }
             cut.team = null;
@@ -15694,9 +15714,12 @@ let game = {
           if (team.roster.length >= ROSTER_SIZE) {
             const cuttable = team.roster.map(id => this.state.players[id])
               .filter(p => p && !p.retired && !p.isUserControlled)
-              .sort((a, b) => a.rating - b.rating)[0];
-            // Only displace someone clearly worse than this FA — otherwise this team passes.
+              .sort((a, b) => this._cutValue(a) - this._cutValue(b))[0];
+            // Only displace someone clearly worse than this FA — and don't pull a mid-contract
+            // rotational player (2+ yrs left) unless the FA is a real upgrade. Depth finishes its deals.
             if (!cuttable || cuttable.rating >= fa.rating - 1) return null;
+            const cutYrsLeft = cuttable.contract ? (cuttable.contract.yearsRemaining || 0) : 0;
+            if (cutYrsLeft >= 2 && (fa.rating - cuttable.rating) < 4) return null;
             cutTarget = cuttable;
           }
           // Would the FA be an upgrade over the worst at the position (or fill a thin room)?
@@ -15834,10 +15857,26 @@ let game = {
     });
   },
 
+  // How "keepable" a player is when a cut has to be made. HIGHER = keep; cuts take the LOWEST first.
+  // Beyond raw value (rating + youth + upside), players who are MID-CONTRACT get a strong protection
+  // bonus so rotational pieces and deep reserves actually play out the deals they signed — teams trim
+  // expiring/expired bodies and camp fringe to reach the roster limit, not players they just committed
+  // multiple years to. A player in the final year of their deal (or with no contract) gets no bonus.
+  _cutValue(p) {
+    if (!p) return 0;
+    let v = (p.rating || 0)
+      + Math.max(0, 26 - (p.age || 26)) * 0.3
+      + (((p.potential || p.rating) - p.rating)) * 0.4;
+    const yr = (p.contract && p.contract.yearsRemaining) || 0;
+    if (yr >= 2) v += 8 + (yr - 2) * 4; // 2 yrs left +8, 3 yrs +12, 4 yrs +16 — keep them through the deal
+    return v;
+  },
+
   enforceRosterMax() {    this.state.teams.forEach(team => {
       // POSITION CEILING — release clearly excess depth at any single position (e.g. a hoarded stack of
       // QBs) down to a sensible cap before the overall 53-man trim. QB tops out at 3; others at target
-      // depth + 1. Lowest-rated go first; the user's player and this year's draft picks are protected.
+      // depth + 1. Expiring/fringe go first; mid-contract depth, the user's player, and this year's draft
+      // picks are protected so committed rotational players aren't cut partway through their deals.
       const posCeiling = (pos) => (pos === 'QB') ? 3 : (POSITION_COUNTS[pos] || 3) + 1;
       const byPos = {};
       team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired)
@@ -15847,7 +15886,7 @@ let game = {
         if (excess <= 0) return;
         const cuttable = arr.filter(p => !p.isUserControlled &&
           !(p.draftedYear === this.state.year && p.draftedByTeamId === team.id && (p.yearsInLeague || 0) === 0))
-          .sort((a, b) => a.rating - b.rating);
+          .sort((a, b) => this._cutValue(a) - this._cutValue(b));
         for (const p of cuttable) {
           if (excess <= 0) break;
           team.roster = team.roster.filter(id => id !== p.id);
@@ -15868,16 +15907,18 @@ let game = {
           const underContract = x.p.contract && (x.p.contract.yearsRemaining || 0) >= 1;
           const recentAward = (x.p.awards || []).some(a => a.year >= this.state.year - 1 && a.type !== 'Pro Bowl');
           if (underContract && (x.p.rating >= 78 || recentAward)) return false;
+          // Protect mid-contract depth (2+ years left) — they finish their deals. Only fall back to
+          // cutting them if literally nothing expiring/fringe is available (handled by the pool below).
+          if (x.p.contract && (x.p.contract.yearsRemaining || 0) >= 2 && x.p.rating < 78) return false;
           return true;
         });
-        const pool = trimmable.length > 0 ? trimmable : rosterPlayers.filter(x => !x.p.isUserControlled);
+        // Preferred pool = expiring/fringe players. If that's empty (everyone's mid-deal), fall back to
+        // the least-keepable non-user player so we can still reach 53.
+        const pool = trimmable.length > 0 ? trimmable
+          : rosterPlayers.filter(x => !x.p.isUserControlled);
         if (pool.length === 0) break;
-        // Sort ascending by adjusted value: rating + youth + potential
-        pool.sort((a, b) => {
-          const aVal = a.p.rating + Math.max(0, 26 - a.p.age) * 0.3 + ((a.p.potential || a.p.rating) - a.p.rating) * 0.4;
-          const bVal = b.p.rating + Math.max(0, 26 - b.p.age) * 0.3 + ((b.p.potential || b.p.rating) - b.p.rating) * 0.4;
-          return aVal - bVal;
-        });
+        // Cut the least-keepable first (expiring contracts and fringe bodies before committed depth).
+        pool.sort((a, b) => this._cutValue(a.p) - this._cutValue(b.p));
         const cut = pool[0];
         if (!cut) break;
         team.roster = team.roster.filter(id => id !== cut.id);
@@ -16358,6 +16399,11 @@ let game = {
     // always hear it from the front office before anything else.
     if (this._pendingPlayerTransaction && !document.getElementById('modal').classList.contains('show')) {
       try { this.showPlayerTransactionDialogue(); } catch (e) { /* defensive */ }
+    }
+    // PLAYER CUTSCENE — locker-room / coaching / front-office moment. Lower priority than a trade/cut,
+    // so those always come first.
+    if (this._pendingCutscene && !document.getElementById('modal').classList.contains('show')) {
+      try { this.showPlayerCutscene(); } catch (e) { /* defensive */ }
     }
     // #5 Coaching carousel · #6 NIL offer · #8 bowl opt-out — forced college popups, one at a time.
     if (this.state && this.state.career && this.state.career.mode === 'player'
@@ -17608,6 +17654,177 @@ let game = {
     this._pendingPlayerTransaction = null;
     this._playerTxnStep = 0;
     this._playerTxnTone = null;
+    closeModal();
+    this.saveGame();
+    this.render();
+  },
+
+  // ============================================================
+  // PLAYER CUTSCENES — short forced popups that surface locker-room, coaching-staff, and front-office
+  // interactions during a player career. They give the season texture and let a choice nudge a real
+  // relationship (or the player's standing) a little. One fires occasionally on a weekly cadence.
+  // ============================================================
+  _firstName(full) { return (full || '').split(' ')[0] || full || 'rook'; },
+
+  // Pick a same-team teammate (NFL) or schoolmate (college) other than the user.
+  _cutsceneTeammate(up) {
+    if (up.team !== null && up.team !== undefined && this.state.teams[up.team]) {
+      const mates = this.state.teams[up.team].roster
+        .map(id => this.state.players[id]).filter(p => p && !p.retired && p.id !== up.id);
+      if (mates.length) return mates[Math.floor(Math.random() * mates.length)];
+    }
+    if (up.school && this.state.collegeProspects) {
+      const mates = this.state.collegeProspects.filter(p => p.school === up.school && p.id !== up.id);
+      if (mates.length) return mates[Math.floor(Math.random() * mates.length)];
+    }
+    return null;
+  },
+
+  // Nudge a bond (teammate or coach) up or down a few points from an off-field interaction.
+  _cutsceneNudgeBond(kind, id, delta) {
+    const up = this.getUserPlayer && this.getUserPlayer();
+    if (!up || id === null || id === undefined) return;
+    const store = kind === 'coach' ? (up._coachChem = up._coachChem || {}) : (up._chemistry = up._chemistry || {});
+    const c = store[id] || { score: 0, gp: 0 };
+    c.score = Math.max(0, Math.min(100, (c.score || 0) + delta));
+    store[id] = c;
+  },
+
+  // Roll for a cutscene after a week is simmed. Cooldown + probability keep them occasional.
+  _maybeQueuePlayerCutscene() {
+    const c = this.state.career;
+    if (!c || c.mode !== 'player') return;
+    if (c.careerStage !== 'nfl' && c.careerStage !== 'college') return;
+    if (this._pendingCutscene || this._pendingPlayerTransaction) return;
+    const wk = this.state.week || 0;
+    if (wk < 1 || wk > 18) return; // regular season only
+    if ((wk - (this._lastCutsceneWeek || -99)) < 3) return; // cooldown
+    if (Math.random() > 0.34) return;
+    const scene = this._buildPlayerCutscene();
+    if (scene) { this._pendingCutscene = scene; this._lastCutsceneWeek = wk; }
+  },
+
+  // Build one cutscene (speaker + three beats). Returns null if no suitable speaker exists.
+  _buildPlayerCutscene() {
+    const up = this.getUserPlayer && this.getUserPlayer();
+    if (!up) return null;
+    const team = (up.team !== null && up.team !== undefined) ? this.state.teams[up.team] : null;
+    const hc = team ? this.getTeamHC(team) : null;
+    const mate = this._cutsceneTeammate(up);
+    const youName = this._firstName(up.name);
+    const wins = team ? (team.wins || 0) : 0, losses = team ? (team.losses || 0) : 0;
+    const winning = wins > losses;
+
+    // Assemble the pool of scenes whose required speaker exists.
+    const pool = [];
+
+    if (mate) {
+      const m = this._firstName(mate.name);
+      pool.push({
+        type: 'teammate', speaker: 'TEAMMATE', name: mate.name, color: (team && team.primary) || 'var(--accent)',
+        title: 'Locker room', banner: 'LOCKER ROOM',
+        open: m + ' drops onto the stool next to you. \u201cAy, ' + youName + ' \u2014 a few of us are grabbing food after walkthrough. You in? Best way to get on the same page before Sunday.\u201d',
+        choices: [
+          { label: 'Always \u2014 count me in', reply: '\u201cThat\u2019s what I\u2019m talking about. The chemistry stuff is real \u2014 we click off the field, we click on it.\u201d', bond: { kind: 'mate', id: mate.id, delta: 6 } },
+          { label: 'Rain check \u2014 film tonight', reply: '\u201cRespect the grind. Just don\u2019t be a stranger, alright? We win as a room.\u201d', bond: { kind: 'mate', id: mate.id, delta: 1 } }
+        ]
+      });
+      pool.push({
+        type: 'teammate', speaker: 'TEAMMATE', name: mate.name, color: (team && team.primary) || 'var(--accent)',
+        title: winning ? 'Riding high' : 'Adversity', banner: 'LOCKER ROOM',
+        open: winning
+          ? m + ' catches you on the way out. \u201cWe\u2019re rolling, but I\u2019ve seen rooms get comfortable and fall apart. Keep us honest, ' + youName + '.\u201d'
+          : m + ' sits heavy at his locker. \u201cThis stretch is testing us. People are pointing fingers. We can\u2019t have that.\u201d',
+        choices: [
+          { label: 'Pull the room together', reply: '\u201cThat\u2019s leadership. Guys notice who steadies the ship when it\u2019s rocky.\u201d', bond: { kind: 'mate', id: mate.id, delta: 5 } },
+          { label: 'Keep my head down, just play', reply: '\u201cFair enough. Let your game do the talking.\u201d', bond: { kind: 'mate', id: mate.id, delta: 1 } }
+        ]
+      });
+    }
+
+    if (hc) {
+      pool.push({
+        type: 'coach', speaker: 'HEAD COACH', name: hc.name, color: (team && team.secondary) || '#444',
+        title: 'Film session', banner: 'COACH\u2019S OFFICE',
+        open: 'Coach ' + (this._firstName(hc.name)) + ' pulls up the tape. \u201c' + youName + ', I see the talent. What I want to know is whether you want the hard coaching or the easy version.\u201d',
+        choices: [
+          { label: 'Coach me hard \u2014 I can take it', reply: '\u201cThat\u2019s the answer. I\u2019m going to push you, and you\u2019re going to be better for it.\u201d', bond: { kind: 'coach', id: hc.id, delta: 6 } },
+          { label: 'Let\u2019s keep it positive', reply: '\u201cNoted. I\u2019ll meet you where you are \u2014 but the bar doesn\u2019t move.\u201d', bond: { kind: 'coach', id: hc.id, delta: 2 } }
+        ]
+      });
+    }
+
+    if (team) {
+      pool.push({
+        type: 'gm', speaker: team.abbr + ' GM', name: team.abbr + ' GM', color: (team && team.primary) || 'var(--accent)',
+        title: 'Front office', banner: 'FRONT OFFICE',
+        open: 'The GM catches you in the facility hallway. \u201c' + youName + ', the building believes in you. I just want to hear it from you \u2014 how do you see your role here?\u201d',
+        choices: [
+          { label: 'I want to be a cornerstone here', reply: '\u201cThat\u2019s exactly what I hoped to hear. Keep stacking it and we\u2019ll take care of you when the time comes.\u201d', bond: null },
+          { label: 'I\u2019m focused week to week', reply: '\u201cPro\u2019s mindset. We\u2019ll handle the big picture \u2014 you handle Sunday.\u201d', bond: null }
+        ]
+      });
+    }
+
+    if (pool.length === 0) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  },
+
+  showPlayerCutscene() {
+    const sc = this._pendingCutscene;
+    if (!sc) return;
+    const up = this.getUserPlayer && this.getUserPlayer();
+    if (!up) { this._pendingCutscene = null; return; }
+    const step = this._cutsceneStep || 0;
+    const youName = this._firstName(up.name);
+    const color = sc.color || 'var(--accent)';
+
+    const bubbleThem = (text) => '<div style="display:flex;gap:10px;margin-bottom:12px">' +
+      '<div style="width:34px;height:34px;border-radius:50%;flex:none;background:' + color + ';color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:10px">' + (sc.type === 'coach' ? 'HC' : sc.type === 'gm' ? 'GM' : '#') + '</div>' +
+      '<div style="flex:1"><div style="font-size:10px;color:var(--text-muted);font-weight:700;margin-bottom:2px">' + sc.name + '</div>' +
+      '<div style="background:var(--surface-2);padding:10px 12px;border-radius:2px 12px 12px 12px;font-size:13px;line-height:1.5">' + text + '</div></div></div>';
+    const bubbleYou = (text) => '<div style="display:flex;gap:10px;margin-bottom:12px;flex-direction:row-reverse">' +
+      '<div style="width:34px;height:34px;border-radius:50%;flex:none;background:var(--text);color:var(--bg);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">YOU</div>' +
+      '<div style="flex:1;text-align:right"><div style="font-size:10px;color:var(--text-muted);font-weight:700;margin-bottom:2px">' + up.name + '</div>' +
+      '<div style="display:inline-block;background:var(--accent);color:#fff;padding:10px 12px;border-radius:12px 2px 12px 12px;font-size:13px;line-height:1.5;text-align:left">' + text + '</div></div></div>';
+
+    let body = '<div style="background:' + color + ';color:#fff;padding:12px 16px;text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:11px;letter-spacing:1.5px;font-weight:700;opacity:0.9">' + sc.banner + '</div>' +
+      '<div style="font-size:15px;font-weight:800;margin-top:3px">' + sc.title + '</div></div>';
+    body += bubbleThem(sc.open);
+
+    let buttons = '';
+    if (step === 0) {
+      buttons = '<div style="display:flex;flex-direction:column;gap:8px">';
+      sc.choices.forEach((ch, i) => {
+        buttons += '<button class="btn" style="width:100%;text-align:left" onclick="game._advanceCutscene(' + i + ')">' + ch.label + '</button>';
+      });
+      buttons += '</div>';
+    } else {
+      const ch = sc.choices[this._cutsceneChoice || 0];
+      body += bubbleYou(ch.label);
+      body += bubbleThem(ch.reply);
+      buttons = '<button class="btn btn-success" style="width:100%" onclick="game._closeCutscene()">Back to work \u2192</button>';
+    }
+    body += '<div style="margin-top:12px">' + buttons + '</div>';
+    this.showModal(sc.title, body);
+  },
+  _advanceCutscene(choiceIdx) {
+    const sc = this._pendingCutscene;
+    if (!sc) return;
+    this._cutsceneChoice = choiceIdx;
+    const ch = sc.choices[choiceIdx];
+    if (ch && ch.bond) {
+      const kind = ch.bond.kind === 'coach' ? 'coach' : 'mate';
+      this._cutsceneNudgeBond(kind, ch.bond.id, ch.bond.delta);
+    }
+    this._cutsceneStep = 1;
+    this.showPlayerCutscene();
+  },
+  _closeCutscene() {
+    this._pendingCutscene = null;
+    this._cutsceneStep = 0;
+    this._cutsceneChoice = null;
     closeModal();
     this.saveGame();
     this.render();
@@ -29609,6 +29826,49 @@ let game = {
     if (!userPlayer || !this.state.career) return;
     // Don't overwrite an existing rival
     if (this.state.career.rivalPlayerId !== undefined && this.state.career.rivalPlayerId !== null) return;
+
+    // Build the candidate pool: active, same-position players whose CURRENT OVR is close to the user's
+    // (within 4), so the rival is a genuine peer rather than an arbitrary rookie. Players from the
+    // user's own draft class get a closeness bonus for the "drafted together" narrative, but it's the
+    // OVR match that matters most.
+    const BAND = 4;
+    const pool = this.state.players.filter(p =>
+      p && !p.retired && p.id !== userPlayer.id &&
+      p.position === userPlayer.position &&
+      p.team !== null && p.team !== undefined &&
+      Math.abs((p.rating || 0) - (userPlayer.rating || 0)) <= BAND
+    );
+    let chosenPool = pool;
+    if (chosenPool.length === 0) {
+      // Widen the band once if nobody qualifies (uncommon positions).
+      chosenPool = this.state.players.filter(p =>
+        p && !p.retired && p.id !== userPlayer.id &&
+        p.position === userPlayer.position &&
+        p.team !== null && p.team !== undefined &&
+        Math.abs((p.rating || 0) - (userPlayer.rating || 0)) <= BAND + 4
+      );
+    }
+    if (chosenPool.length === 0) return;
+    // Score by OVR closeness first; small bonus for sharing the user's draft class.
+    const scored = chosenPool.map(p => {
+      let score = Math.abs((p.rating || 0) - (userPlayer.rating || 0)) * 4;
+      if (p.draftYear === userPlayer.draftYear) score -= 3; // prefer a draft-class peer
+      return { player: p, score };
+    });
+    scored.sort((a, b) => a.score - b.score);
+    // Pick from the closest few for a little variety.
+    const top = scored.slice(0, Math.min(4, scored.length));
+    const rival = top[Math.floor(Math.random() * top.length)].player;
+
+    this.state.career.rivalPlayerId = rival.id;
+    this.state.career.rivalSeasonHistory = [];
+    this._addRivalSpawnHeadline(userPlayer, rival);
+  },
+
+  _assignCareerRival_OLD(userPlayer) {
+    if (!userPlayer || !this.state.career) return;
+    // Don't overwrite an existing rival
+    if (this.state.career.rivalPlayerId !== undefined && this.state.career.rivalPlayerId !== null) return;
     
     const rookieClass = this.state.players.filter(p =>
       p && !p.retired && p.id !== userPlayer.id &&
@@ -29658,11 +29918,15 @@ let game = {
     const userTeam = userPlayer.team !== null ? this.state.teams[userPlayer.team] : null;
     const rivalTeam = rival.team !== null ? this.state.teams[rival.team] : null;
     if (!userTeam || !rivalTeam) return;
+    const sameClass = rival.draftYear === userPlayer.draftYear;
     this.addHeadline({
-      title: 'Class of ' + userPlayer.draftYear + ' rivalry brewing',
-      body: userPlayer.name + ' (' + userTeam.abbr + ') and ' + rival.name + ' (' + rivalTeam.abbr + ') will define their generation at ' + userPlayer.position + '. Same draft class, same position — the comparisons start now.'
+      title: 'A rivalry takes shape at ' + userPlayer.position,
+      body: userPlayer.name + ' (' + userTeam.abbr + ') and ' + rival.name + ' (' + rivalTeam.abbr + ', OVR ' + rival.rating + ') are emerging as the measuring stick for one another' +
+        (sameClass ? ' — same draft class, same position.' : ' at the same position.') + ' The comparisons start now.'
     });
   },
+
+  _addRivalSpawnHeadline_OLD_REMOVED: null,
   
   // Take a season-end snapshot of how the user and rival's seasons compared.
   // Called from the offseason transition for each year both are still active.
