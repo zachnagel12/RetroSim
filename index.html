@@ -456,6 +456,7 @@ select { font-family: inherit; }
         <div class="nav-item user-team-item" data-view="capspace"><span class="nav-icon">$</span><span>Cap & Contracts</span></div>
         <div class="nav-item user-team-item" data-view="staff"><span class="nav-icon">⚭</span><span>Coaching Staff</span></div>
         <div class="nav-item user-team-item" data-view="freeagents"><span class="nav-icon">+</span><span>Free Agents</span></div>
+        <div class="nav-item user-team-item" data-view="trades"><span class="nav-icon">⇄</span><span>Trades</span></div>
       </div>
       <div class="nav-section" id="navCoachCareer" style="display:none">
         <div class="nav-title">Your Career</div>
@@ -23873,6 +23874,12 @@ let game = {
       '<div class="page-title">Trades</div>' +
       '<div class="page-subtitle">Propose player and draft pick trades. CPU teams will evaluate based on value.</div>' +
       '</div>';
+
+    // Trade deadline banner
+    const dl = this._tradeDeadlineNote();
+    html += '<div class="card" style="border-left:4px solid ' + (dl.open ? 'var(--success)' : 'var(--danger)') + '">' +
+      '<div style="padding:12px 16px;font-size:13px;font-weight:600;color:' + (dl.open ? 'var(--success)' : 'var(--danger)') + '">' +
+      (dl.open ? '\u2713 ' : '\u2715 ') + dl.msg + '</div></div>';
     
     // Partner selector
     html += '<div class="card"><div class="card-header"><div class="card-title">Trade partner</div></div>' +
@@ -23928,7 +23935,7 @@ let game = {
     html += '<div class="card"><div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center">' +
       '<div><strong style="color:' + fairnessColor + '">' + fairnessLabel + '</strong>' +
       (giveValue > 0 && receiveValue > 0 ? '<span class="muted" style="margin-left:12px;font-size:12px">Ratio: ' + fairnessRatio.toFixed(2) + '</span>' : '') + '</div>' +
-      '<button class="btn btn-primary" onclick="game.proposeTrade()" ' + (giveValue === 0 || receiveValue === 0 ? 'disabled' : '') + '>Propose trade</button>' +
+      '<button class="btn btn-primary" onclick="game.proposeTrade()" ' + (giveValue === 0 || receiveValue === 0 || !this._tradesAllowed() ? 'disabled' : '') + '>Propose trade</button>' +
       '</div></div>';
     
     // Asset pickers: tabs for User Players, User Picks, Partner Players, Partner Picks
@@ -23980,27 +23987,79 @@ let game = {
     this.render();
   },
 
+  // Entry point from a player card's "Trade" button. Pre-loads the trade builder with this player
+  // (on the correct side) and jumps to the Trades tab. Dynasty GMs only.
+  startTradeForPlayer(pid) {
+    const p = this.state.players[pid];
+    if (!p || p.retired || p.team === null || p.team === undefined) return;
+    if (this.state.userTeamId === null || this.state.userTeamId === undefined) return;
+    if (!this.tradeOffer) this.tradeOffer = { give: [], receive: [] };
+    if (p.team === this.state.userTeamId) {
+      // Trading away our own player — add to what we send; keep/seed a partner.
+      if (this.tradePartnerId === undefined || this.tradePartnerId === this.state.userTeamId) {
+        this.tradePartnerId = (this.state.userTeamId === 0 ? 1 : 0);
+      }
+      if (!this.tradeOffer.give.some(a => a.type === 'player' && a.playerId === pid)) {
+        this.tradeOffer.give.push({ type: 'player', playerId: pid });
+      }
+    } else {
+      // Trading FOR an opposing player — focus the builder on their team (fresh slate if switching).
+      if (this.tradePartnerId !== p.team) {
+        this.tradePartnerId = p.team;
+        this.tradeOffer = { give: [], receive: [] };
+      }
+      if (!this.tradeOffer.receive.some(a => a.type === 'player' && a.playerId === pid)) {
+        this.tradeOffer.receive.push({ type: 'player', playerId: pid });
+      }
+    }
+    if (typeof closeModal === 'function') closeModal();
+    this.currentView = 'trades';
+    this.render();
+  },
+
   renderTradeAssetPicker(team, side) {
     const tab = side === 'give' ? (this.tradeYourAssetTab || 'players') : (this.tradePartnerAssetTab || 'players');
-    let html = '<div style="max-height:320px;overflow-y:auto;padding:8px 12px">';
+    let html = '';
     if (tab === 'players') {
-      const roster = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
-      roster.sort((a, b) => b.rating - a.rating);
-      roster.slice(0, 25).forEach(p => {
+      // Filter/sort controls: by position, and by OVR (high→low or low→high).
+      const posKey = '_tradePos_' + side;
+      const sortKey = '_tradeSort_' + side;
+      const curPos = this[posKey] || 'ALL';
+      const curSort = this[sortKey] || 'ovrDesc';
+      const positions = ['ALL', 'QB', 'RB', 'WR', 'TE', 'OT', 'OG', 'C', 'EDGE', 'DT', 'LB', 'CB', 'S', 'K', 'P'];
+      html += '<div style="padding:8px 12px 4px 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-bottom:1px solid var(--border)">' +
+        '<select onchange="game[\'' + posKey + '\']=this.value;game.render()" style="padding:4px 8px;font-family:inherit;font-size:12px;border:1px solid var(--border-strong);background:var(--surface)">' +
+        positions.map(p => '<option value="' + p + '"' + (curPos === p ? ' selected' : '') + '>' + (p === 'ALL' ? 'All positions' : p) + '</option>').join('') +
+        '</select>' +
+        '<select onchange="game[\'' + sortKey + '\']=this.value;game.render()" style="padding:4px 8px;font-family:inherit;font-size:12px;border:1px solid var(--border-strong);background:var(--surface)">' +
+        '<option value="ovrDesc"' + (curSort === 'ovrDesc' ? ' selected' : '') + '>OVR: high → low</option>' +
+        '<option value="ovrAsc"' + (curSort === 'ovrAsc' ? ' selected' : '') + '>OVR: low → high</option>' +
+        '<option value="ageAsc"' + (curSort === 'ageAsc' ? ' selected' : '') + '>Age: young → old</option>' +
+        '</select></div>';
+      html += '<div style="max-height:300px;overflow-y:auto;padding:8px 12px">';
+      let roster = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired);
+      if (curPos !== 'ALL') roster = roster.filter(p => p.position === curPos);
+      if (curSort === 'ovrAsc') roster.sort((a, b) => a.rating - b.rating);
+      else if (curSort === 'ageAsc') roster.sort((a, b) => a.age - b.age || b.rating - a.rating);
+      else roster.sort((a, b) => b.rating - a.rating);
+      if (roster.length === 0) html += '<div class="muted" style="font-size:12px;font-style:italic;padding:8px">No players at this position.</div>';
+      roster.slice(0, 40).forEach(p => {
         const inOffer = this.tradeOffer[side].some(a => a.type === 'player' && a.playerId === p.id);
+        const hit = p.contract ? currentCapHit(p.contract) : 0;
         html += '<div class="trade-asset-pick" style="' + (inOffer ? 'opacity:0.4;pointer-events:none' : '') + '" onclick="game.addTradeAsset(\'' + side + '\',\'player\',' + p.id + ')">' +
           '<span class="position-tag">' + p.position + '</span> ' +
           '<strong>' + p.name + '</strong> <span class="rating ' + this.ratingClass(p.rating) + '" style="font-size:10px;padding:1px 5px">' + p.rating + '</span>' +
-          ' <span class="muted" style="font-size:11px">age ' + p.age + '</span>' +
+          ' <span class="muted" style="font-size:11px">age ' + p.age + ' · ' + formatMoney(hit) + '</span>' +
           '</div>';
       });
     } else {
+      html += '<div style="max-height:340px;overflow-y:auto;padding:8px 12px">';
       // Picks for the next 2 drafts
       const picks = this.getTeamPicks(team.id);
       if (picks.length === 0) {
         html += '<div class="muted" style="font-size:12px;padding:12px;font-style:italic">No picks available</div>';
       } else {
-        picks.forEach(pk => {
+        picks.slice().sort((a, b) => a.year - b.year || a.round - b.round).forEach(pk => {
           const inOffer = this.tradeOffer[side].some(a => a.type === 'pick' && a.pickId === pk.id);
           html += '<div class="trade-asset-pick" style="' + (inOffer ? 'opacity:0.4;pointer-events:none' : '') + '" onclick="game.addTradeAsset(\'' + side + '\',\'pick\',\'' + pk.id + '\')">' +
             '<strong>Round ' + pk.round + '</strong> pick · ' + pk.teamAbbr + ' (' + pk.year + ')' +
@@ -24269,8 +24328,27 @@ let game = {
     }
   },
 
+  // Trades are open during the regular season THROUGH Week 8 (deadline after Week 8), and again in the
+  // offseason. They're closed during the playoffs and from Week 9 to season's end.
+  _tradesAllowed() {
+    if (this.state.playoffActive) return false;
+    if (this.state.offseasonPhase) return true;
+    return (this.state.week || 0) <= 8;
+  },
+  _tradeDeadlineNote() {
+    if (this.state.playoffActive) return { open: false, msg: 'Trades are closed during the playoffs. The window reopens in the offseason.' };
+    if (this.state.offseasonPhase) return { open: true, msg: 'Offseason trade window is OPEN.' };
+    const wk = this.state.week || 0;
+    if (wk <= 8) return { open: true, msg: 'Trade window OPEN \u00b7 Week ' + Math.max(1, wk) + '. Deadline is after Week 8.' };
+    return { open: false, msg: 'Trade deadline has passed (after Week 8). The window reopens in the offseason.' };
+  },
+
   proposeTrade() {
     if (!this.tradeOffer || this.tradeOffer.give.length === 0 || this.tradeOffer.receive.length === 0) return;
+    if (!this._tradesAllowed()) {
+      alert(this._tradeDeadlineNote().msg);
+      return;
+    }
     const giveValue = this.calculateTradePackageValue(this.tradeOffer.give);
     const receiveValue = this.calculateTradePackageValue(this.tradeOffer.receive);
     
@@ -26570,13 +26648,22 @@ let game = {
 
     // Contract action buttons (only for players on user's team)
     let actionRow = '';
+    const canTrade = this.state.career && this.state.career.mode === 'dynasty' &&
+      this.state.userTeamId !== null && this.state.userTeamId !== undefined &&
+      !p.retired && p.team !== null && p.team !== undefined;
     if (isOnUserTeam && !p.retired) {
       actionRow = '<div class="modal-action-row">' +
         '<button class="btn btn-sm" onclick="game.restructureContract(' + p.id + ', \'restructure\')">Restructure</button>' +
         '<button class="btn btn-sm" onclick="game.restructureContract(' + p.id + ', \'frontload\')">Frontload</button>' +
         '<button class="btn btn-sm" onclick="game.restructureContract(' + p.id + ', \'backload\')">Backload</button>' +
         '<button class="btn btn-sm btn-success" onclick="game.extendContract(' + p.id + ')">Extend</button>' +
+        (canTrade ? '<button class="btn btn-sm" onclick="game.startTradeForPlayer(' + p.id + ')">\u21c4 Trade away</button>' : '') +
         '<button class="btn btn-sm btn-danger" onclick="game.releasePlayer(' + p.id + ')">Release</button>' +
+        '</div>';
+    } else if (canTrade) {
+      // Opposing player — let the GM start a trade to acquire them.
+      actionRow = '<div class="modal-action-row">' +
+        '<button class="btn btn-sm btn-primary" onclick="game.startTradeForPlayer(' + p.id + ')">\u21c4 Trade for ' + p.name + '</button>' +
         '</div>';
     }
 
