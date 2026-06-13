@@ -10277,12 +10277,15 @@ let game = {
     // To capture last-season wins, we store them. Let's check if state.lastSeasonWins exists; if not, use random fallback.
     const lastSeasonWins = this.state.lastSeasonWins || {};
     
-    // Each round: sort picks by (originalTeam's last-season wins ASC, then random tie-breaker)
+    // Each round: slot picks by the ORIGINAL team's draft rank (NFL playoff-finish order computed at
+    // season end). Falls back to last-season wins (worst first) for older saves with no rank stored.
+    const draftRank = this.state.draftOrderRank || {};
     const sortedPicks = [];
     for (let round = 1; round <= 7; round++) {
       const roundPicks = currentYearPicks.filter(p => p.round === round);
-      // The pick's slot within round is determined by ORIGINAL team's prior-season finish (worst first)
       roundPicks.sort((a, b) => {
+        const aR = draftRank[a.originalTeamId], bR = draftRank[b.originalTeamId];
+        if (aR !== undefined && bR !== undefined) return aR - bR;
         const aWins = lastSeasonWins[a.originalTeamId] !== undefined ? lastSeasonWins[a.originalTeamId] : 0;
         const bWins = lastSeasonWins[b.originalTeamId] !== undefined ? lastSeasonWins[b.originalTeamId] : 0;
         return aWins - bWins;
@@ -14675,6 +14678,44 @@ let game = {
       teamId: champion.id, record: champion.wins + '-' + champion.losses,
       runnerUp: runnerUp.city + ' ' + runnerUp.name
     });
+
+    // ===== NFL-STYLE DRAFT ORDER =====
+    // Compute each team's draft slot rank now, while playoff results and full-season records are intact
+    // (records reset later in the offseason). Lower rank = earlier pick. Non-playoff teams come first,
+    // ordered worst record → best (point differential breaks ties). Playoff teams come AFTER all
+    // non-playoff teams, ordered by how far they advanced (eliminated earliest pick earliest), so the
+    // Super Bowl runner-up lands at 31 and the champion at 32 — exactly like the real draft.
+    try {
+      const po = this.state.playoffs;
+      const playoffTeamIds = new Set();
+      const eliminationRound = {}; // teamId -> round number they lost in
+      let maxRound = 0;
+      if (po) {
+        (po.afcSeeds || []).concat(po.nfcSeeds || []).forEach(s => playoffTeamIds.add(s.teamId));
+        (po.results || []).forEach(r => { eliminationRound[r.loserId] = r.round; maxRound = Math.max(maxRound, r.round); });
+      }
+      const depth = (teamId) => {
+        if (teamId === championId) return maxRound + 1;     // won the title — picks last
+        if (teamId === runnerUpId) return maxRound + 0.5;   // lost the final — picks 31st
+        if (eliminationRound[teamId] !== undefined) return eliminationRound[teamId];
+        return 0;                                           // missed the playoffs
+      };
+      const pd = (t) => (t.pointsFor || 0) - (t.pointsAgainst || 0);
+      const ordered = this.state.teams.slice().sort((a, b) => {
+        const aPO = playoffTeamIds.has(a.id) ? 1 : 0;
+        const bPO = playoffTeamIds.has(b.id) ? 1 : 0;
+        if (aPO !== bPO) return aPO - bPO;          // all non-playoff teams before any playoff team
+        if (aPO === 1) {                            // both made the playoffs
+          const da = depth(a.id), db = depth(b.id);
+          if (da !== db) return da - db;            // eliminated earlier → earlier pick
+        }
+        if (a.wins !== b.wins) return a.wins - b.wins;   // worse record → earlier pick
+        return pd(a) - pd(b);                            // worse point differential breaks the tie
+      });
+      this.state.draftOrderRank = {};
+      ordered.forEach((t, idx) => { this.state.draftOrderRank[t.id] = idx; });
+    } catch (e) { /* defensive — fall back to record-based ordering at draft time */ }
+
     // CHEMISTRY — winning it all cements bonds. If the user's player is on the champion roster, give
     // a chemistry boost with their current same-side teammates (the heart of a long, winning duo).
     if (this.state.career && this.state.career.mode === 'player') {
