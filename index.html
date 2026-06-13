@@ -815,6 +815,16 @@ const TEAM_DATA = [
 // 53-man roster: 3QB, 4RB, 7WR, 3TE, 3OT, 4OG, 2C, 4EDGE, 3DT, 8LB, 6CB, 4S, 1K, 1P = 52... need 53
 // Adjusting: 3QB, 4RB, 7WR, 3TE, 3OT, 4OG, 2C, 4EDGE, 3DT, 8LB, 6CB, 4S, 1K, 1P + 1 = bumping CB to 7 = 53
 const POSITION_COUNTS = { QB:3, RB:4, WR:7, TE:3, OT:3, OG:4, C:2, EDGE:4, DT:3, LB:8, CB:6, S:4, K:1, P:1 };
+// Per-game STARTING lineup requirements. Offense fields 11 (QB1/RB1 + WR2-3/TE1-2 flex + OT2/OG2/C1),
+// defense fields 11 (EDGE2/DT2/LB3/CB2/S2), plus 1 K and 1 P on special teams. WR/TE flex between
+// 11-personnel (3 WR / 1 TE) and 12-personnel (2 WR / 2 TE). minStarters is the hard floor a roster
+// must satisfy at every position so a legal lineup can always be fielded.
+const STARTER_REQUIREMENTS = {
+  QB: { min: 1, max: 1 }, RB: { min: 1, max: 1 }, WR: { min: 2, max: 3 }, TE: { min: 1, max: 2 },
+  OT: { min: 2, max: 2 }, OG: { min: 2, max: 2 }, C: { min: 1, max: 1 },
+  EDGE: { min: 2, max: 2 }, DT: { min: 2, max: 2 }, LB: { min: 3, max: 3 },
+  CB: { min: 2, max: 2 }, S: { min: 2, max: 2 }, K: { min: 1, max: 1 }, P: { min: 1, max: 1 }
+};
 const POSITIONS_FOR_DRAFT = ['QB','RB','WR','TE','OT','OG','C','EDGE','DT','LB','CB','S','K','P'];
 const ROSTER_SIZE = Object.values(POSITION_COUNTS).reduce((s,n) => s+n, 0);
 
@@ -12553,10 +12563,15 @@ let game = {
       const tes = this.getDepthAt(team, 'TE', roster);
       const rbs = this.getDepthAt(team, 'RB', roster);
       
-      // Receiver pool: top 3 WRs, top TE, top 2 RBs (PPR-style outlets)
+      // Receiver pool follows the starting-lineup spec: WR 2-3 + TE 1-2 (flexing between 11-personnel
+      // = 3 WR / 1 TE and 12-personnel = 2 WR / 2 TE), plus the top 2 RBs as backfield outlets. The
+      // package is rolled per game; pass-heavy schemes lean 11-personnel, run-leaning schemes 12.
+      const heavySet = Math.random() < (0.45 - (passEmph - 0.5) * 0.4); // more 12-personnel when run-leaning
+      const wrStarters = heavySet ? 2 : 3;   // WR 2-3
+      const teStarters = heavySet ? 2 : 1;   // TE 1-2
       const receivers = [
-        ...wrs.slice(0, 3),
-        ...tes.slice(0, 1),
+        ...wrs.slice(0, wrStarters),
+        ...tes.slice(0, teStarters),
         ...rbs.slice(0, 2)
       ];
       
@@ -12711,7 +12726,7 @@ let game = {
       const edges = this.getDepthAt(team, 'EDGE', roster);
       // Training boost: passRush adds an extra sack to the top edge rusher
       let bonusSacksLeft = trainBoost.sacksBonus || 0;
-      edges.slice(0, 3).forEach((dl, idx) => {
+      edges.slice(0, 2).forEach((dl, idx) => {
         let sacks = Math.random() < (dl.rating / 90) * blitzMod ? Math.floor(Math.random() * 2) + (Math.random() < 0.25 * blitzMod ? 1 : 0) : 0;
         if (idx === 0 && bonusSacksLeft > 0) { sacks += bonusSacksLeft; bonusSacksLeft = 0; }
         const tackles = Math.floor(2 + Math.random() * 5);
@@ -12741,13 +12756,10 @@ let game = {
         markPlayed(lb);
       });
 
-      const dbs = roster.filter(p => p.position === 'CB' || p.position === 'S').sort((a, b) => {
-        const dc = team.depthChart || {};
-        const ai = (dc[a.position] && dc[a.position].indexOf(a.id) >= 0) ? dc[a.position].indexOf(a.id) : 900;
-        const bi = (dc[b.position] && dc[b.position].indexOf(b.id) >= 0) ? dc[b.position].indexOf(b.id) : 900;
-        return (ai - bi) || (b.rating - a.rating);
-      });
-      dbs.slice(0, 4).forEach(db => {
+      // Secondary starters per the spec: the top 2 CBs and top 2 Ss (a base 4-DB look).
+      const cornerStarters = this.getDepthAt(team, 'CB', roster).slice(0, 2);
+      const safetyStarters = this.getDepthAt(team, 'S', roster).slice(0, 2);
+      [...cornerStarters, ...safetyStarters].forEach(db => {
         const tackles = Math.floor(1 + Math.random() * 6);
         const ints = Math.random() < (db.rating / 250) * coverageMod ? 1 : 0;
         const gs = ensureStats(db.id);
@@ -12756,7 +12768,11 @@ let game = {
         markPlayed(db);
       });
 
-      const kickers = this.getDepthAt(team, 'K', roster);
+      // SPECIAL TEAMS — every game fields exactly 1 K and 1 P. Teams carry only one of each, so if the
+      // lone specialist is banged up they still handle duties (fall back past the injury filter) rather
+      // than leaving the unit empty.
+      let kickers = this.getDepthAt(team, 'K', roster);
+      if (!kickers[0]) kickers = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired && p.position === 'K');
       if (kickers[0]) {
         const k = kickers[0];
         // Force FG made to match decomposed target (instead of random)
@@ -12775,7 +12791,8 @@ let game = {
         markPlayed(k);
       }
 
-      const punters = this.getDepthAt(team, 'P', roster);
+      let punters = this.getDepthAt(team, 'P', roster);
+      if (!punters[0]) punters = team.roster.map(id => this.state.players[id]).filter(p => p && !p.retired && p.position === 'P');
       if (punters[0]) {
         const pu = punters[0];
         const punts = 3 + Math.floor(Math.random() * 5);
@@ -15968,7 +15985,10 @@ let game = {
         const p = this.state.players[id];
         if (p && !p.retired) byPos[p.position] = (byPos[p.position] || 0) + 1;
       });
-      Object.entries(POSITION_COUNTS).forEach(([pos, needed]) => {
+      Object.entries(POSITION_COUNTS).forEach(([pos, baseNeeded]) => {
+        // Never fall below what's needed to field the starting lineup (e.g. 2 OT, 3 LB, 1 K, 1 P).
+        const starterFloor = (STARTER_REQUIREMENTS[pos] && STARTER_REQUIREMENTS[pos].max) || 0;
+        const needed = Math.max(baseNeeded, starterFloor);
         const cur = byPos[pos] || 0;
         const gaps = needed - cur;
         for (let i = 0; i < gaps; i++) {
